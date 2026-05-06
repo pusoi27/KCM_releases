@@ -437,7 +437,7 @@ def get_loaned_books_detailed():
             SELECT lower(trim(COALESCE(title, ''))) AS title_key,
                    COALESCE(SUM(COALESCE(copies, 0)), 0) AS total_copies
               FROM books
-             WHERE             GROUP BY lower(trim(COALESCE(title, '')))
+             GROUP BY lower(trim(COALESCE(title, '')))
             """,
             (),
         ).fetchall()

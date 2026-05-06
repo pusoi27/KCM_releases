@@ -616,9 +616,18 @@ atexit.register(print_profiler_summary)
 #  Run app
 # ================================================================
 if __name__ == "__main__":
-    app.run(
-        host="0.0.0.0",
-        port=int(os.getenv("PORT", "10000")),
-        debug=not IS_PRODUCTION,
-        use_reloader=False,
-    )
+    port = int(os.getenv("PORT", "5000"))
+    if IS_PRODUCTION:
+        # Production: use Waitress (no Flask dev-server warnings)
+        from waitress import serve
+        print(f"[Stdytime] Serving on http://127.0.0.1:{port}  (Waitress)")
+        serve(app, host="127.0.0.1", port=port, threads=8)
+    else:
+        # Development: Flask dev server with reloader for fast iteration
+        app.run(
+            host="127.0.0.1",
+            port=port,
+            debug=True,
+            use_reloader=True,
+            threaded=True,
+        )

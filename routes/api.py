@@ -168,9 +168,10 @@ def register_api_routes(app):
                       AND end_time IS NOT NULL
                     GROUP BY student_id
                     """,
-                    (today),
+                    (today,),
                 ).fetchall()
-                today_sum = {sid: total or 0 for sid, total in today_rows}
+
+                today_sum = {sid: secs for sid, secs in today_rows}
 
                 latest_rows = c.execute(
                     """
@@ -222,10 +223,10 @@ def register_api_routes(app):
                     "active": s[7] if len(s) > 7 else 0,
                     "book_loaned": s[8] if len(s) > 8 else 0,
                     "paper_ws": s[9] if len(s) > 9 else 0,
-                    "day1": s[17] if len(s) > 17 else None,
-                    "day2": s[19] if len(s) > 19 else None,
-                    "day1_time": s[18] if len(s) > 18 else None,
-                    "day2_time": s[20] if len(s) > 20 else None,
+                    "day1": s[13] if len(s) > 13 else None,
+                    "day1_time": s[14] if len(s) > 14 else None,
+                    "day2": s[15] if len(s) > 15 else None,
+                    "day2_time": s[16] if len(s) > 16 else None,
                     "status": status,
                     "start_time": start_time,
                     "total_seconds": total_seconds,
@@ -358,7 +359,7 @@ def register_api_routes(app):
                 WHERE DATE(start_time)=?
                   AND end_time IS NOT NULL
                 """,
-                (today),
+                (today,),
             ).fetchone()[0] or 0
         _trace_column3(
             "checkout_complete",
@@ -390,7 +391,7 @@ def register_api_routes(app):
                 WHERE end_time IS NULL
                   AND DATE(start_time)=?
                 """,
-                (today),
+                (today,),
             ).fetchall()
 
         for sid, start in list(active_rows):
@@ -438,7 +439,7 @@ def register_api_routes(app):
                 WHERE end_time IS NULL
                   AND DATE(start_time)=?
                 """,
-                (today),
+                (today,),
             ).fetchall()
 
         students = {s[0]: s for s in student_manager.get_all_students()}
