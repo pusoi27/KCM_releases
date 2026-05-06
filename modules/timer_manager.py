@@ -1,4 +1,4 @@
-# modules/timer_manager.py
+﻿# modules/timer_manager.py
 import sqlite3
 from modules.database import DB_PATH
 from modules.utils import time_now, duration_seconds
@@ -54,13 +54,13 @@ def delete_all_sessions():
         conn.commit()
     return deleted
 
-def start_session(student_id, owner_user_id: int = 1):
+def start_session(student_id):
     """Insert a new open session row into the DB."""
     start = time_now()
     with sqlite3.connect(DB_PATH) as conn:
         c = conn.cursor()
         c.execute(
-            """INSERT INTO sessions (student_id, start_time, owner_user_id) VALUES (?, ?, ?)""",
-            (student_id, start, owner_user_id)
+            """INSERT INTO sessions (student_id, start_time) VALUES (?, ?, ?)""",
+            (student_id, start)
         )
         conn.commit()

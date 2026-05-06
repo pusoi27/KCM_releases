@@ -33,16 +33,14 @@ def register_instructor_profile_routes(app):
     @require_login
     def instructor_profile():
         """Display the instructor profile page"""
-        owner_user_id = auth_manager.get_current_user_id()
-        profile = instructor_profile_manager.get_instructor_profile(owner_user_id=owner_user_id)
+        profile = instructor_profile_manager.get_instructor_profile()
         return render_template("instructor_profile.html", profile=profile)
 
     @app.route("/instructor/profile/edit", methods=["GET", "POST"])
     @require_login
     def instructor_profile_edit():
         """Edit or create instructor profile"""
-        owner_user_id = auth_manager.get_current_user_id()
-        profile = instructor_profile_manager.get_instructor_profile(owner_user_id=owner_user_id)
+        profile = instructor_profile_manager.get_instructor_profile()
         
         if request.method == "POST":
             name = request.form.get("name", "").strip()
@@ -93,8 +91,7 @@ def register_instructor_profile_routes(app):
                     center_address,
                     center_time_zone,
                     center_hours,
-                    weekly_hours,
-                    owner_user_id=owner_user_id,
+                    weekly_hours
                 )
                 flash("Instructor profile updated successfully.", "success")
             else:
@@ -107,8 +104,7 @@ def register_instructor_profile_routes(app):
                     center_address,
                     center_time_zone,
                     center_hours,
-                    weekly_hours,
-                    owner_user_id=owner_user_id,
+                    weekly_hours
                 )
                 flash("Instructor profile created successfully.", "success")
             
@@ -130,8 +126,7 @@ def register_instructor_profile_routes(app):
         Always returns HTTP 200 with a `success` flag so frontend fetch won't
         throw on non-200 responses.
         """
-        owner_user_id = auth_manager.get_current_user_id()
-        profile = instructor_profile_manager.get_instructor_profile(owner_user_id=owner_user_id)
+        profile = instructor_profile_manager.get_instructor_profile()
         if profile:
             return jsonify({
                 'success': True,
@@ -147,9 +142,8 @@ def register_instructor_profile_routes(app):
     @require_login
     def center_calendar():
         """Display the center calendar with student schedules"""
-        owner_user_id = auth_manager.get_current_user_id()
-        profile = instructor_profile_manager.get_instructor_profile(owner_user_id=owner_user_id)
-        students = student_manager.get_all_students(owner_user_id=owner_user_id)
+        profile = instructor_profile_manager.get_instructor_profile()
+        students = student_manager.get_all_students()
         
         # Determine which days have class hours
         active_days = []

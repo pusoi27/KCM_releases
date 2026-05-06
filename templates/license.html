@@ -40,7 +40,13 @@
           {% endwith %}
 
           <h2 class="h4 mb-3">Activate this machine</h2>
-          <p class="text-muted">Send the fingerprint above to your licensing contact, then paste the returned key below. The key is bound to this specific device.</p>
+          {% if license_status.status == 'unlicensed' %}
+          <div class="alert alert-info d-flex align-items-center gap-2 mb-3">
+            <span>Don't have a license yet?</span>
+            <a href="https://stdytime.com/#pricing" target="_blank" class="btn btn-sm btn-success">Buy a subscription</a>
+          </div>
+          {% endif %}
+          <p class="text-muted">After purchase, LemonSqueezy emails you a license key. Paste it below to activate this machine. One license key activates one machine.</p>
 
           <form method="POST" action="{{ url_for('activate_license') }}" class="mb-4">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
@@ -57,14 +63,21 @@
               <li><strong>Licensee:</strong> {{ license_status.licensee or 'Not activated yet' }}</li>
               <li><strong>Email:</strong> {{ license_status.email or '—' }}</li>
               <li><strong>Days remaining:</strong> {{ license_status.days_remaining if license_status.days_remaining is not none else '—' }}</li>
+              <li><strong>LS status:</strong> {{ license_status.ls_status or license_status.status or '—' }}</li>
             </ul>
           </div>
 
           {% if license_status.has_license_key %}
+          <div class="d-flex gap-2 flex-wrap mb-3">
+            <form method="POST" action="{{ url_for('verify_license') }}">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+              <button type="submit" class="btn btn-outline-secondary btn-sm">Re-check with LemonSqueezy</button>
+            </form>
           <form method="POST" action="{{ url_for('remove_license') }}" onsubmit="return confirm('Remove the saved license from this machine?');">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <button type="submit" class="btn btn-outline-danger">Remove Saved License</button>
           </form>
+          </div>
           {% endif %}
         </div>
       </div>

@@ -23,21 +23,17 @@ def _trace_column3(event: str, **fields) -> None:
         print(f"[column3-trace] {event}")
 
 
-def _students_list_cache_key(owner_user_id: int) -> str:
-    return f"{server_cache.STUDENTS_LIST_CACHE_KEY}:u:{owner_user_id}"
+def _students_list_cache_key() -> str:
+    return server_cache.STUDENTS_LIST_CACHE_KEY
 
+def _student_goal_cache_key(student_id) -> str:
+    return f"{server_cache.STUDENT_GOAL_CACHE_PREFIX}{student_id}"
 
-def _student_goal_cache_key(owner_user_id: int, student_id: int) -> str:
-    return f"{server_cache.STUDENT_GOAL_CACHE_PREFIX}u:{owner_user_id}:{student_id}"
+def _assistants_profile_cache_key() -> str:
+    return server_cache.ASSISTANTS_PROFILE_LIST_CACHE_KEY
 
-
-def _assistants_profile_cache_key(owner_user_id: int) -> str:
-    return f"{server_cache.ASSISTANTS_PROFILE_LIST_CACHE_KEY}:u:{owner_user_id}"
-
-
-def _assistants_duty_cache_key(owner_user_id: int) -> str:
-    return f"{server_cache.ASSISTANTS_DUTY_LIST_CACHE_KEY}:u:{owner_user_id}"
-
+def _assistants_duty_cache_key() -> str:
+    return server_cache.ASSISTANTS_DUTY_LIST_CACHE_KEY
 
 def _format_checkout_timestamp(value: str) -> str:
     """Format ISO-ish timestamps for human-readable emails."""
@@ -50,7 +46,7 @@ def _format_checkout_timestamp(value: str) -> str:
         return str(value)
 
 
-def _send_checkout_email(student_row, start_time: str, end_time: str, owner_user_id: int):
+def _send_checkout_email(student_row, start_time: str, end_time: str):
     """Send checkout notification email to the student's email on file (best effort).
 
     Mirrors the email_manager.send_email() pattern used by the utilities
@@ -86,7 +82,7 @@ def _send_checkout_email(student_row, start_time: str, end_time: str, owner_user
         seconds = total_seconds % 60
         duration_display = f"{hours:02d}:{minutes:02d}:{seconds:02d}"
 
-        center_name = resolve_center_name(owner_user_id=owner_user_id)
+        center_name = resolve_center_name()
 
         email_subject = f"Class Checkout - {student_name}"
 
@@ -105,7 +101,6 @@ def _send_checkout_email(student_row, start_time: str, end_time: str, owner_user
             center_name=center_name,
             subtitle=center_name,
             footer_note=f"This is an automated checkout message from {center_name}. Please do not reply to this email.",
-            owner_user_id=owner_user_id,
             body_html=f"""
                 <p>Dear Parent/Guardian,</p>
                 <div class="highlight"><strong>{student_name}</strong> has checked out from class.</div>
@@ -147,11 +142,10 @@ def register_api_routes(app):
     @require_feature(auth_manager.FEATURE_KUMOCLASS)
     def api_students_list():
         """Return students with computed status: registered | active | checked."""
-        owner_user_id = auth_manager.get_current_user_id()
-        cache_key = _students_list_cache_key(owner_user_id)
+        cache_key = _students_list_cache_key()
 
         def _build_students_list_payload():
-            students = student_manager.get_all_students(owner_user_id=owner_user_id)
+            students = student_manager.get_all_students()
 
             with sqlite3.connect(DB_PATH) as conn:
                 c = conn.cursor()
@@ -160,9 +154,8 @@ def register_api_routes(app):
                     SELECT student_id, start_time
                     FROM sessions
                     WHERE end_time IS NULL
-                      AND owner_user_id = ?
                     """,
-                    (owner_user_id,),
+                    (),
                 ).fetchall()
                 active_map = {sid: start for sid, start in active_rows}
 
@@ -173,10 +166,9 @@ def register_api_routes(app):
                     FROM sessions
                     WHERE DATE(start_time)=?
                       AND end_time IS NOT NULL
-                      AND owner_user_id = ?
                     GROUP BY student_id
                     """,
-                    (today, owner_user_id),
+                    (today),
                 ).fetchall()
                 today_sum = {sid: total or 0 for sid, total in today_rows}
 
@@ -185,10 +177,9 @@ def register_api_routes(app):
                     SELECT student_id, duration
                     FROM sessions
                     WHERE end_time IS NOT NULL
-                      AND owner_user_id = ?
                     ORDER BY id DESC
                     """,
-                    (owner_user_id,),
+                    (),
                 ).fetchall()
                 latest_duration = {}
                 for sid, dur in latest_rows:
@@ -197,7 +188,6 @@ def register_api_routes(app):
 
             _trace_column3(
                 "students_list_build_source",
-                owner_user_id=owner_user_id,
                 total_students=len(students),
                 active_rows=len(active_rows),
                 checked_rows=len(today_rows),
@@ -245,7 +235,6 @@ def register_api_routes(app):
 
             _trace_column3(
                 "students_list_payload_built",
-                owner_user_id=owner_user_id,
                 cache_key=cache_key,
                 checked_ids=checked_ids,
                 checked_count=len(checked_ids),
@@ -261,7 +250,6 @@ def register_api_routes(app):
         checked_count = sum(1 for student in result if student.get("status") == "checked")
         _trace_column3(
             "students_list_response",
-            owner_user_id=owner_user_id,
             cache_key=cache_key,
             total=len(result),
             checked_count=checked_count,
@@ -273,11 +261,9 @@ def register_api_routes(app):
     @require_login
     def api_student_profile_goals(sid):
         """Return static student profile/goals payload with long-lived cache policy."""
-        owner_user_id = auth_manager.get_current_user_id()
-        cache_key = _student_goal_cache_key(owner_user_id, sid)
-
+        cache_key = _student_goal_cache_key(sid)
         def _build_profile_goals_payload():
-            profile = student_manager.get_student_static_profile(sid, owner_user_id=owner_user_id)
+            profile = student_manager.get_student_static_profile(sid)
             if not profile:
                 return None
             return {
@@ -307,23 +293,21 @@ def register_api_routes(app):
     @require_login
     @require_feature(auth_manager.FEATURE_KUMOCLASS)
     def api_students_start(sid):
-        owner_user_id = auth_manager.get_current_user_id()
-        student = student_manager.get_student(sid, owner_user_id=owner_user_id)
+        student = student_manager.get_student(sid)
         if not student:
             return jsonify({"error": "Student not found"}), 404
-        timer_manager.start_session(sid, owner_user_id)
-        server_cache.invalidate(_students_list_cache_key(owner_user_id))
+        timer_manager.start_session(sid)
+        server_cache.invalidate(_students_list_cache_key())
         return jsonify({"status": "started"})
 
     @app.route("/api/students/stop/<int:sid>", methods=["POST"])
     @require_login
     @require_feature(auth_manager.FEATURE_KUMOCLASS)
     def api_students_stop(sid):
-        owner_user_id = auth_manager.get_current_user_id()
-        student = student_manager.get_student(sid, owner_user_id=owner_user_id)
+        student = student_manager.get_student(sid)
         if not student:
             return jsonify({"error": "Student not found"}), 404
-        _trace_column3("checkout_begin", owner_user_id=owner_user_id, sid=sid, student_name=student[1])
+        _trace_column3("checkout_begin", sid=sid, student_name=student[1])
         checkout_email_status = None
         checkout_email_message = None
         with sqlite3.connect(DB_PATH) as conn:
@@ -334,11 +318,10 @@ def register_api_routes(app):
                 FROM sessions
                 WHERE student_id = ?
                   AND end_time IS NULL
-                  AND owner_user_id = ?
                 ORDER BY id DESC
                 LIMIT 1
                 """,
-                (sid, owner_user_id),
+                (sid),
             ).fetchone()
             if open_row:
                 sess_id, start = open_row
@@ -354,17 +337,16 @@ def register_api_routes(app):
                 conn.commit()
                 _trace_column3(
                     "checkout_db_updated",
-                    owner_user_id=owner_user_id,
                     sid=sid,
                     sess_id=sess_id,
                     duration=duration,
                     start=start,
                     end=end,
                 )
-                email_result = _send_checkout_email(student, start, end, owner_user_id) or {}
+                email_result = _send_checkout_email(student, start, end) or {}
                 checkout_email_status = email_result.get("status")
                 checkout_email_message = email_result.get("message")
-        cache_key = _students_list_cache_key(owner_user_id)
+        cache_key = _students_list_cache_key()
         server_cache.invalidate(cache_key)
         with sqlite3.connect(DB_PATH) as conn:
             c = conn.cursor()
@@ -375,13 +357,11 @@ def register_api_routes(app):
                 FROM sessions
                 WHERE DATE(start_time)=?
                   AND end_time IS NOT NULL
-                  AND owner_user_id = ?
                 """,
-                (today, owner_user_id),
+                (today),
             ).fetchone()[0] or 0
         _trace_column3(
             "checkout_complete",
-            owner_user_id=owner_user_id,
             sid=sid,
             cache_key=cache_key,
             checkout_email_status=checkout_email_status,
@@ -398,7 +378,6 @@ def register_api_routes(app):
     @require_feature(auth_manager.FEATURE_KUMOCLASS)
     def api_sessions_active():
         """Return only currently active sessions; auto-stop any over 2h."""
-        owner_user_id = auth_manager.get_current_user_id()
         now_str = time_now()
         today = datetime.now().date().isoformat()
 
@@ -410,9 +389,8 @@ def register_api_routes(app):
                 FROM sessions
                 WHERE end_time IS NULL
                   AND DATE(start_time)=?
-                  AND owner_user_id = ?
                 """,
-                (today, owner_user_id),
+                (today),
             ).fetchall()
 
         for sid, start in list(active_rows):
@@ -434,17 +412,15 @@ def register_api_routes(app):
                                 FROM sessions
                                 WHERE student_id = ?
                                   AND end_time IS NULL
-                                  AND owner_user_id = ?
                                 ORDER BY id DESC
                                 LIMIT 1
                             )
                             """,
-                            (end, duration, sid, owner_user_id),
+                            (end, duration, sid),
                         )
                         conn.commit()
                     _trace_column3(
                         "active_session_auto_closed",
-                        owner_user_id=owner_user_id,
                         sid=sid,
                         duration=duration,
                         start=start,
@@ -461,12 +437,11 @@ def register_api_routes(app):
                 FROM sessions
                 WHERE end_time IS NULL
                   AND DATE(start_time)=?
-                  AND owner_user_id = ?
                 """,
-                (today, owner_user_id),
+                (today),
             ).fetchall()
 
-        students = {s[0]: s for s in student_manager.get_all_students(owner_user_id=owner_user_id)}
+        students = {s[0]: s for s in student_manager.get_all_students()}
         result = []
         for sid, start in active_rows:
             s = students.get(sid)
@@ -491,15 +466,14 @@ def register_api_routes(app):
     @require_feature(auth_manager.FEATURE_KUMOCLASS)
     def api_sessions_clear():
         """Stop all active sessions (DB + cache) and clear timer buffers."""
-        owner_user_id = auth_manager.get_current_user_id()
         try:
             with sqlite3.connect(DB_PATH) as conn:
                 c = conn.cursor()
-                c.execute("DELETE FROM sessions WHERE owner_user_id = ?", (owner_user_id,))
+                c.execute("DELETE FROM sessions")
                 closed_rows = c.rowcount
                 conn.commit()
             ended = []
-            server_cache.invalidate(_students_list_cache_key(owner_user_id))
+            server_cache.invalidate(_students_list_cache_key())
             return jsonify({"stopped": ended, "closed_rows": closed_rows}), 200
         except Exception as e:
             return jsonify({"error": str(e)}), 500
@@ -514,7 +488,6 @@ def register_api_routes(app):
         Validation: Student must have at least one goal (Math or Reading) to start session.
         """
         try:
-            owner_user_id = auth_manager.get_current_user_id()
             data = request.get_json() or {}
             student_id = data.get("student_id")
             
@@ -522,7 +495,7 @@ def register_api_routes(app):
                 return jsonify({"error": "Missing student_id"}), 400
             
             # Get student info
-            student = student_manager.get_student(student_id, owner_user_id=owner_user_id)
+            student = student_manager.get_student(student_id)
             if not student:
                 return jsonify({"error": "Student not found"}), 404
             
@@ -532,8 +505,8 @@ def register_api_routes(app):
             with sqlite3.connect(DB_PATH) as conn:
                 c = conn.cursor()
                 open_session = c.execute(
-                    "SELECT id FROM sessions WHERE student_id=? AND end_time IS NULL AND owner_user_id = ? LIMIT 1",
-                    (student_id, owner_user_id)
+                    "SELECT id FROM sessions WHERE student_id=? AND end_time IS NULL LIMIT 1",
+                    (student_id)
                 ).fetchone()
             
             if open_session:
@@ -548,11 +521,10 @@ def register_api_routes(app):
                         FROM sessions
                         WHERE student_id = ?
                           AND end_time IS NULL
-                          AND owner_user_id = ?
                         ORDER BY id DESC
                         LIMIT 1
                         """,
-                        (student_id, owner_user_id),
+                        (student_id),
                     ).fetchone()
                     if open_row:
                         sess_id, start = open_row
@@ -568,21 +540,19 @@ def register_api_routes(app):
                         conn.commit()
                         _trace_column3(
                             "toggle_checkout_db_updated",
-                            owner_user_id=owner_user_id,
                             student_id=student_id,
                             sess_id=sess_id,
                             duration=duration,
                             start=start,
                             end=end,
                         )
-                        email_result = _send_checkout_email(student, start, end, owner_user_id) or {}
+                        email_result = _send_checkout_email(student, start, end) or {}
                         checkout_email_status = email_result.get("status")
                         checkout_email_message = email_result.get("message")
-                cache_key = _students_list_cache_key(owner_user_id)
+                cache_key = _students_list_cache_key()
                 server_cache.invalidate(cache_key)
                 _trace_column3(
                     "toggle_checkout_complete",
-                    owner_user_id=owner_user_id,
                     student_id=student_id,
                     cache_key=cache_key,
                     checkout_email_status=checkout_email_status,
@@ -610,8 +580,8 @@ def register_api_routes(app):
                     }), 400
 
                 # Start a new session
-                timer_manager.start_session(student_id, owner_user_id)
-                server_cache.invalidate(_students_list_cache_key(owner_user_id))
+                timer_manager.start_session(student_id)
+                server_cache.invalidate(_students_list_cache_key())
                 return jsonify({
                     "action": "started",
                     "student_id": student_id,
@@ -628,13 +598,12 @@ def register_api_routes(app):
         - Deletes sessions whose start_time is today
         - Clears active cache for dashboard columns
         """
-        owner_user_id = auth_manager.get_current_user_id()
         # Stop any active timers first
         with sqlite3.connect(DB_PATH) as conn:
             c = conn.cursor()
             open_rows = c.execute(
-                "SELECT id, student_id, start_time FROM sessions WHERE end_time IS NULL AND owner_user_id = ?",
-                (owner_user_id,)
+                "SELECT id, student_id, start_time FROM sessions WHERE end_time IS NULL",
+                ()
             ).fetchall()
             end = time_now()
             for sess_id, sid, start in open_rows:
@@ -651,11 +620,11 @@ def register_api_routes(app):
         today = datetime.now().date().isoformat()
         with sqlite3.connect(DB_PATH) as conn:
             c = conn.cursor()
-            c.execute("DELETE FROM sessions WHERE DATE(start_time)=? AND owner_user_id = ?", (today, owner_user_id))
+            c.execute("DELETE FROM sessions WHERE DATE(start_time)=?", (today))
             deleted = c.rowcount
             conn.commit()
 
-        server_cache.invalidate(_students_list_cache_key(owner_user_id))
+        server_cache.invalidate(_students_list_cache_key())
         return jsonify({"deleted": deleted, "date": today})
 
     @app.route("/api/assistants/profiles")
@@ -663,10 +632,8 @@ def register_api_routes(app):
     @require_feature(auth_manager.FEATURE_ASSISTANTS)
     def api_assistants_profiles():
         """Return assistant static profile list with longer TTL lane."""
-        owner_user_id = auth_manager.get_current_user_id()
-
         def _build_profiles_payload():
-            rows = assistant_manager.get_all_assistants(owner_user_id=owner_user_id)
+            rows = assistant_manager.get_all_assistants()
             return [
                 dict(
                     id=a[0],
@@ -679,7 +646,7 @@ def register_api_routes(app):
             ]
 
         payload = server_cache.get_or_set(
-            _assistants_profile_cache_key(owner_user_id),
+            _assistants_profile_cache_key(),
             _build_profiles_payload,
             policy="assistant_profile",
         )
@@ -692,15 +659,13 @@ def register_api_routes(app):
         """Return all assistants with on-duty status and start time.
         DB is the source of truth: an "open" assistant_sessions row (end_time NULL) => on duty.
         """
-        owner_user_id = auth_manager.get_current_user_id()
-
         def _build_duty_payload():
-            assistants = assistant_manager.get_all_assistants(owner_user_id=owner_user_id)
+            assistants = assistant_manager.get_all_assistants()
             with sqlite3.connect(DB_PATH) as conn:
                 c = conn.cursor()
                 open_rows = c.execute(
-                    "SELECT assistant_id, start_time FROM assistant_sessions WHERE end_time IS NULL AND owner_user_id = ?",
-                    (owner_user_id,),
+                    "SELECT assistant_id, start_time FROM assistant_sessions WHERE end_time IS NULL",
+                    (),
                 ).fetchall()
             open_map = {aid: start for (aid, start) in open_rows}
             result = []
@@ -720,7 +685,7 @@ def register_api_routes(app):
             return result
 
         payload = server_cache.get_or_set(
-            _assistants_duty_cache_key(owner_user_id),
+            _assistants_duty_cache_key(),
             _build_duty_payload,
             policy="assistant_duty",
         )
@@ -733,8 +698,7 @@ def register_api_routes(app):
         """Toggle assistant on/off duty with payroll time tracking.
         Uses DB open-row semantics so checkout works reliably (even after restarts).
         """
-        owner_user_id = auth_manager.get_current_user_id()
-        assistant = assistant_manager.get_assistant(aid, owner_user_id=owner_user_id)
+        assistant = assistant_manager.get_assistant(aid)
         if not assistant:
             return jsonify({"error": "Staff member not found"}), 404
 
@@ -742,8 +706,8 @@ def register_api_routes(app):
         with sqlite3.connect(DB_PATH) as conn:
             cur = conn.cursor()
             open_row = cur.execute(
-                "SELECT id, start_time FROM assistant_sessions WHERE assistant_id=? AND end_time IS NULL AND owner_user_id = ? ORDER BY id DESC LIMIT 1",
-                (aid, owner_user_id)
+                "SELECT id, start_time FROM assistant_sessions WHERE assistant_id=? AND end_time IS NULL ORDER BY id DESC LIMIT 1",
+                (aid)
             ).fetchone()
 
             if open_row:
@@ -758,14 +722,14 @@ def register_api_routes(app):
                     (now.isoformat(), duration, sess_id)
                 )
                 conn.commit()
-                server_cache.invalidate(_assistants_duty_cache_key(owner_user_id))
+                server_cache.invalidate(_assistants_duty_cache_key())
                 return jsonify({"success": True, "on_duty": False, "duration": duration})
             else:
                 # Start new open session
                 cur.execute(
-                    "INSERT INTO assistant_sessions (assistant_id, start_time, end_time, duration, owner_user_id) VALUES (?,?,NULL,NULL,?)",
-                    (aid, now.isoformat(), owner_user_id)
+                    "INSERT INTO assistant_sessions (assistant_id, start_time, end_time, duration) VALUES (?,?,NULL,NULL,?)",
+                    (aid, now.isoformat())
                 )
                 conn.commit()
-                server_cache.invalidate(_assistants_duty_cache_key(owner_user_id))
+                server_cache.invalidate(_assistants_duty_cache_key())
                 return jsonify({"success": True, "on_duty": True})

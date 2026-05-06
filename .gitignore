@@ -26,5 +26,8 @@ dist/
 data/*.db
 data/backups/
 
+# Machine-local Google Drive / network DB config (never commit this)
+db_config.json
+
 # Local logs
 *.log

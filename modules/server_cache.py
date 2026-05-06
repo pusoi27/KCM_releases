@@ -41,7 +41,7 @@ _lock = RLock()
 _store: Dict[str, _CacheEntry] = {}
 
 
-# Shared cache key base strings (all runtime keys append :u:{owner_user_id})
+# Shared cache key base strings
 STUDENTS_LIST_CACHE_KEY = "students:list:v1"
 STUDENT_GOAL_CACHE_PREFIX = "students:goal:v1:"
 BOOKS_CATALOG_CACHE_KEY = "books:catalog:v1"

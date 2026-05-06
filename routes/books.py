@@ -36,37 +36,33 @@ def _parse_non_negative_int(value, default=0):
     return max(parsed, 0)
 
 
-def _books_catalog_cache_key(owner_user_id: int) -> str:
-    return f"{server_cache.BOOKS_CATALOG_CACHE_KEY}:u:{owner_user_id}"
+def _books_catalog_cache_key() -> str:
+    return server_cache.BOOKS_CATALOG_CACHE_KEY
 
+def _book_detail_cache_key(book_id) -> str:
+    return f"books:detail:v2:{book_id}"
 
-def _book_detail_cache_key(owner_user_id: int, book_id: int) -> str:
-    return f"books:detail:v2:u:{owner_user_id}:{book_id}"
+def _book_detail_prefix() -> str:
+    return "books:detail:v2:"
 
+def _students_list_cache_key() -> str:
+    return server_cache.STUDENTS_LIST_CACHE_KEY
 
-def _book_detail_prefix(owner_user_id: int) -> str:
-    return f"books:detail:v2:u:{owner_user_id}:"
-
-
-def _students_list_cache_key(owner_user_id: int) -> str:
-    return f"{server_cache.STUDENTS_LIST_CACHE_KEY}:u:{owner_user_id}"
-
-
-def _invalidate_books_cache(owner_user_id: int, book_id=None):
+def _invalidate_books_cache(book_id=None):
     """Invalidate books catalog lane and optionally one book detail lane."""
-    server_cache.invalidate(_books_catalog_cache_key(owner_user_id))
+    server_cache.invalidate(_books_catalog_cache_key())
     if book_id is not None:
         try:
-            server_cache.invalidate(_book_detail_cache_key(owner_user_id, int(book_id)))
+            server_cache.invalidate(_book_detail_cache_key(book_id))
         except (TypeError, ValueError):
             pass
 
 
-def _invalidate_book_sync_caches(owner_user_id: int):
-    """Invalidate all tenant-scoped caches touched by book/student sync."""
-    server_cache.invalidate(_students_list_cache_key(owner_user_id))
-    server_cache.invalidate(_books_catalog_cache_key(owner_user_id))
-    server_cache.invalidate_prefix(_book_detail_prefix(owner_user_id))
+def _invalidate_book_sync_caches():
+    """Invalidate all caches touched by book/student sync."""
+    server_cache.invalidate(_students_list_cache_key())
+    server_cache.invalidate(_books_catalog_cache_key())
+    server_cache.invalidate_prefix(_book_detail_prefix())
 
 
 def register_book_routes(app):
@@ -85,8 +81,7 @@ def register_book_routes(app):
     @require_login
     @require_feature(auth_manager.FEATURE_BOOKS)
     def books_edit(book_id: int):
-        owner_user_id = auth_manager.get_current_user_id()
-        book = get_book(book_id, owner_user_id=owner_user_id)
+        book = get_book(book_id)
         if not book:
             flash("Book not found", "danger")
             return redirect(url_for("books_list"))
@@ -97,11 +92,10 @@ def register_book_routes(app):
     @require_feature(auth_manager.FEATURE_BOOKS)
     def books_list():
         """Display all books in the library."""
-        owner_user_id = auth_manager.get_current_user_id()
         try:
             # Normalize DB: any book without ISBN should be unavailable
-            enforce_isbn_availability_rule(owner_user_id=owner_user_id)
-            books = get_books(owner_user_id=owner_user_id)
+            enforce_isbn_availability_rule()
+            books = get_books()
             
             # Convert to list of dicts for easier template rendering
             books_list = []
@@ -109,7 +103,7 @@ def register_book_routes(app):
                 borrower_id = book[9] if len(book) > 9 else None
                 borrower_name = None
                 if borrower_id:
-                    student = get_student(borrower_id, owner_user_id=owner_user_id)
+                    student = get_student(borrower_id)
                     if student:
                         borrower_name = student[1] if len(student) > 1 else None
                 
@@ -146,16 +140,14 @@ def register_book_routes(app):
     @require_feature(auth_manager.FEATURE_BOOKS)
     def api_books_catalog():
         """Return full book catalog details with slower cache lane."""
-        owner_user_id = auth_manager.get_current_user_id()
-
         def _build_catalog_payload():
-            enforce_isbn_availability_rule(owner_user_id=owner_user_id)
-            rows = get_books(owner_user_id=owner_user_id)
-            books_payload = [_book_row_to_dict(row, owner_user_id=owner_user_id) for row in rows]
+            enforce_isbn_availability_rule()
+            rows = get_books()
+            books_payload = [_book_row_to_dict(row) for row in rows]
             return {'books': books_payload, 'count': len(books_payload)}
 
         payload = server_cache.get_or_set(
-            _books_catalog_cache_key(owner_user_id),
+            _books_catalog_cache_key(),
             _build_catalog_payload,
             policy="book_catalog",
         )
@@ -166,20 +158,18 @@ def register_book_routes(app):
     @require_feature(auth_manager.FEATURE_BOOKS)
     def api_books_search():
         """API endpoint to search/filter books."""
-        owner_user_id = auth_manager.get_current_user_id()
         query = request.args.get('q', '').strip().lower()
         level = request.args.get('level', '').strip()
         
         try:
             # Normalize DB before search
-            enforce_isbn_availability_rule(owner_user_id=owner_user_id)
+            enforce_isbn_availability_rule()
             conn = sqlite3.connect(DB_PATH)
             c = conn.cursor()
             
             # Build dynamic query
-            sql = "SELECT id, title, author, available, reading_level, isbn, isbn13, publisher, copies, borrower_id FROM books WHERE owner_user_id = ?"
-            params = [owner_user_id]
-            
+            sql = "SELECT id, title, author, available, reading_level, isbn, isbn13, publisher, copies, borrower_id FROM books WHERE 1=1"
+            params = []
             if query:
                 sql += " AND (title LIKE ? OR author LIKE ? OR publisher LIKE ? OR isbn LIKE ? OR isbn13 LIKE ?)"
                 search_term = f"%{query}%"
@@ -198,7 +188,7 @@ def register_book_routes(app):
             books_list = []
             for book in books:
                 # Use helper to include borrower_name and derived fields
-                data = _book_row_to_dict(book, owner_user_id=owner_user_id)
+                data = _book_row_to_dict(book)
                 books_list.append(data)
             
             return jsonify({'books': books_list, 'count': len(books_list)})
@@ -210,11 +200,10 @@ def register_book_routes(app):
     @require_feature(auth_manager.FEATURE_BOOKS)
     def api_books_levels():
         """Get all unique reading levels."""
-        owner_user_id = auth_manager.get_current_user_id()
         try:
             conn = sqlite3.connect(DB_PATH)
             c = conn.cursor()
-            c.execute("SELECT DISTINCT reading_level FROM books WHERE owner_user_id = ? ORDER BY reading_level", (owner_user_id,))
+            c.execute("SELECT DISTINCT reading_level FROM books WHERE reading_level IS NOT NULL ORDER BY reading_level")
             levels = [row[0] for row in c.fetchall()]
             conn.close()
             return jsonify({'levels': levels})
@@ -226,9 +215,7 @@ def register_book_routes(app):
     @require_feature(auth_manager.FEATURE_BOOKS)
     def books_loan_page():
         from datetime import datetime
-        owner_user_id = auth_manager.get_current_user_id()
-        
-        loaned_books = get_loaned_books_detailed(owner_user_id=owner_user_id)
+        loaned_books = get_loaned_books_detailed()
         
         # Group books by student for display
         books_by_student = {}
@@ -269,7 +256,6 @@ def register_book_routes(app):
     @require_login
     def api_students_suggest():
         """Return student name suggestions for autocomplete."""
-        owner_user_id = auth_manager.get_current_user_id()
         q = (request.args.get('q') or '').strip()
         if not q or len(q) < 3:
             return jsonify({'suggestions': []})
@@ -277,8 +263,8 @@ def register_book_routes(app):
         with sqlite3.connect(DB_PATH) as conn:
             c = conn.cursor()
             rows = c.execute(
-                "SELECT id, name FROM students WHERE lower(name) LIKE lower(?) AND owner_user_id = ? ORDER BY name LIMIT 10",
-                (f"{q}%", owner_user_id)
+                "SELECT id, name FROM students WHERE lower(name) LIKE lower(?) ORDER BY name LIMIT 10",
+                (f"{q}%")
             ).fetchall()
             suggestions = [{'id': row[0], 'name': row[1]} for row in rows]
             return jsonify({'suggestions': suggestions})
@@ -287,7 +273,6 @@ def register_book_routes(app):
     @require_login
     def api_students_lookup():
         """Lookup a student by id (numeric) or exact name (case-insensitive)."""
-        owner_user_id = auth_manager.get_current_user_id()
         q = (request.args.get('q') or '').strip()
         if not q:
             return jsonify({'error': 'Student query is required.'}), 400
@@ -298,20 +283,20 @@ def register_book_routes(app):
         qr_match = re.match(r'^ID:(\d+)', q)
         if qr_match:
             student_id = int(qr_match.group(1))
-            student = get_student(student_id, owner_user_id=owner_user_id)
+            student = get_student(student_id)
             if student:
                 return jsonify({'student': {'id': student[0], 'name': student[1]}})
         
         if q.isdigit():
-            student = get_student(int(q), owner_user_id=owner_user_id)
+            student = get_student(int(q))
             if student:
                 return jsonify({'student': {'id': student[0], 'name': student[1]}})
         # name lookup
         with sqlite3.connect(DB_PATH) as conn:
             c = conn.cursor()
             row = c.execute(
-                "SELECT id, name FROM students WHERE lower(name) = lower(?) AND owner_user_id = ? LIMIT 1",
-                (q, owner_user_id)
+                "SELECT id, name FROM students WHERE lower(name) = lower(?) LIMIT 1",
+                (q)
             ).fetchone()
             if row:
                 return jsonify({'student': {'id': row[0], 'name': row[1]}})
@@ -324,7 +309,6 @@ def register_book_routes(app):
     @require_login
     @require_feature(auth_manager.FEATURE_BOOKS)
     def api_books_isbn_lookup():
-        owner_user_id = auth_manager.get_current_user_id()
         isbn_raw = (request.args.get('isbn') or '').strip()
         isbn = _sanitize_isbn(isbn_raw)
 
@@ -337,25 +321,25 @@ def register_book_routes(app):
             return jsonify({'error': f"Lookup failed: {e}"}), 502
 
         # Check for existing book by ISBN
-        existing_by_isbn = find_book_by_isbn(isbn, owner_user_id=owner_user_id)
+        existing_by_isbn = find_book_by_isbn(isbn)
         isbn_existing_id = existing_by_isbn[0] if existing_by_isbn else None
         isbn_existing_book = None
         if isbn_existing_id:
-            isbn_existing_book = get_book(isbn_existing_id, owner_user_id=owner_user_id)
+            isbn_existing_book = get_book(isbn_existing_id)
 
         # Check for existing book by title
-        existing = find_book_by_title(data.get('title'), owner_user_id=owner_user_id) if data.get('title') else None
+        existing = find_book_by_title(data.get('title')) if data.get('title') else None
         existing_id = existing[0] if existing else None
         existing_book = None
         if existing_id:
-            existing_book = get_book(existing_id, owner_user_id=owner_user_id)
+            existing_book = get_book(existing_id)
 
         return jsonify({
             'book': data,
             'existing_id': existing_id,
-            'existing_book': _book_row_to_dict(existing_book, owner_user_id=owner_user_id) if existing_book else None,
+            'existing_book': _book_row_to_dict(existing_book) if existing_book else None,
             'isbn_existing_id': isbn_existing_id,
-            'isbn_existing_book': _book_row_to_dict(isbn_existing_book, owner_user_id=owner_user_id) if isbn_existing_book else None,
+            'isbn_existing_book': _book_row_to_dict(isbn_existing_book) if isbn_existing_book else None,
             'message': "Book found" if data else "No data found",
         })
 
@@ -366,7 +350,6 @@ def register_book_routes(app):
     @require_login
     @require_feature(auth_manager.FEATURE_BOOKS)
     def api_books_save():
-        owner_user_id = auth_manager.get_current_user_id()
         payload = request.get_json(silent=True) or {}
 
         title = (payload.get('title') or '').strip()
@@ -380,7 +363,7 @@ def register_book_routes(app):
 
         # If existing_id not provided, try to find by title to prevent duplicates
         if not existing_id and title:
-            existing = find_book_by_title(title, owner_user_id=owner_user_id)
+            existing = find_book_by_title(title)
             if existing:
                 existing_id = existing[0]
 
@@ -398,10 +381,9 @@ def register_book_routes(app):
                     copies=copies,
                     # Availability is derived from ISBN + copies + borrower state.
                     available=1 if (copies > 0 and (isbn or isbn13)) else 0,
-                    borrower_id=payload.get('borrower_id') if payload.get('borrower_id') is not None else None,
-                    owner_user_id=owner_user_id,
+                    borrower_id=payload.get('borrower_id') if payload.get('borrower_id') is not None else None
                 )
-                _invalidate_books_cache(owner_user_id, existing_id)
+                _invalidate_books_cache(existing_id)
                 return jsonify({'status': 'updated', 'id': existing_id})
             except Exception as e:
                 return jsonify({'error': str(e)}), 500
@@ -422,10 +404,9 @@ def register_book_routes(app):
                 # New books must have copies + ISBN to be loanable.
                 available=1 if (copies > 0 and (isbn or isbn13)) else 0,
                 reading_level=level,
-                copies=copies,
-                owner_user_id=owner_user_id,
+                copies=copies
             )
-            _invalidate_books_cache(owner_user_id, new_id)
+            _invalidate_books_cache(new_id)
             return jsonify({'status': 'created', 'id': new_id})
         except Exception as e:
             return jsonify({'error': str(e)}), 500
@@ -438,7 +419,6 @@ def register_book_routes(app):
     @require_feature(auth_manager.FEATURE_BOOKS)
     def api_books_increase_copies():
         """Increase the number of copies for an existing book."""
-        owner_user_id = auth_manager.get_current_user_id()
         payload = request.get_json(silent=True) or {}
         book_id = payload.get('id')
         additional_copies = _parse_non_negative_int(payload.get('additional_copies'), default=1)
@@ -448,7 +428,7 @@ def register_book_routes(app):
 
         try:
             # Get current book
-            book = get_book(book_id, owner_user_id=owner_user_id)
+            book = get_book(book_id)
             if not book:
                 return jsonify({'error': 'Book not found.'}), 404
 
@@ -456,8 +436,8 @@ def register_book_routes(app):
             new_copies = current_copies + additional_copies
 
             # Update copies count
-            update_book(book_id, copies=new_copies, owner_user_id=owner_user_id)
-            _invalidate_books_cache(owner_user_id, book_id)
+            update_book(book_id, copies=new_copies)
+            _invalidate_books_cache()
             return jsonify({'status': 'updated', 'id': book_id, 'new_copies': new_copies})
         except Exception as e:
             return jsonify({'error': str(e)}), 500
@@ -469,7 +449,6 @@ def register_book_routes(app):
     @require_login
     @require_feature(auth_manager.FEATURE_BOOKS)
     def api_books_loan():
-        owner_user_id = auth_manager.get_current_user_id()
         payload = request.get_json(silent=True) or {}
         book_id = payload.get('book_id')
         student_input = (payload.get('student_input') or '').strip()
@@ -481,7 +460,7 @@ def register_book_routes(app):
             return jsonify({'error': 'Student name or ID is required.'}), 400
 
         try:
-            book = get_book(book_id, owner_user_id=owner_user_id)
+            book = get_book(book_id)
             if not book:
                 return jsonify({'error': 'Book not found.'}), 404
             # Disallow loaning books without any ISBN
@@ -495,16 +474,16 @@ def register_book_routes(app):
             # Resolve student by explicit id, by numeric QR, or by name
             student_row = None
             if student_id:
-                student_row = get_student(int(student_id), owner_user_id=owner_user_id)
+                student_row = get_student(int(student_id))
             if not student_row and student_input:
                 if student_input.isdigit():
-                    student_row = get_student(int(student_input), owner_user_id=owner_user_id)
+                    student_row = get_student(int(student_input))
                 if not student_row:
                     with sqlite3.connect(DB_PATH) as conn:
                         c = conn.cursor()
                         row = c.execute(
-                            "SELECT id, name FROM students WHERE lower(name)=lower(?) AND owner_user_id = ? LIMIT 1",
-                            (student_input, owner_user_id)
+                            "SELECT id, name FROM students WHERE lower(name)=lower(?) LIMIT 1",
+                            (student_input)
                         ).fetchone()
                         if row:
                             student_row = (row[0], row[1])
@@ -512,10 +491,10 @@ def register_book_routes(app):
                 return jsonify({'error': 'Student not found.'}), 404
 
             student_id = student_row[0]
-            checkout_date = loan_book(book_id, student_id, owner_user_id=owner_user_id)
+            checkout_date = loan_book(book_id, student_id)
             if not checkout_date:
                 return jsonify({'error': 'Book or student not found for current user.'}), 404
-            _invalidate_books_cache(owner_user_id, book_id)
+            _invalidate_books_cache()
             return jsonify({
                 'status': 'loaned',
                 'book_id': book_id,
@@ -531,7 +510,6 @@ def register_book_routes(app):
     @require_feature(auth_manager.FEATURE_BOOKS)
     def api_books_clear_loan():
         """Clear an active loan directly from the loaned books table."""
-        owner_user_id = auth_manager.get_current_user_id()
         payload = request.get_json(silent=True) or {}
         book_id = payload.get('book_id')
         student_id = payload.get('student_id')
@@ -546,10 +524,10 @@ def register_book_routes(app):
             return jsonify({'error': 'Invalid book or student ID.'}), 400
 
         try:
-            cleared_at = clear_active_loan(book_id, student_id, owner_user_id=owner_user_id)
+            cleared_at = clear_active_loan(book_id, student_id)
             if not cleared_at:
                 return jsonify({'error': 'No active loan found for this student and book.'}), 404
-            _invalidate_books_cache(owner_user_id, book_id)
+            _invalidate_books_cache()
             return jsonify({'status': 'cleared', 'book_id': book_id, 'student_id': student_id, 'cleared_at': cleared_at})
         except Exception as e:
             return jsonify({'error': str(e)}), 500
@@ -558,19 +536,18 @@ def register_book_routes(app):
     @require_login
     @require_feature(auth_manager.FEATURE_BOOKS)
     def api_books_return():
-        owner_user_id = auth_manager.get_current_user_id()
         payload = request.get_json(silent=True) or {}
         book_id = payload.get('book_id')
         if not book_id:
             return jsonify({'error': 'Book ID is required.'}), 400
         try:
-            book = get_book(book_id, owner_user_id=owner_user_id)
+            book = get_book(book_id)
             if not book:
                 return jsonify({'error': 'Book not found.'}), 404
             if book[3]:
                 return jsonify({'error': 'Book is already available.'}), 400
-            return_date = return_book(book_id, owner_user_id=owner_user_id)
-            _invalidate_books_cache(owner_user_id, book_id)
+            return_date = return_book(book_id)
+            _invalidate_books_cache()
             return jsonify({'status': 'returned', 'book_id': book_id, 'return_date': return_date})
         except Exception as e:
             return jsonify({'error': str(e)}), 500
@@ -583,19 +560,17 @@ def register_book_routes(app):
     @require_feature(auth_manager.FEATURE_BOOKS)
     def api_books_sync_student_status():
         """Sync all students' book_loaned flag based on current book loans."""
-        owner_user_id = auth_manager.get_current_user_id()
         backup_path = db_backup_recovery.create_backup("books_sync_student_status")
         cache_invalidators = (
-            lambda: _invalidate_book_sync_caches(owner_user_id),
+            lambda: _invalidate_book_sync_caches(),
         )
         try:
-            count = sync_all_students_book_status(owner_user_id=owner_user_id)
+            count = sync_all_students_book_status()
             invalidate_scoped_cache(*cache_invalidators)
             return jsonify({'status': 'success', 'students_updated': count, 'backup': backup_path})
         except Exception as e:
             return json_scoped_failure(
                 backup_path=backup_path,
-                owner_user_id=owner_user_id,
                 table_names=("students", "books"),
                 error=e,
                 invalidators=cache_invalidators,
@@ -608,17 +583,15 @@ def register_book_routes(app):
     @require_login
     @require_feature(auth_manager.FEATURE_BOOKS)
     def api_books_get(book_id: int):
-        owner_user_id = auth_manager.get_current_user_id()
         try:
-            cache_key = _book_detail_cache_key(owner_user_id, book_id)
-
+            cache_key = _book_detail_cache_key(book_id)
             def _build_book_detail_payload():
-                book = get_book(book_id, owner_user_id=owner_user_id)
+                book = get_book(book_id)
                 if not book:
                     return None
-                data = _book_row_to_dict(book, owner_user_id=owner_user_id)
+                data = _book_row_to_dict(book)
                 if data.get('borrower_id'):
-                    student = get_student(data['borrower_id'], owner_user_id=owner_user_id)
+                    student = get_student(data['borrower_id'])
                     if student:
                         data['borrower_name'] = student[1]
                 return {'book': data}
@@ -641,11 +614,10 @@ def register_book_routes(app):
     @require_admin
     @require_feature(auth_manager.FEATURE_BOOKS)
     def books_delete(book_id: int):
-        owner_user_id = auth_manager.get_current_user_id()
         try:
-            success = delete_book(book_id, owner_user_id=owner_user_id)
+            success = delete_book(book_id)
             if success:
-                _invalidate_books_cache(owner_user_id, book_id)
+                _invalidate_books_cache()
                 flash("Book deleted", "success")
             else:
                 flash("Book not found", "warning")
@@ -732,13 +704,13 @@ def _first_text(items):
     return items[0].strip() if items else None
 
 
-def _book_row_to_dict(row, owner_user_id: int = 1):
+def _book_row_to_dict(row):
     if not row:
         return None
     borrower_id = row[9]
     borrower_name = None
     if borrower_id:
-        student = get_student(borrower_id, owner_user_id=owner_user_id)
+        student = get_student(borrower_id)
         if student:
             borrower_name = student[1] if len(student) > 1 else None
     

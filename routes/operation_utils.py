@@ -32,7 +32,6 @@ def build_scoped_failure_message(backup_path: str, error: object, restore_error:
 
 def restore_scoped_state(
     backup_path: str,
-    owner_user_id: int,
     table_names: Iterable[str],
     *invalidators: Callable[[], object],
 ) -> Exception | None:
@@ -43,7 +42,7 @@ def restore_scoped_state(
     """
     restore_error: Exception | None = None
     try:
-        db_backup_recovery.restore_tenant_rows(backup_path, owner_user_id, table_names)
+        db_backup_recovery.restore_tenant_rows(backup_path, *table_names)
     except Exception as exc:  # pragma: no cover - exceptional path exercised via routes
         restore_error = exc
     finally:
@@ -54,14 +53,13 @@ def restore_scoped_state(
 def flash_scoped_failure(
     *,
     backup_path: str,
-    owner_user_id: int,
     table_names: Iterable[str],
     error: object,
     category: str = "danger",
     invalidators: Iterable[Callable[[], object]] = (),
 ) -> Exception | None:
     """Restore tenant-scoped state and flash a standardized failure message."""
-    restore_error = restore_scoped_state(backup_path, owner_user_id, table_names, *tuple(invalidators))
+    restore_error = restore_scoped_state(backup_path, table_names=table_names, invalidators=invalidators)
     flash(build_scoped_failure_message(backup_path, error, restore_error), category)
     return restore_error
 
@@ -69,7 +67,6 @@ def flash_scoped_failure(
 def json_scoped_failure(
     *,
     backup_path: str,
-    owner_user_id: int,
     table_names: Iterable[str],
     error: object,
     invalidators: Iterable[Callable[[], object]] = (),
@@ -77,7 +74,7 @@ def json_scoped_failure(
     extra_payload: dict | None = None,
 ):
     """Restore tenant-scoped state and return a standardized JSON failure response."""
-    restore_error = restore_scoped_state(backup_path, owner_user_id, table_names, *tuple(invalidators))
+    restore_error = restore_scoped_state(backup_path, table_names=table_names, invalidators=invalidators)
     payload = {
         "error": str(error),
         "status": "restore_failed" if restore_error else "rolled_back",

@@ -65,8 +65,6 @@ def register_schedule_routes(app):
     @require_feature(auth_manager.FEATURE_ASSISTANTS)
     def schedule_assistants():
         """Display calendar-based assistant scheduling interface."""
-        owner_user_id = auth_manager.get_current_user_id()
-        
         # Get current month/year (or from query params)
         today = datetime.today().date()
         year = request.args.get("year", default=today.year, type=int)
@@ -81,7 +79,7 @@ def register_schedule_routes(app):
             year += 1
         
         # Get instructor profile to determine operating hours
-        profile = instructor_profile_manager.get_instructor_profile(owner_user_id)
+        profile = instructor_profile_manager.get_instructor_profile()
         
         # Map center operating hours by day of week (0=Monday, 6=Sunday)
         operating_days = {}
@@ -119,11 +117,11 @@ def register_schedule_routes(app):
         days_in_month = last_day.day
         
         # Get scheduled assistants for this month
-        scheduled = schedule_manager.get_assistants_schedule_for_month(year, month, owner_user_id)
-        closed_dates = schedule_manager.get_center_closed_dates_for_month(year, month, owner_user_id)
+        scheduled = schedule_manager.get_assistants_schedule_for_month(year, month)
+        closed_dates = schedule_manager.get_center_closed_dates_for_month(year, month)
         
         # Get all unscheduled assistants (pool)
-        all_assistants = assistant_manager.get_all_assistants(owner_user_id)
+        all_assistants = assistant_manager.get_all_assistants()
         
         # Build calendar weeks
         calendar_weeks = []
@@ -182,7 +180,6 @@ def register_schedule_routes(app):
     @require_feature(auth_manager.FEATURE_ASSISTANTS)
     def api_schedule_assign():
         """Assign an assistant to a date (drag-drop or form submission)."""
-        owner_user_id = auth_manager.get_current_user_id()
         data = request.get_json(silent=True) or {}
 
         try:
@@ -202,27 +199,26 @@ def register_schedule_routes(app):
             return jsonify({"error": "Invalid scheduled_date format; expected YYYY-MM-DD"}), 400
         
         # Verify assistant belongs to this user
-        asst = assistant_manager.get_assistant(assistant_id, owner_user_id)
+        asst = assistant_manager.get_assistant(assistant_id)
         if not asst:
             return jsonify({"error": "Staff member not found"}), 404
 
         # Enforce business rule server-side: assignments only on operating days
-        profile = instructor_profile_manager.get_instructor_profile(owner_user_id)
+        profile = instructor_profile_manager.get_instructor_profile()
         operating_weekdays = _get_operating_weekdays(profile)
         if parsed_date.weekday() not in operating_weekdays:
             return jsonify({"error": "Cannot schedule staff on closed days"}), 400
-        if schedule_manager.is_center_closed_date(scheduled_date, owner_user_id):
+        if schedule_manager.is_center_closed_date(scheduled_date):
             return jsonify({"error": "Cannot schedule staff on center-closed dates"}), 400
         
         success = schedule_manager.schedule_assistant(
-            assistant_id, scheduled_date, owner_user_id
-        )
+            assistant_id, scheduled_date)
         
         if success:
             return jsonify({"success": True, "message": "Staff scheduled"}), 200
 
         # Distinguish duplicate from other DB write errors when possible
-        if schedule_manager.is_assistant_scheduled(assistant_id, scheduled_date, owner_user_id):
+        if schedule_manager.is_assistant_scheduled(assistant_id, scheduled_date):
             return jsonify({"error": "Staff member already scheduled for this date"}), 400
         return jsonify({"error": "Unable to schedule staff member"}), 400
 
@@ -231,7 +227,6 @@ def register_schedule_routes(app):
     @require_feature(auth_manager.FEATURE_ASSISTANTS)
     def api_schedule_unassign():
         """Remove an assistant from a scheduled date."""
-        owner_user_id = auth_manager.get_current_user_id()
         data = request.get_json(silent=True) or {}
 
         try:
@@ -250,8 +245,7 @@ def register_schedule_routes(app):
             return jsonify({"error": "Invalid scheduled_date format; expected YYYY-MM-DD"}), 400
         
         count = schedule_manager.unschedule_assistant(
-            assistant_id, scheduled_date, owner_user_id
-        )
+            assistant_id, scheduled_date)
         
         if count > 0:
             return jsonify({"success": True, "message": "Staff unscheduled"}), 200
@@ -263,7 +257,6 @@ def register_schedule_routes(app):
     @require_feature(auth_manager.FEATURE_ASSISTANTS)
     def api_schedule_mark_closed():
         """Mark a specific date as center closed (holiday/closure)."""
-        owner_user_id = auth_manager.get_current_user_id()
         data = request.get_json(silent=True) or {}
 
         scheduled_date = data.get("scheduled_date")
@@ -279,13 +272,13 @@ def register_schedule_routes(app):
             return jsonify({"error": "Invalid scheduled_date format; expected YYYY-MM-DD"}), 400
 
         # Only allow explicit closure override on otherwise operating weekdays.
-        profile = instructor_profile_manager.get_instructor_profile(owner_user_id)
+        profile = instructor_profile_manager.get_instructor_profile()
         operating_weekdays = _get_operating_weekdays(profile)
         if parsed_date.weekday() not in operating_weekdays:
             return jsonify({"error": "Date is already closed by center weekly operating hours"}), 400
 
-        inserted = schedule_manager.set_center_closed_date(scheduled_date, reason, owner_user_id)
-        removed_count = schedule_manager.unschedule_all_assistants_for_date(scheduled_date, owner_user_id)
+        inserted = schedule_manager.set_center_closed_date(scheduled_date, reason)
+        removed_count = schedule_manager.unschedule_all_assistants_for_date(scheduled_date)
 
         return jsonify({
             "success": True,
@@ -299,7 +292,6 @@ def register_schedule_routes(app):
     @require_feature(auth_manager.FEATURE_ASSISTANTS)
     def api_schedule_unmark_closed():
         """Remove center closed override for a specific date."""
-        owner_user_id = auth_manager.get_current_user_id()
         data = request.get_json(silent=True) or {}
 
         scheduled_date = data.get("scheduled_date")
@@ -312,12 +304,12 @@ def register_schedule_routes(app):
         except ValueError:
             return jsonify({"error": "Invalid scheduled_date format; expected YYYY-MM-DD"}), 400
 
-        profile = instructor_profile_manager.get_instructor_profile(owner_user_id)
+        profile = instructor_profile_manager.get_instructor_profile()
         operating_weekdays = _get_operating_weekdays(profile)
         if parsed_date.weekday() not in operating_weekdays:
             return jsonify({"error": "Cannot reopen non-operating weekday"}), 400
 
-        removed = schedule_manager.unset_center_closed_date(scheduled_date, owner_user_id)
+        removed = schedule_manager.unset_center_closed_date(scheduled_date)
         return jsonify({
             "success": True,
             "message": "Center reopened",
@@ -329,7 +321,6 @@ def register_schedule_routes(app):
     @require_feature(auth_manager.FEATURE_ASSISTANTS)
     def schedule_assistants_pdf():
         """Export monthly assistant schedule as PDF."""
-        owner_user_id = auth_manager.get_current_user_id()
         today = datetime.today().date()
         year = request.args.get("year", default=today.year, type=int)
         month = request.args.get("month", default=today.month, type=int)
@@ -341,7 +332,7 @@ def register_schedule_routes(app):
             month = 1
             year += 1
 
-        profile = instructor_profile_manager.get_instructor_profile(owner_user_id)
+        profile = instructor_profile_manager.get_instructor_profile()
         operating_days = _get_operating_weekdays(profile)
 
         first_day = datetime(year, month, 1).date()
@@ -351,8 +342,8 @@ def register_schedule_routes(app):
         else:
             last_day = datetime(year, month + 1, 1).date() - timedelta(days=1)
 
-        scheduled = schedule_manager.get_assistants_schedule_for_month(year, month, owner_user_id)
-        closed_dates = schedule_manager.get_center_closed_dates_for_month(year, month, owner_user_id)
+        scheduled = schedule_manager.get_assistants_schedule_for_month(year, month)
+        closed_dates = schedule_manager.get_center_closed_dates_for_month(year, month)
 
         weeks = []
         week = [None] * 7

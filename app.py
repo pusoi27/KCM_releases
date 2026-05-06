@@ -155,8 +155,33 @@ profiler = RequestProfiler()
 
 @app.before_request
 def before_request_license_state():
-    """Load local license state and block access when the installation is unlicensed."""
-    g.license_status = license_manager.get_license_context()
+    """Load license state via LemonSqueezy (with local cache) and block access when unlicensed."""
+    # DEV_LICENSE_BYPASS=true skips all license enforcement for local development.
+    if os.getenv("DEV_LICENSE_BYPASS", "").strip().lower() == "true":
+        g.license_status = {
+            "is_valid": True,
+            "status": "valid",
+            "licensee": "Developer",
+            "email": "dev@localhost",
+            "expires_at": "2099-12-31",
+            "issued_at": "",
+            "days_remaining": None,
+            "machine_fingerprint": "*",
+            "machine_name": "dev",
+            "has_license_key": True,
+            "message": "Development bypass active.",
+            "default_home_endpoint": "dashboard",
+        }
+        g.current_user = license_manager.get_local_user(g.license_status)
+        return None
+
+    from modules import ls_license as _ls
+    ls_ctx = _ls.get_ls_license_context()
+    # Prefer LS context if an instance has been activated; fall back to local HMAC
+    if ls_ctx.get("has_license_key"):
+        g.license_status = ls_ctx
+    else:
+        g.license_status = license_manager.get_license_context()
     g.current_user = license_manager.get_local_user(g.license_status)
 
     allowed_endpoints = {
@@ -164,8 +189,10 @@ def before_request_license_state():
         'license_page',
         'activate_license',
         'remove_license',
+        'verify_license',
         'license_expired',
         'license_status_api',
+        'lemonsqueezy_webhook',
         'api_csrf_token',
         'healthz',
         'not_found',
@@ -274,13 +301,11 @@ def inject_app_version():
 @app.context_processor
 def inject_branding():
     """Inject profile-based branding and shared theme values into templates."""
-    current_user = g.get('current_user')
     profile = None
-    if current_user:
-        try:
-            profile = instructor_profile_manager.get_instructor_profile(owner_user_id=current_user.id)
-        except Exception:
-            profile = None
+    try:
+        profile = instructor_profile_manager.get_instructor_profile()
+    except Exception:
+        profile = None
 
     center_name = (profile.get('center_location') if profile else None) or 'Stdytime'
     return dict(
@@ -522,6 +547,20 @@ def _auto_generate_missing_qr_codes():
 
 
 _auto_generate_missing_qr_codes()
+
+
+# ================================================================
+#  LemonSqueezy license verify on startup
+# ================================================================
+def _startup_verify_ls_license():
+    try:
+        from modules import ls_license as _ls
+        valid, message = _ls.verify_ls_license()
+        print(f"[startup] LS license: {message}")
+    except Exception as exc:
+        print(f"[startup] LS license check skipped: {exc}")
+
+_startup_verify_ls_license()
 
 
 # ================================================================

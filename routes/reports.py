@@ -23,7 +23,6 @@ def register_reports_routes(app):
     @require_feature(auth_manager.FEATURE_INSTRUCTOR_REPORTS)
     def reports_assistants():
         """Display staff hours report page with date range selection."""
-        owner_user_id = auth_manager.get_current_user_id()
         # Default date suggestions (last 30 days)
         today = datetime.today().date()
         default_start = (today - timedelta(days=30)).isoformat()
@@ -61,7 +60,7 @@ def register_reports_routes(app):
             
             # Fetch data if no error
             if show_data and not error and start_date and end_date:
-                summary = reports.get_assistant_hours_between(start_date.isoformat(), end_date.isoformat(), owner_user_id=owner_user_id)
+                summary = reports.get_assistant_hours_between(start_date.isoformat(), end_date.isoformat())
                 # Convert to HH:MM format
                 for name, sessions_count, total_sec in summary:
                     hours = int(total_sec // 3600)
@@ -88,7 +87,6 @@ def register_reports_routes(app):
     @require_feature(auth_manager.FEATURE_INSTRUCTOR_REPORTS)
     def reports_assistants_pdf():
         """Generate PDF of staff hours report with date range."""
-        owner_user_id = auth_manager.get_current_user_id()
         start_param = request.args.get('start')
         end_param = request.args.get('end')
         
@@ -107,7 +105,7 @@ def register_reports_routes(app):
         if end_date < start_date:
             return "End date must be on or after start date", 400
         
-        summary = reports.get_assistant_hours_between(start_param, end_param, owner_user_id=owner_user_id)
+        summary = reports.get_assistant_hours_between(start_param, end_param)
         
         buffer = io.BytesIO()
         canv = canvas.Canvas(buffer, pagesize=letter)
@@ -152,14 +150,13 @@ def register_reports_routes(app):
     @require_feature(auth_manager.FEATURE_INSTRUCTOR_REPORTS)
     def reports_assistants_csv():
         """Generate CSV of staff duty log with date range."""
-        owner_user_id = auth_manager.get_current_user_id()
         start = request.args.get('start')
         end = request.args.get('end')
         if not start or not end:
             return redirect(url_for('reports_assistants'))
         
-        sessions = reports.get_assistant_sessions_between(start, end, owner_user_id=owner_user_id)
-        summary = reports.get_assistant_hours_between(start, end, owner_user_id=owner_user_id)
+        sessions = reports.get_assistant_sessions_between(start, end)
+        summary = reports.get_assistant_hours_between(start, end)
         
         si = io.StringIO()
         writer = csv.writer(si)
@@ -202,7 +199,6 @@ def register_reports_routes(app):
     @require_feature(auth_manager.FEATURE_INSTRUCTOR_REPORTS)
     def class_attendance_page():
         """HTML page: Class attendance with date pickers and Print to PDF."""
-        owner_user_id = auth_manager.get_current_user_id()
         # Defaults: last 7 days inclusive
         today = datetime.today().date()
         default_start = (today - timedelta(days=7)).isoformat()
@@ -239,13 +235,11 @@ def register_reports_routes(app):
                     FROM sessions AS sess
                     JOIN students AS s ON s.id = sess.student_id
                     WHERE s.active = 1
-                      AND s.owner_user_id = ?
-                      AND sess.owner_user_id = ?
                       AND DATE(sess.start_time) >= ? AND DATE(sess.start_time) <= ?
                     ORDER BY day, s.name
                     """
                 )
-                c.execute(query, (owner_user_id, owner_user_id, start_date.isoformat(), end_date.isoformat()))
+                c.execute(query, (start_date.isoformat(), end_date.isoformat()))
                 rows = c.fetchall()
 
             for day, name in rows:
@@ -274,7 +268,6 @@ def register_reports_routes(app):
     @require_feature(auth_manager.FEATURE_INSTRUCTOR_REPORTS)
     def class_attendance_pdf():
         """Generate PDF: Class attendance by date with active student list."""
-        owner_user_id = auth_manager.get_current_user_id()
         start_param = request.args.get('start')
         end_param = request.args.get('end')
         if not start_param or not end_param:
@@ -301,12 +294,10 @@ def register_reports_routes(app):
                 FROM sessions AS sess
                 JOIN students AS s ON s.id = sess.student_id
                 WHERE s.active = 1
-                  AND s.owner_user_id = ?
-                  AND sess.owner_user_id = ?
                   AND DATE(sess.start_time) >= ? AND DATE(sess.start_time) <= ?
                 ORDER BY day, s.name
             """
-            c.execute(query, (owner_user_id, owner_user_id, start_date.isoformat(), end_date.isoformat()))
+            c.execute(query, (start_date.isoformat(), end_date.isoformat()))
             rows = c.fetchall()
 
         by_day = {}
@@ -380,8 +371,7 @@ def register_reports_routes(app):
     @require_feature(auth_manager.FEATURE_INSTRUCTOR_REPORTS)
     def student_attendance_page():
         """HTML page: Student attendance with student picker, date range, and report table."""
-        owner_user_id = auth_manager.get_current_user_id()
-        students = student_manager.get_all_students(owner_user_id=owner_user_id)
+        students = student_manager.get_all_students()
         
         # Defaults: last 7 days and first student (or none if no students)
         today = datetime.today().date()
@@ -416,18 +406,17 @@ def register_reports_routes(app):
         if sid and not error:
             with sqlite3.connect(DB_PATH) as conn:
                 c = conn.cursor()
-                srow = c.execute("SELECT name FROM students WHERE id=? AND owner_user_id=?", (sid, owner_user_id)).fetchone()
+                srow = c.execute("SELECT name FROM students WHERE id=?", (sid)).fetchone()
                 if srow:
                     student_name = srow[0]
                     q = """
                         SELECT DATE(start_time) as day, TIME(start_time) as start_time, duration
                         FROM sessions
                         WHERE student_id = ?
-                          AND owner_user_id = ?
                           AND DATE(start_time) >= ? AND DATE(start_time) <= ?
                         ORDER BY start_time ASC
                     """
-                    c.execute(q, (sid, owner_user_id, start_date.isoformat(), end_date.isoformat()))
+                    c.execute(q, (sid, start_date.isoformat(), end_date.isoformat()))
                     sessions = c.fetchall()
         
         # Format sessions for display
@@ -456,7 +445,6 @@ def register_reports_routes(app):
     @require_feature(auth_manager.FEATURE_INSTRUCTOR_REPORTS)
     def student_attendance_pdf():
         """Generate PDF: Student session history with durations in HH:MM format."""
-        owner_user_id = auth_manager.get_current_user_id()
         sid = request.args.get('sid', type=int)
         start_param = request.args.get('start')
         end_param = request.args.get('end')
@@ -479,7 +467,7 @@ def register_reports_routes(app):
 
         with sqlite3.connect(DB_PATH) as conn:
             c = conn.cursor()
-            srow = c.execute("SELECT name FROM students WHERE id=? AND owner_user_id=?", (sid, owner_user_id)).fetchone()
+            srow = c.execute("SELECT name FROM students WHERE id=?", (sid)).fetchone()
             if not srow:
                 return "Student not found", 404
             student_name = srow[0]
@@ -488,11 +476,10 @@ def register_reports_routes(app):
                 SELECT DATE(start_time) as day, TIME(start_time) as start_time, duration
                 FROM sessions
                 WHERE student_id = ?
-                  AND owner_user_id = ?
                   AND DATE(start_time) >= ? AND DATE(start_time) <= ?
                 ORDER BY start_time ASC
             """
-            c.execute(q, (sid, owner_user_id, start_date.isoformat(), end_date.isoformat()))
+            c.execute(q, (sid, start_date.isoformat(), end_date.isoformat()))
             sessions = c.fetchall()
 
         buffer = io.BytesIO()
@@ -546,8 +533,7 @@ def register_reports_routes(app):
     @require_feature(auth_manager.FEATURE_INSTRUCTOR_REPORTS)
     def loaned_books_report():
         """Display report of all currently loaned books."""
-        owner_user_id = auth_manager.get_current_user_id()
-        loaned_books = book_manager.get_loaned_books(owner_user_id=owner_user_id)
+        loaned_books = book_manager.get_loaned_books()
         
         # Group books by student for display
         books_by_student = {}

@@ -1,4 +1,4 @@
-#*****************************
+﻿#*****************************
 # schedule_manager.py - Assistant scheduling by day
 # Version: 1.0.0
 #*****************************
@@ -11,7 +11,7 @@ from datetime import datetime, timedelta
 from modules.database import DB_PATH
 
 
-def schedule_assistant(assistant_id, scheduled_date, owner_user_id: int = 1):
+def schedule_assistant(assistant_id, scheduled_date):
     """
     Schedule an assistant for a specific date (YYYY-MM-DD format).
     Returns True if inserted, False if already scheduled.
@@ -20,9 +20,9 @@ def schedule_assistant(assistant_id, scheduled_date, owner_user_id: int = 1):
         c = conn.cursor()
         try:
             c.execute(
-                """INSERT INTO assistant_schedule (assistant_id, scheduled_date, owner_user_id)
+                """INSERT INTO assistant_schedule (assistant_id, scheduled_date)
                    VALUES (?, ?, ?)""",
-                (assistant_id, scheduled_date, owner_user_id),
+                (assistant_id, scheduled_date),
             )
             conn.commit()
             return True
@@ -31,7 +31,7 @@ def schedule_assistant(assistant_id, scheduled_date, owner_user_id: int = 1):
             return False
 
 
-def unschedule_assistant(assistant_id, scheduled_date, owner_user_id: int = 1):
+def unschedule_assistant(assistant_id, scheduled_date):
     """
     Remove an assistant from a scheduled date.
     Returns number of rows deleted.
@@ -40,14 +40,14 @@ def unschedule_assistant(assistant_id, scheduled_date, owner_user_id: int = 1):
         c = conn.cursor()
         c.execute(
             """DELETE FROM assistant_schedule 
-               WHERE assistant_id = ? AND scheduled_date = ? AND owner_user_id = ?""",
-            (assistant_id, scheduled_date, owner_user_id),
+               WHERE assistant_id = ? AND scheduled_date = ?""",
+            (assistant_id, scheduled_date),
         )
         conn.commit()
         return c.rowcount
 
 
-def get_scheduled_assistants_for_date(scheduled_date, owner_user_id: int = 1):
+def get_scheduled_assistants_for_date(scheduled_date):
     """
     Fetch all assistants scheduled for a specific date.
     Returns list of (assistant_id, name, role, email, phone).
@@ -59,28 +59,28 @@ def get_scheduled_assistants_for_date(scheduled_date, owner_user_id: int = 1):
                FROM staff s
                INNER JOIN assistant_schedule a
                  ON s.id = a.assistant_id
-               WHERE a.scheduled_date = ? AND a.owner_user_id = ? AND s.owner_user_id = ?
+               WHERE a.scheduled_date = ?
                ORDER BY s.name""",
-            (scheduled_date, owner_user_id, owner_user_id),
+            (scheduled_date),
         )
         return c.fetchall()
 
 
-def is_assistant_scheduled(assistant_id, scheduled_date, owner_user_id: int = 1):
+def is_assistant_scheduled(assistant_id, scheduled_date):
     """Return True if the assistant is already scheduled for the given date and owner."""
     with sqlite3.connect(DB_PATH) as conn:
         c = conn.cursor()
         row = c.execute(
             """SELECT 1
                FROM assistant_schedule
-               WHERE assistant_id = ? AND scheduled_date = ? AND owner_user_id = ?
+               WHERE assistant_id = ? AND scheduled_date = ?
                LIMIT 1""",
-            (assistant_id, scheduled_date, owner_user_id),
+            (assistant_id, scheduled_date),
         ).fetchone()
         return row is not None
 
 
-def get_unscheduled_assistants(owner_user_id: int = 1):
+def get_unscheduled_assistants():
     """
     Fetch all assistants not currently in the schedule.
     Returns list of (assistant_id, name, role, email, phone).
@@ -90,14 +90,13 @@ def get_unscheduled_assistants(owner_user_id: int = 1):
         c.execute(
             """SELECT id, name, role, email, phone
                FROM staff
-               WHERE owner_user_id = ?
-               ORDER BY name""",
-            (owner_user_id,),
+               WHERE               ORDER BY name""",
+            (),
         )
         return c.fetchall()
 
 
-def get_assistants_schedule_for_month(year, month, owner_user_id: int = 1):
+def get_assistants_schedule_for_month(year, month):
     """
     Fetch all scheduled assistants for a given month.
     Returns dict: {YYYY-MM-DD: [(assistant_id, name, role, email, phone), ...]}.
@@ -118,9 +117,9 @@ def get_assistants_schedule_for_month(year, month, owner_user_id: int = 1):
             """SELECT a.scheduled_date, s.id, s.name, s.role, s.email, s.phone
                FROM assistant_schedule a
                INNER JOIN staff s ON s.id = a.assistant_id
-               WHERE a.scheduled_date BETWEEN ? AND ? AND a.owner_user_id = ? AND s.owner_user_id = ?
+               WHERE a.scheduled_date BETWEEN ? AND ?
                ORDER BY a.scheduled_date, s.name""",
-            (start_str, end_str, owner_user_id, owner_user_id),
+            (start_str, end_str),
         )
         
         result = {}
@@ -134,7 +133,7 @@ def get_assistants_schedule_for_month(year, month, owner_user_id: int = 1):
         return result
 
 
-def set_center_closed_date(closed_date, reason="Holiday / Center Closed", owner_user_id: int = 1):
+def set_center_closed_date(closed_date, reason="Holiday / Center Closed"):
     """
     Mark a specific date as center-closed for the owner.
     Returns True if inserted, False if already marked.
@@ -143,9 +142,9 @@ def set_center_closed_date(closed_date, reason="Holiday / Center Closed", owner_
         c = conn.cursor()
         try:
             c.execute(
-                """INSERT INTO center_closed_dates (closed_date, reason, owner_user_id)
+                """INSERT INTO center_closed_dates (closed_date, reason)
                    VALUES (?, ?, ?)""",
-                (closed_date, reason or "Holiday / Center Closed", owner_user_id),
+                (closed_date, reason or "Holiday / Center Closed"),
             )
             conn.commit()
             return True
@@ -153,7 +152,7 @@ def set_center_closed_date(closed_date, reason="Holiday / Center Closed", owner_
             return False
 
 
-def unset_center_closed_date(closed_date, owner_user_id: int = 1):
+def unset_center_closed_date(closed_date):
     """
     Remove center-closed override for a date.
     Returns number of rows deleted.
@@ -162,28 +161,28 @@ def unset_center_closed_date(closed_date, owner_user_id: int = 1):
         c = conn.cursor()
         c.execute(
             """DELETE FROM center_closed_dates
-               WHERE closed_date = ? AND owner_user_id = ?""",
-            (closed_date, owner_user_id),
+               WHERE closed_date = ?""",
+            (closed_date),
         )
         conn.commit()
         return c.rowcount
 
 
-def is_center_closed_date(closed_date, owner_user_id: int = 1):
+def is_center_closed_date(closed_date):
     """Return True if a date is explicitly marked center-closed."""
     with sqlite3.connect(DB_PATH) as conn:
         c = conn.cursor()
         row = c.execute(
             """SELECT 1
                FROM center_closed_dates
-               WHERE closed_date = ? AND owner_user_id = ?
+               WHERE closed_date = ?
                LIMIT 1""",
-            (closed_date, owner_user_id),
+            (closed_date),
         ).fetchone()
         return row is not None
 
 
-def get_center_closed_dates_for_month(year, month, owner_user_id: int = 1):
+def get_center_closed_dates_for_month(year, month):
     """
     Return a set of YYYY-MM-DD strings for center-closed dates in the given month.
     """
@@ -201,13 +200,13 @@ def get_center_closed_dates_for_month(year, month, owner_user_id: int = 1):
         c.execute(
             """SELECT closed_date
                FROM center_closed_dates
-               WHERE closed_date BETWEEN ? AND ? AND owner_user_id = ?""",
-            (start_str, end_str, owner_user_id),
+               WHERE closed_date BETWEEN ? AND ?""",
+            (start_str, end_str),
         )
         return {row[0] for row in c.fetchall()}
 
 
-def unschedule_all_assistants_for_date(scheduled_date, owner_user_id: int = 1):
+def unschedule_all_assistants_for_date(scheduled_date):
     """
     Remove all assistant assignments for a specific date.
     Returns number of rows deleted.
@@ -216,8 +215,8 @@ def unschedule_all_assistants_for_date(scheduled_date, owner_user_id: int = 1):
         c = conn.cursor()
         c.execute(
             """DELETE FROM assistant_schedule
-               WHERE scheduled_date = ? AND owner_user_id = ?""",
-            (scheduled_date, owner_user_id),
+               WHERE scheduled_date = ?""",
+            (scheduled_date),
         )
         conn.commit()
         return c.rowcount

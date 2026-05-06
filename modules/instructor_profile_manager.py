@@ -1,4 +1,4 @@
-#*****************************
+﻿#*****************************
 #instructor_profile_manager.py
 #*****************************
 
@@ -13,18 +13,17 @@ def _ensure_owner_column():
         c = conn.cursor()
         c.execute("PRAGMA table_info(instructor_profile)")
         cols = [r[1] for r in c.fetchall()]
-        if "owner_user_id" not in cols:
-            c.execute("ALTER TABLE instructor_profile ADD COLUMN owner_user_id INTEGER DEFAULT 1")
-            c.execute("UPDATE instructor_profile SET owner_user_id = 1 WHERE owner_user_id IS NULL")
-            c.execute(
-                "CREATE UNIQUE INDEX IF NOT EXISTS idx_instructor_profile_owner ON instructor_profile(owner_user_id)"
+        if "name" not in cols:
+            c.execute("ALTER TABLE instructor_profile ADD COLUMN name TEXT")
+        c.execute(
+                "CREATE UNIQUE INDEX IF NOT EXISTS idx_instructor_profile_unique ON instructor_profile(id)"
             )
         if "center_time_zone" not in cols:
             c.execute("ALTER TABLE instructor_profile ADD COLUMN center_time_zone TEXT")
             conn.commit()
 
 
-def get_instructor_profile(owner_user_id=1):
+def get_instructor_profile():
     """Get the instructor profile for a specific user."""
     _ensure_owner_column()
     with sqlite3.connect(DB_PATH) as conn:
@@ -36,9 +35,8 @@ def get_instructor_profile(owner_user_id=1):
                    friday_start, friday_end, saturday_start, saturday_end,
                    sunday_start, sunday_end, created_at, updated_at
             FROM instructor_profile
-            WHERE owner_user_id = ?
             LIMIT 1
-        """, (owner_user_id,))
+        """, ())
         row = c.fetchone()
         if row:
             return {
@@ -70,7 +68,7 @@ def get_instructor_profile(owner_user_id=1):
     return None
 
 
-def create_instructor_profile(name, email, phone, center_location, center_address, center_time_zone, center_hours, weekly_hours, owner_user_id=1):
+def create_instructor_profile(name, email, phone, center_location, center_address, center_time_zone, center_hours, weekly_hours):
     """Create a new instructor profile for the given user."""
     _ensure_owner_column()
     with sqlite3.connect(DB_PATH) as conn:
@@ -78,15 +76,14 @@ def create_instructor_profile(name, email, phone, center_location, center_addres
         now = datetime.now().isoformat()
         days = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday']
         
-        values = [name, email, phone, center_location, center_address, center_time_zone, center_hours, now, now, owner_user_id]
+        columns = 'name, email, phone, center_location, center_address, center_time_zone, center_hours, created_at, updated_at'
+        values = [name, email, phone, center_location, center_address, center_time_zone, center_hours, now, now]
         for day in days:
+            columns += f', {day}_start, {day}_end'
             values.append(weekly_hours.get(f'{day}_start', ''))
             values.append(weekly_hours.get(f'{day}_end', ''))
         
         placeholders = ','.join(['?' for _ in range(len(values))])
-        columns = 'name, email, phone, center_location, center_address, center_time_zone, center_hours, created_at, updated_at, owner_user_id'
-        for day in days:
-            columns += f', {day}_start, {day}_end'
         
         c.execute(f"""
             INSERT INTO instructor_profile ({columns})
@@ -96,7 +93,7 @@ def create_instructor_profile(name, email, phone, center_location, center_addres
         return c.lastrowid
 
 
-def update_instructor_profile(profile_id, name, email, phone, center_location, center_address, center_time_zone, center_hours, weekly_hours, owner_user_id=1):
+def update_instructor_profile(profile_id, name, email, phone, center_location, center_address, center_time_zone, center_hours, weekly_hours):
     """Update an existing instructor profile owned by the current user."""
     _ensure_owner_column()
     with sqlite3.connect(DB_PATH) as conn:
@@ -113,20 +110,19 @@ def update_instructor_profile(profile_id, name, email, phone, center_location, c
             values.append(weekly_hours.get(f'{day}_end', ''))
         
         values.append(profile_id)
-        values.append(owner_user_id)
         
         c.execute(f"""
             UPDATE instructor_profile
             SET {set_clause}
-            WHERE id = ? AND owner_user_id = ?
+            WHERE id = ?
         """, values)
         conn.commit()
 
 
-def delete_instructor_profile(profile_id, owner_user_id=1):
+def delete_instructor_profile(profile_id):
     """Delete an instructor profile owned by the current user."""
     _ensure_owner_column()
     with sqlite3.connect(DB_PATH) as conn:
         c = conn.cursor()
-        c.execute("DELETE FROM instructor_profile WHERE id = ? AND owner_user_id = ?", (profile_id, owner_user_id))
+        c.execute("DELETE FROM instructor_profile WHERE id = ?", (profile_id))
         conn.commit()

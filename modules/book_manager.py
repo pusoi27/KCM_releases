@@ -1,4 +1,4 @@
-#*****************************
+﻿#*****************************
 #book_manager.py   ver 04--
 #*****************************
 import sqlite3
@@ -21,7 +21,7 @@ def _safe_non_negative_int(value, default=0) -> int:
     return max(parsed, 0)
 
 
-def _sync_student_book_loaned(cursor, student_id: int, owner_user_id: int = 1):
+def _sync_student_book_loaned(cursor, student_id: int):
     """Sync students.book_loaned based on current open book loans."""
     if not student_id:
         return
@@ -33,37 +33,32 @@ def _sync_student_book_loaned(cursor, student_id: int, owner_user_id: int = 1):
                  FROM books
                 WHERE borrower_id = ?
                   AND available = 0
-                  AND owner_user_id = ?
            ) THEN 1 ELSE 0 END
          WHERE id = ?
-           AND owner_user_id = ?
         """,
-        (student_id, owner_user_id, student_id, owner_user_id),
+        (student_id, student_id),
     )
 
 
-def sync_all_students_book_status(owner_user_id: int = 1):
+def sync_all_students_book_status():
     """Sync book_loaned status for all students based on current book loans."""
     ensure_book_loans_table()
     with sqlite3.connect(DB_PATH) as conn:
         c = conn.cursor()
 
-        c.execute("UPDATE students SET book_loaned = 0 WHERE owner_user_id = ?", (owner_user_id,))
-
+        c.execute("UPDATE students SET book_loaned = 0")
         c.execute(
             """
             UPDATE students
             SET book_loaned = 1
-            WHERE owner_user_id = ?
-              AND id IN (
+            WHERE id IN (
                 SELECT DISTINCT bl.student_id
                 FROM book_loans bl
                 JOIN students s ON s.id = bl.student_id
                 WHERE bl.return_date IS NULL
-                  AND s.owner_user_id = ?
             )
             """,
-            (owner_user_id, owner_user_id),
+            (),
         )
 
         c.execute(
@@ -74,16 +69,14 @@ def sync_all_students_book_status(owner_user_id: int = 1):
                     WHEN COALESCE(copies, 0) > 0
                      AND ((isbn IS NOT NULL AND TRIM(isbn) != '') OR (isbn13 IS NOT NULL AND TRIM(isbn13) != ''))
                     THEN 1 ELSE 0 END
-            WHERE owner_user_id = ?
-              AND id NOT IN (
+            WHERE              AND id NOT IN (
                 SELECT bl.book_id
                 FROM book_loans bl
                 JOIN books b ON b.id = bl.book_id
                 WHERE bl.return_date IS NULL
-                  AND b.owner_user_id = ?
             )
             """,
-            (owner_user_id, owner_user_id),
+            (),
         )
 
         c.execute(
@@ -95,30 +88,26 @@ def sync_all_students_book_status(owner_user_id: int = 1):
                 JOIN students s ON s.id = bl.student_id
                 WHERE bl.book_id = books.id
                   AND bl.return_date IS NULL
-                  AND s.owner_user_id = ?
                 ORDER BY bl.checkout_date DESC
                 LIMIT 1
             ),
             available = 0
-            WHERE owner_user_id = ?
-              AND id IN (
+            WHERE              AND id IN (
                 SELECT bl.book_id
                 FROM book_loans bl
                 JOIN books b ON b.id = bl.book_id
                 JOIN students s ON s.id = bl.student_id
                 WHERE bl.return_date IS NULL
-                  AND b.owner_user_id = ?
-                  AND s.owner_user_id = ?
             )
             """,
-            (owner_user_id, owner_user_id, owner_user_id, owner_user_id),
+            (),
         )
 
         conn.commit()
         return c.rowcount
 
 
-def get_books(owner_user_id: int = 1):
+def get_books():
     """Get all books with all columns."""
     with sqlite3.connect(DB_PATH) as conn:
         c = conn.cursor()
@@ -126,15 +115,14 @@ def get_books(owner_user_id: int = 1):
             """
             SELECT id, title, author, available, reading_level, isbn, isbn13, publisher, copies, borrower_id
             FROM books
-            WHERE owner_user_id = ?
-            ORDER BY title
+            WHERE            ORDER BY title
             """,
-            (owner_user_id,),
+            (),
         )
         return c.fetchall()
 
 
-def get_book(book_id, owner_user_id: int = 1):
+def get_book(book_id):
     """Get a single book by ID."""
     with sqlite3.connect(DB_PATH) as conn:
         c = conn.cursor()
@@ -143,14 +131,13 @@ def get_book(book_id, owner_user_id: int = 1):
             SELECT id, title, author, available, reading_level, isbn, isbn13, publisher, copies, borrower_id
             FROM books
             WHERE id = ?
-              AND owner_user_id = ?
             """,
-            (book_id, owner_user_id),
+            (book_id),
         )
         return c.fetchone()
 
 
-def add_book(title, author, publisher, isbn=None, isbn13=None, available=1, reading_level=None, copies=1, owner_user_id: int = 1):
+def add_book(title, author, publisher, isbn=None, isbn13=None, available=1, reading_level=None, copies=1):
     """Add a new book to the database."""
     copies = _safe_non_negative_int(copies, default=1)
 
@@ -164,16 +151,16 @@ def add_book(title, author, publisher, isbn=None, isbn13=None, available=1, read
         c = conn.cursor()
         c.execute(
             """
-            INSERT INTO books (title, author, publisher, isbn, isbn13, available, reading_level, copies, owner_user_id)
+            INSERT INTO books (title, author, publisher, isbn, isbn13, available, reading_level, copies)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
-            (title, author, publisher, isbn, isbn13, available, reading_level, copies, owner_user_id),
+            (title, author, publisher, isbn, isbn13, available, reading_level, copies),
         )
         conn.commit()
         return c.lastrowid
 
 
-def update_book(book_id, title=None, author=None, publisher=None, isbn=None, isbn13=None, available=None, reading_level=None, copies=None, borrower_id=None, owner_user_id: int = 1):
+def update_book(book_id, title=None, author=None, publisher=None, isbn=None, isbn13=None, available=None, reading_level=None, copies=None, borrower_id=None):
     """Update a book."""
     updates = []
     params = []
@@ -209,16 +196,16 @@ def update_book(book_id, title=None, author=None, publisher=None, isbn=None, isb
     if not updates:
         return False
 
-    params.extend([book_id, owner_user_id])
-    query = f"UPDATE books SET {', '.join(updates)} WHERE id = ? AND owner_user_id = ?"
+    params.extend([book_id])
+    query = f"UPDATE books SET {', '.join(updates)} WHERE id = ?"
 
     with sqlite3.connect(DB_PATH) as conn:
         c = conn.cursor()
         c.execute(query, params)
 
         row = c.execute(
-            "SELECT isbn, isbn13, copies, borrower_id FROM books WHERE id = ? AND owner_user_id = ?",
-            (book_id, owner_user_id),
+            "SELECT isbn, isbn13, copies, borrower_id FROM books WHERE id = ?",
+            (book_id),
         ).fetchone()
 
         if row:
@@ -234,31 +221,30 @@ def update_book(book_id, title=None, author=None, publisher=None, isbn=None, isb
                            isbn13 = NULL,
                            available = 0
                      WHERE id = ?
-                       AND owner_user_id = ?
                     """,
-                    (book_id, owner_user_id),
+                    (book_id),
                 )
             else:
                 desired_available = 1 if (_has_isbn(current_isbn, current_isbn13) and not current_borrower_id) else 0
                 c.execute(
-                    "UPDATE books SET copies = ?, available = ? WHERE id = ? AND owner_user_id = ?",
-                    (current_copies, desired_available, book_id, owner_user_id),
+                    "UPDATE books SET copies = ?, available = ? WHERE id = ?",
+                    (current_copies, desired_available, book_id),
                 )
 
         conn.commit()
         return c.rowcount > 0
 
 
-def delete_book(book_id, owner_user_id: int = 1):
+def delete_book(book_id):
     """Delete a book."""
     with sqlite3.connect(DB_PATH) as conn:
         c = conn.cursor()
-        c.execute("DELETE FROM books WHERE id = ? AND owner_user_id = ?", (book_id, owner_user_id))
+        c.execute("DELETE FROM books WHERE id = ?", (book_id))
         conn.commit()
         return c.rowcount > 0
 
 
-def enforce_isbn_availability_rule(owner_user_id: int = 1):
+def enforce_isbn_availability_rule():
     """Normalize availability state according to ISBN/copies/borrower rules."""
     with sqlite3.connect(DB_PATH) as conn:
         c = conn.cursor()
@@ -270,9 +256,8 @@ def enforce_isbn_availability_rule(owner_user_id: int = 1):
                    isbn13 = NULL,
                    available = 0
              WHERE COALESCE(copies, 0) <= 0
-               AND owner_user_id = ?
             """,
-            (owner_user_id,),
+            (),
         )
         c.execute(
             """
@@ -281,9 +266,8 @@ def enforce_isbn_availability_rule(owner_user_id: int = 1):
              WHERE (isbn IS NULL OR TRIM(isbn) = '')
                AND (isbn13 IS NULL OR TRIM(isbn13) = '')
                AND COALESCE(copies, 0) > 0
-               AND owner_user_id = ?
             """,
-            (owner_user_id,),
+            (),
         )
         c.execute(
             """
@@ -293,9 +277,8 @@ def enforce_isbn_availability_rule(owner_user_id: int = 1):
                AND ((isbn IS NOT NULL AND TRIM(isbn) != '') OR (isbn13 IS NOT NULL AND TRIM(isbn13) != ''))
                AND COALESCE(copies, 0) > 0
                AND borrower_id IS NULL
-               AND owner_user_id = ?
             """,
-            (owner_user_id,),
+            (),
         )
         conn.commit()
 
@@ -320,7 +303,7 @@ def ensure_book_loans_table():
         conn.commit()
 
 
-def loan_book(book_id: int, student_id: int, owner_user_id: int = 1):
+def loan_book(book_id: int, student_id: int):
     """Mark a book as loaned to a student and record the checkout date."""
     ensure_book_loans_table()
     checkout_date = datetime.utcnow().isoformat()
@@ -328,15 +311,15 @@ def loan_book(book_id: int, student_id: int, owner_user_id: int = 1):
         c = conn.cursor()
 
         student_exists = c.execute(
-            "SELECT id FROM students WHERE id = ? AND owner_user_id = ?",
-            (student_id, owner_user_id),
+            "SELECT id FROM students WHERE id = ?",
+            (student_id),
         ).fetchone()
         if not student_exists:
             return None
 
         c.execute(
-            "UPDATE books SET available = 0, borrower_id = ? WHERE id = ? AND owner_user_id = ?",
-            (student_id, book_id, owner_user_id),
+            "UPDATE books SET available = 0, borrower_id = ? WHERE id = ?",
+            (student_id, book_id),
         )
         if c.rowcount == 0:
             return None
@@ -348,26 +331,26 @@ def loan_book(book_id: int, student_id: int, owner_user_id: int = 1):
             """,
             (book_id, student_id, checkout_date),
         )
-        _sync_student_book_loaned(c, student_id, owner_user_id)
+        _sync_student_book_loaned(c, student_id)
         conn.commit()
         return checkout_date
 
 
-def return_book(book_id: int, owner_user_id: int = 1):
+def return_book(book_id: int):
     """Mark a book as returned and set return_date for the open loan."""
     ensure_book_loans_table()
     return_date = datetime.utcnow().isoformat()
     with sqlite3.connect(DB_PATH) as conn:
         c = conn.cursor()
         borrower_row = c.execute(
-            "SELECT borrower_id FROM books WHERE id = ? AND owner_user_id = ?",
-            (book_id, owner_user_id),
+            "SELECT borrower_id FROM books WHERE id = ?",
+            (book_id),
         ).fetchone()
         borrower_id = borrower_row[0] if borrower_row else None
 
         c.execute(
-            "UPDATE books SET available = 1, borrower_id = NULL WHERE id = ? AND owner_user_id = ?",
-            (book_id, owner_user_id),
+            "UPDATE books SET available = 1, borrower_id = NULL WHERE id = ?",
+            (book_id),
         )
 
         c.execute(
@@ -378,23 +361,21 @@ def return_book(book_id: int, owner_user_id: int = 1):
                 SELECT id FROM book_loans
                 WHERE book_id = ?
                   AND return_date IS NULL
-                  AND student_id IN (SELECT id FROM students WHERE owner_user_id = ?)
-                ORDER BY checkout_date DESC
+                  AND student_id IN (SELECT id FROM students WHERE                ORDER BY checkout_date DESC
                 LIMIT 1
             )
             """,
-            (return_date, book_id, owner_user_id),
+            (return_date, book_id),
         )
-        _sync_student_book_loaned(c, borrower_id, owner_user_id)
+        _sync_student_book_loaned(c, borrower_id)
         conn.commit()
         return return_date
 
 
-def search_books(query=None, level=None, available_only=False, owner_user_id: int = 1):
+def search_books(query=None, level=None, available_only=False):
     """Search books by various criteria."""
-    sql = "SELECT id, title, author, available, reading_level, isbn, isbn13, publisher, copies, borrower_id FROM books WHERE owner_user_id = ?"
-    params = [owner_user_id]
-
+    sql = "SELECT id, title, author, available, reading_level, isbn, isbn13, publisher, copies, borrower_id FROM books WHERE 1=1"
+    params = []
     if query:
         sql += " AND (title LIKE ? OR author LIKE ? OR publisher LIKE ?)"
         search_term = f"%{query}%"
@@ -415,7 +396,7 @@ def search_books(query=None, level=None, available_only=False, owner_user_id: in
         return c.fetchall()
 
 
-def get_loaned_books(owner_user_id: int = 1):
+def get_loaned_books():
     """Get all currently loaned books with student information."""
     ensure_book_loans_table()
     with sqlite3.connect(DB_PATH) as conn:
@@ -427,16 +408,14 @@ def get_loaned_books(owner_user_id: int = 1):
             JOIN books b ON bl.book_id = b.id
             JOIN students s ON bl.student_id = s.id
             WHERE bl.return_date IS NULL
-              AND b.owner_user_id = ?
-              AND s.owner_user_id = ?
             ORDER BY s.name, bl.checkout_date
             """,
-            (owner_user_id, owner_user_id),
+            (),
         )
         return c.fetchall()
 
 
-def get_loaned_books_detailed(owner_user_id: int = 1):
+def get_loaned_books_detailed():
     """Get active loans with per-row clear-loan eligibility."""
     ensure_book_loans_table()
     with sqlite3.connect(DB_PATH) as conn:
@@ -448,11 +427,9 @@ def get_loaned_books_detailed(owner_user_id: int = 1):
             JOIN books b ON bl.book_id = b.id
             JOIN students s ON bl.student_id = s.id
             WHERE bl.return_date IS NULL
-              AND b.owner_user_id = ?
-              AND s.owner_user_id = ?
             ORDER BY s.name, bl.checkout_date
             """,
-            (owner_user_id, owner_user_id),
+            (),
         ).fetchall()
 
         copies_rows = c.execute(
@@ -460,10 +437,9 @@ def get_loaned_books_detailed(owner_user_id: int = 1):
             SELECT lower(trim(COALESCE(title, ''))) AS title_key,
                    COALESCE(SUM(COALESCE(copies, 0)), 0) AS total_copies
               FROM books
-             WHERE owner_user_id = ?
-             GROUP BY lower(trim(COALESCE(title, '')))
+             WHERE             GROUP BY lower(trim(COALESCE(title, '')))
             """,
-            (owner_user_id,),
+            (),
         ).fetchall()
         copies_by_title = {row[0]: row[1] for row in copies_rows}
 
@@ -474,10 +450,9 @@ def get_loaned_books_detailed(owner_user_id: int = 1):
               FROM book_loans bl
               JOIN books b ON bl.book_id = b.id
              WHERE bl.return_date IS NULL
-               AND b.owner_user_id = ?
              GROUP BY lower(trim(COALESCE(b.title, '')))
             """,
-            (owner_user_id,),
+            (),
         ).fetchall()
         active_loans_by_title = {row[0]: row[1] for row in active_loan_rows}
 
@@ -501,7 +476,7 @@ def get_loaned_books_detailed(owner_user_id: int = 1):
         return detailed
 
 
-def clear_active_loan(book_id: int, student_id: int, owner_user_id: int = 1):
+def clear_active_loan(book_id: int, student_id: int):
     """Clear an active loan for a specific student/book pair."""
     ensure_book_loans_table()
     return_date = datetime.utcnow().isoformat()
@@ -516,12 +491,10 @@ def clear_active_loan(book_id: int, student_id: int, owner_user_id: int = 1):
             WHERE book_id = ?
               AND student_id = ?
               AND return_date IS NULL
-              AND book_id IN (SELECT id FROM books WHERE owner_user_id = ?)
-              AND student_id IN (SELECT id FROM students WHERE owner_user_id = ?)
-            ORDER BY checkout_date DESC
+              AND book_id IN (SELECT id FROM books WHERE              AND student_id IN (SELECT id FROM students WHERE            ORDER BY checkout_date DESC
             LIMIT 1
             """,
-            (book_id, student_id, owner_user_id, owner_user_id),
+            (book_id, student_id),
         ).fetchone()
 
         if not open_loan:
@@ -531,8 +504,8 @@ def clear_active_loan(book_id: int, student_id: int, owner_user_id: int = 1):
         c.execute("UPDATE book_loans SET return_date = ? WHERE id = ?", (return_date, loan_id))
 
         book_row = c.execute(
-            "SELECT isbn, isbn13, copies FROM books WHERE id = ? AND owner_user_id = ?",
-            (book_id, owner_user_id),
+            "SELECT isbn, isbn13, copies FROM books WHERE id = ?",
+            (book_id),
         ).fetchone()
 
         if book_row:
@@ -540,16 +513,16 @@ def clear_active_loan(book_id: int, student_id: int, owner_user_id: int = 1):
             copies = _safe_non_negative_int(copies, default=0)
             available = 1 if (copies > 0 and _has_isbn(isbn, isbn13)) else 0
             c.execute(
-                "UPDATE books SET borrower_id = NULL, available = ? WHERE id = ? AND owner_user_id = ?",
-                (available, book_id, owner_user_id),
+                "UPDATE books SET borrower_id = NULL, available = ? WHERE id = ?",
+                (available, book_id),
             )
 
-        _sync_student_book_loaned(c, student_id, owner_user_id)
+        _sync_student_book_loaned(c, student_id)
         conn.commit()
         return return_date
 
 
-def find_book_by_title(title: str, owner_user_id: int = 1):
+def find_book_by_title(title: str):
     """Find a single book by exact title (case-insensitive)."""
     if not title:
         return None
@@ -557,13 +530,13 @@ def find_book_by_title(title: str, owner_user_id: int = 1):
         c = conn.cursor()
         c.execute(
             "SELECT id, title, author, available, reading_level, isbn, isbn13, publisher, copies, borrower_id "
-            "FROM books WHERE lower(title) = lower(?) AND owner_user_id = ? LIMIT 1",
-            (title.strip(), owner_user_id),
+            "FROM books WHERE lower(title) = lower(?) LIMIT 1",
+            (title.strip()),
         )
         return c.fetchone()
 
 
-def find_book_by_isbn(isbn: str, owner_user_id: int = 1):
+def find_book_by_isbn(isbn: str):
     """Find a single book by ISBN (checks both ISBN-10 and ISBN-13)."""
     if not isbn:
         return None
@@ -571,7 +544,7 @@ def find_book_by_isbn(isbn: str, owner_user_id: int = 1):
         c = conn.cursor()
         c.execute(
             "SELECT id, title, author, available, reading_level, isbn, isbn13, publisher, copies, borrower_id "
-            "FROM books WHERE (isbn = ? OR isbn13 = ?) AND owner_user_id = ? LIMIT 1",
-            (isbn.strip(), isbn.strip(), owner_user_id),
+            "FROM books WHERE (isbn = ? OR isbn13 = ?) LIMIT 1",
+            (isbn.strip(), isbn.strip()),
         )
         return c.fetchone()

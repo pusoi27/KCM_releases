@@ -56,11 +56,9 @@ def _table_columns(conn: sqlite3.Connection, table_name: str) -> list[str]:
     return [row[1] for row in rows]
 
 
-def restore_tenant_rows(backup_path: str, owner_user_id: int, table_names: Iterable[str]) -> dict[str, int]:
-    """Restore only one tenant's rows for the specified tables from a backup.
+def restore_tenant_rows(backup_path: str, *table_names: str) -> dict:
+    """Restore rows for the specified tables from a backup.
 
-    This prevents one user's rollback from rewinding other users' data.
-    Tables must contain an owner_user_id column.
     Returns a mapping of table name -> restored row count.
     """
     if not backup_path or not os.path.exists(backup_path):
@@ -79,17 +77,14 @@ def restore_tenant_rows(backup_path: str, owner_user_id: int, table_names: Itera
             for table_name in unique_tables:
                 live_columns = _table_columns(live_conn, table_name)
                 backup_columns = _table_columns(backup_conn, table_name)
-                if "owner_user_id" not in live_columns or "owner_user_id" not in backup_columns:
-                    raise ValueError(f"Table {table_name} does not support tenant-scoped restore")
-
                 column_names = [col for col in live_columns if col in backup_columns]
                 quoted_columns = ", ".join(column_names)
                 placeholders = ", ".join("?" for _ in column_names)
 
-                live_conn.execute(f"DELETE FROM {table_name} WHERE owner_user_id = ?", (owner_user_id,))
+                live_conn.execute(f"DELETE FROM {table_name}")
                 rows = backup_conn.execute(
-                    f"SELECT {quoted_columns} FROM {table_name} WHERE owner_user_id = ?",
-                    (owner_user_id,),
+                    f"SELECT {quoted_columns} FROM {table_name}",
+                    (),
                 ).fetchall()
 
                 if rows:
@@ -106,18 +101,15 @@ def restore_tenant_rows(backup_path: str, owner_user_id: int, table_names: Itera
             live_conn.execute("PRAGMA foreign_keys = ON")
 
     _logger.warning(
-        "[backup] tenant restore from %s for owner_user_id=%s tables=%s",
+        "[backup] restore from %s",
         backup_path,
-        owner_user_id,
-        unique_tables,
     )
     return restored_counts
 
 
-def restore_tenant_from_backup(backup_path: str, owner_user_id: int, *table_names: str) -> dict[str, int]:
-    """Convenience wrapper for tenant-scoped restore using positional table names."""
-    return restore_tenant_rows(backup_path, owner_user_id, table_names)
-
+def restore_tenant_from_backup(backup_path: str, *table_names: str):
+    """Convenience wrapper for restore using positional table names."""
+    return restore_tenant_rows(backup_path, *table_names)
 
 @contextmanager
 def backup_guard(label: str) -> Iterator[str]:

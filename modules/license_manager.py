@@ -13,7 +13,6 @@ import uuid
 from datetime import date, datetime
 from typing import Any
 
-from modules import auth_manager
 from modules.database import DB_PATH
 
 try:
@@ -292,20 +291,32 @@ def get_license_context() -> dict[str, Any]:
     return context
 
 
+class _LocalUser:
+    """Minimal user object for single-machine licensed installs."""
+    def __init__(self, user_id, email, licensee, expires_at, status):
+        self.id = user_id
+        self.email = email
+        self.role = "admin"
+        self.is_active = True
+        self.must_change_password = False
+        self.licensee = licensee
+        self.license_expires_at = expires_at
+        self.license_status = status
+
+    def is_admin(self):
+        return True
+
+
 def get_local_user(license_context: dict[str, Any] | None = None):
     context = license_context or get_license_context()
     if not context.get("is_valid"):
         return None
 
     display_email = context.get("email") or context.get("licensee") or "Licensed Installation"
-    user = auth_manager.User(
-        LOCAL_OWNER_ID,
-        display_email,
-        auth_manager.ROLE_ADMIN,
-        is_active=True,
-        must_change_password=False,
+    return _LocalUser(
+        user_id=LOCAL_OWNER_ID,
+        email=display_email,
+        licensee=context.get("licensee") or display_email,
+        expires_at=context.get("expires_at"),
+        status=context.get("status"),
     )
-    user.licensee = context.get("licensee") or display_email
-    user.license_expires_at = context.get("expires_at")
-    user.license_status = context.get("status")
-    return user

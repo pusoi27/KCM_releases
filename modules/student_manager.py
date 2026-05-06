@@ -1,4 +1,4 @@
-#*****************************
+﻿#*****************************
 #student_manager.py   ver 04--------------
 #*****************************
 
@@ -103,7 +103,7 @@ def _build_student_database_row(row):
     }
 
 
-def get_student_database_rows(owner_user_id=1, active=1):
+def get_student_database_rows(active=1):
     """Get student rows tailored for the Student Database screen only."""
     with sqlite3.connect(DB_PATH) as conn:
         c = conn.cursor()
@@ -128,10 +128,10 @@ def get_student_database_rows(owner_user_id=1, active=1):
                 COALESCE(s.day2_time, ''),
                 s.v
             FROM students s
-            WHERE s.active = ? AND s.owner_user_id = ?
+            WHERE s.active = ?
             ORDER BY s.name
             """,
-            (active, owner_user_id),
+            (active,),
         )
         return [_build_student_database_row(row) for row in c.fetchall()]
 
@@ -176,11 +176,10 @@ def normalize_subject_entries(subjects, minutes):
     return cleaned_subjects, cleaned_minutes, total_minutes
 
 
-def get_all_students(owner_user_id=1):
+def get_all_students():
     """Get all active students with their information for a specific user.
     
     Args:
-        owner_user_id: User ID to filter students (default: 1 for backward compatibility)
     """
     with sqlite3.connect(DB_PATH) as conn:
         c = conn.cursor()
@@ -190,18 +189,17 @@ def get_all_students(owner_user_id=1):
                  s.el, s.pi, s.v, s.day1, s.day1_time, s.day2, s.day2_time, s.subjects_json, s.subject_minutes_json, s.total_study_minutes,
                  COALESCE(s.photo, '') AS photo
             FROM students s
-            WHERE s.active = 1 AND s.owner_user_id = ?
+            WHERE s.active = 1
             ORDER BY s.name
-        """, (owner_user_id,))
+        """, ())
         return c.fetchall()
 
 
-def get_student(student_id, owner_user_id=1):
+def get_student(student_id):
     """Get a single student by ID, with ownership check.
     
     Args:
         student_id: Student ID to retrieve
-        owner_user_id: User ID to verify ownership (default: 1 for backward compatibility)
     """
     with sqlite3.connect(DB_PATH) as conn:
         c = conn.cursor()
@@ -210,14 +208,14 @@ def get_student(student_id, owner_user_id=1):
                    el,pi,v,day1,day2,day1_time,day2_time,subjects_json,subject_minutes_json,total_study_minutes,
                    COALESCE(photo,'') AS photo,
                    COALESCE(schedule_json,'') AS schedule_json
-            FROM students WHERE id=? AND owner_user_id=?
-        """, (student_id, owner_user_id)).fetchone()
+            FROM students WHERE id=?
+        """, (student_id)).fetchone()
         return row
 
 
-def get_student_static_profile(student_id, owner_user_id=1):
+def get_student_static_profile(student_id):
     """Get a single student by ID as a dictionary."""
-    row = get_student(student_id, owner_user_id=owner_user_id)
+    row = get_student(student_id)
     if not row:
         return None
     return {
@@ -243,22 +241,21 @@ def get_student_static_profile(student_id, owner_user_id=1):
     }
 
 
-def set_student_photo(student_id, photo_filename, owner_user_id=1):
+def set_student_photo(student_id, photo_filename):
     """Set or clear a student's photo filename."""
     with sqlite3.connect(DB_PATH) as conn:
         conn.execute(
-            "UPDATE students SET photo=? WHERE id=? AND owner_user_id=?",
-            (photo_filename or '', student_id, owner_user_id),
+            "UPDATE students SET photo=? WHERE id=?",
+            (photo_filename or '', student_id),
         )
         conn.commit()
 
 
 
-def add_student(name, subject, email, phone, book_loaned=0, paper_ws=0, el=0, pi=0, v=0, day1="", day2="", day1_time="", day2_time="", owner_user_id=1, subjects=None, subject_minutes=None, schedule_json=""):
+def add_student(name, subject, email, phone, book_loaned=0, paper_ws=0, el=0, pi=0, v=0, day1="", day2="", day1_time="", day2_time="", subjects=None, subject_minutes=None, schedule_json=""):
     """Add a new student to the database and automatically generate QR code.
     
     Args:
-        owner_user_id: User ID to assign as owner (default: 1 for backward compatibility)
     """
     subjects_list, minutes_list, total_minutes = normalize_subject_entries(
         subjects if subjects is not None else [subject],
@@ -269,7 +266,7 @@ def add_student(name, subject, email, phone, book_loaned=0, paper_ws=0, el=0, pi
     with sqlite3.connect(DB_PATH) as conn:
         c = conn.cursor()
         c.execute("""INSERT INTO students
-            (name,subject,subjects_json,subject_minutes_json,total_study_minutes,email,phone,active,book_loaned,paper_ws,el,pi,v,day1,day2,day1_time,day2_time,owner_user_id,schedule_json)
+            (name,subject,subjects_json,subject_minutes_json,total_study_minutes,email,phone,active,book_loaned,paper_ws,el,pi,v,day1,day2,day1_time,day2_time,schedule_json)
             VALUES (?,?,?,?,?,?,?,1,?,?,?,?,?,?,?,?,?,?,?)""",
             (
                 name,
@@ -288,7 +285,6 @@ def add_student(name, subject, email, phone, book_loaned=0, paper_ws=0, el=0, pi
                 day2,
                 day1_time,
                 day2_time,
-                owner_user_id,
                 schedule_json,
             ))
         student_id = c.lastrowid
@@ -306,7 +302,7 @@ def add_student(name, subject, email, phone, book_loaned=0, paper_ws=0, el=0, pi
 
 
 
-def update_student(sid, name, email, phone, subject="", book_loaned=0, paper_ws=0, el=0, pi=0, v=0, day1="", day2="", day1_time="", day2_time="", owner_user_id=1, subjects=None, subject_minutes=None, schedule_json=""):
+def update_student(sid, name, email, phone, subject="", book_loaned=0, paper_ws=0, el=0, pi=0, v=0, day1="", day2="", day1_time="", day2_time="", subjects=None, subject_minutes=None, schedule_json=""):
     """Update an existing student's information with ownership check."""
     subjects_list, minutes_list, total_minutes = normalize_subject_entries(
         subjects if subjects is not None else [subject],
@@ -316,7 +312,7 @@ def update_student(sid, name, email, phone, subject="", book_loaned=0, paper_ws=
 
     with sqlite3.connect(DB_PATH) as conn:
         c = conn.cursor()
-        c.execute("""UPDATE students SET name=?,subject=?,subjects_json=?,subject_minutes_json=?,total_study_minutes=?,email=?,phone=?,book_loaned=?,paper_ws=?,el=?,pi=?,v=?,day1=?,day2=?,day1_time=?,day2_time=?,schedule_json=? WHERE id=? AND owner_user_id=?""",
+        c.execute("""UPDATE students SET name=?,subject=?,subjects_json=?,subject_minutes_json=?,total_study_minutes=?,email=?,phone=?,book_loaned=?,paper_ws=?,el=?,pi=?,v=?,day1=?,day2=?,day1_time=?,day2_time=?,schedule_json=? WHERE id=?""",
                   (
                       name,
                       primary_subject,
@@ -336,28 +332,27 @@ def update_student(sid, name, email, phone, subject="", book_loaned=0, paper_ws=
                       day2_time,
                       schedule_json,
                       sid,
-                      owner_user_id,
                   ))
         conn.commit()
 
 
-def delete_student(sid, owner_user_id=1):
+def delete_student(sid):
     """Soft delete: mark student as inactive instead of hard delete with ownership check."""
     with sqlite3.connect(DB_PATH) as conn:
         c = conn.cursor()
-        c.execute("UPDATE students SET active=0 WHERE id=? AND owner_user_id=?", (sid, owner_user_id))
+        c.execute("UPDATE students SET active=0 WHERE id=?", (sid))
         conn.commit()
 
 
-def permanent_delete_student(sid, owner_user_id=1):
+def permanent_delete_student(sid):
     """Permanently delete student from database (hard delete) with ownership check."""
     with sqlite3.connect(DB_PATH) as conn:
         c = conn.cursor()
-        c.execute("DELETE FROM students WHERE id=? AND owner_user_id=?", (sid, owner_user_id))
+        c.execute("DELETE FROM students WHERE id=?", (sid))
         conn.commit()
 
 
-def get_deleted_students(owner_user_id=1):
+def get_deleted_students():
     """Get all deleted/inactive students for a specific user."""
     with sqlite3.connect(DB_PATH) as conn:
         c = conn.cursor()
@@ -366,26 +361,25 @@ def get_deleted_students(owner_user_id=1):
                    s.math_goal, s.math_ws_per_week, s.reading_goal, s.reading_ws_per_week,
                    s.el, s.pi, s.v, s.day1, s.day1_time, s.day2, s.day2_time
             FROM students s
-            WHERE s.active = 0 AND s.owner_user_id = ?
+            WHERE s.active = 0
             ORDER BY s.name
-        """, (owner_user_id,))
+        """, ())
         return c.fetchall()
 
 
-def reactivate_student(sid, owner_user_id=1):
+def reactivate_student(sid):
     """Reactivate a deleted/inactive student with ownership check."""
     with sqlite3.connect(DB_PATH) as conn:
         c = conn.cursor()
-        c.execute("UPDATE students SET active=1 WHERE id=? AND owner_user_id=?", (sid, owner_user_id))
+        c.execute("UPDATE students SET active=1 WHERE id=?", (sid))
         conn.commit()
 
 
-def import_csv(file_path, owner_user_id=1):
+def import_csv(file_path):
     """Import students from CSV with ownership assignment.
     
     Args:
         file_path: Path to CSV file
-        owner_user_id: User ID to assign as owner of imported students (default: 1)
     """
     if not os.path.exists(file_path):
         return {"added": 0, "updated": 0, "deleted": 0}
@@ -423,40 +417,39 @@ def import_csv(file_path, owner_user_id=1):
                 return {"error": "CSV import failed: subject must be S1 or S2 for every student."}
             
             # Check if student exists (owned by this user)
-            student_record=conn.execute("SELECT id FROM students WHERE LOWER(TRIM(name))=LOWER(?) AND owner_user_id=?",(name.strip(), owner_user_id)).fetchone()
+            student_record=conn.execute("SELECT id FROM students WHERE LOWER(TRIM(name))=LOWER(?)",(name.strip())).fetchone()
             
             if student_record:
                 # UPDATE existing student - set all fields from CSV
                 student_id = student_record[0]
                 print(f"UPDATING student ID {student_id}: {name}")
-                conn.execute("""UPDATE students SET name=?, subject=?, email=?, phone=?, math_goal=?, math_ws_per_week=?, reading_goal=?, reading_ws_per_week=?, active=1 WHERE id=? AND owner_user_id=?"""
-                             ,(name,subject,email,phone,math_goal,math_ws,reading_goal,reading_ws,student_id,owner_user_id))
+                conn.execute("""UPDATE students SET name=?, subject=?, email=?, phone=?, math_goal=?, math_ws_per_week=?, reading_goal=?, reading_ws_per_week=?, active=1 WHERE id=?"""
+                             ,(name,subject,email,phone,math_goal,math_ws,reading_goal,reading_ws,student_id))
                 updated+=1
             else:
-                # INSERT new student with owner_user_id
-                print(f"INSERTING new student: {name}")
-                conn.execute("""INSERT INTO students(name,subject,email,phone,active,math_goal,math_ws_per_week,reading_goal,reading_ws_per_week,owner_user_id)
-                                VALUES(?,?,?,?,1,?,?,?,?,?)""",(name,subject,email,phone,math_goal,math_ws,reading_goal,reading_ws,owner_user_id))
+                # INSERT new student with                print(f"INSERTING new student: {name}")
+                conn.execute("""INSERT INTO students(name,subject,email,phone,active,math_goal,math_ws_per_week,reading_goal,reading_ws_per_week)
+                                VALUES(?,?,?,?,1,?,?,?,?,?)""",(name,subject,email,phone,math_goal,math_ws,reading_goal,reading_ws))
                 added+=1
         
-        # PERMANENTLY delete students not in CSV (owned by this user only)
+        # PERMANENTLY delete students not in CSV
         cursor=conn.cursor()
-        cursor.execute("SELECT id, name FROM students WHERE owner_user_id=?", (owner_user_id,))
+        cursor.execute("SELECT id, name FROM students WHERE active=1")
         db_students=cursor.fetchall()
         print(f"CSV names: {csv_names}")
         for student_id, student_name in db_students:
             student_name_lower = student_name.lower().strip()
             if student_name_lower not in csv_names:
-                conn.execute("DELETE FROM students WHERE id=? AND owner_user_id=?", (student_id, owner_user_id))
+                conn.execute("DELETE FROM students WHERE id=?", (student_id))
                 deleted+=1
                 print(f"Permanently deleting: {student_name}")
         
         conn.commit()
     return {"added": added, "updated": updated, "deleted": deleted}
 
-def export_csv(path, owner_user_id=1):
+def export_csv(path):
     """Export all active students to CSV with proper alignment of headers and data."""
-    data=get_all_students(owner_user_id)
+    data=get_all_students()
     # Headers must match the order of columns returned by get_all_students()
     # get_all_students returns: id, name, subject, level, email, phone, legacy_contact, active,
     # book_loaned, paper_ws, math_goal, math_ws_per_week, reading_goal, reading_ws_per_week,
@@ -489,7 +482,7 @@ def export_csv(path, owner_user_id=1):
         writer.writerows([list(row[:6]) + list(row[7:]) for row in data])
 
 
-def find_duplicates_by_name(name, owner_user_id: int = 1):
+def find_duplicates_by_name(name):
     """Find all students with a given name (case-insensitive, whitespace-trimmed)."""
     with sqlite3.connect(DB_PATH) as conn:
         c = conn.cursor()
@@ -497,13 +490,12 @@ def find_duplicates_by_name(name, owner_user_id: int = 1):
             SELECT id, name, email, phone, subject, day1, day1_time, day2, day2_time
             FROM students
             WHERE LOWER(TRIM(name)) = LOWER(TRIM(?))
-              AND owner_user_id = ?
             ORDER BY id
-        """, (name, owner_user_id))
+        """, (name))
         return c.fetchall()
 
 
-def get_duplicate_names(owner_user_id: int = 1):
+def get_duplicate_names():
     """Get all student names that appear more than once in the student list."""
     with sqlite3.connect(DB_PATH) as conn:
         c = conn.cursor()
@@ -511,17 +503,16 @@ def get_duplicate_names(owner_user_id: int = 1):
             SELECT LOWER(TRIM(name)) as name_key, COUNT(*) as count
             FROM students
             WHERE active = 1
-              AND owner_user_id = ?
             GROUP BY LOWER(TRIM(name))
             HAVING COUNT(*) > 1
             ORDER BY count DESC, name_key
-        """, (owner_user_id,))
+        """, ())
         return c.fetchall()
 
 
-def get_duplicate_summary(owner_user_id: int = 1):
+def get_duplicate_summary():
     """Get a detailed summary of all duplicate names with their student information."""
-    duplicates = get_duplicate_names(owner_user_id)
+    duplicates = get_duplicate_names()
     summary = []
     
     for name_key, count in duplicates:
@@ -533,9 +524,8 @@ def get_duplicate_summary(owner_user_id: int = 1):
                 FROM students
                 WHERE LOWER(TRIM(name)) = LOWER(TRIM(?))
                 AND active = 1
-                AND owner_user_id = ?
                 ORDER BY id
-            """, (name_key, owner_user_id))
+            """, (name_key))
             students = c.fetchall()
             
             if students:
@@ -565,7 +555,7 @@ def get_duplicate_summary(owner_user_id: int = 1):
     return summary
 
 
-def has_duplicate_names(owner_user_id: int = 1):
+def has_duplicate_names():
     """Check if there are any duplicate names in the active student list."""
-    duplicates = get_duplicate_names(owner_user_id)
+    duplicates = get_duplicate_names()
     return len(duplicates) > 0

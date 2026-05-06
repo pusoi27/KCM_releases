@@ -23,16 +23,15 @@ BRAND_TEXT = '#1f2937'
 BRAND_MUTED = '#667085'
 
 
-def resolve_center_name(owner_user_id: Optional[int] = None, center_name: Optional[str] = None) -> str:
+def resolve_center_name(center_name: Optional[str] = None) -> str:
     """Resolve the center name from the provided value or instructor profile."""
     if center_name and str(center_name).strip():
         return str(center_name).strip()
 
-    if owner_user_id:
         try:
             from modules import instructor_profile_manager
 
-            profile = instructor_profile_manager.get_instructor_profile(owner_user_id=owner_user_id)
+            profile = instructor_profile_manager.get_instructor_profile()
             value = (profile.get('center_location') if profile else None) or ''
             if value.strip():
                 return value.strip()
@@ -44,11 +43,9 @@ def resolve_center_name(owner_user_id: Optional[int] = None, center_name: Option
 
 def render_branded_email_shell(title: str, center_name: Optional[str], body_html: str,
                                footer_note: Optional[str] = None,
-                               subtitle: Optional[str] = None,
-                               owner_user_id: Optional[int] = None) -> str:
+                               subtitle: Optional[str] = None) -> str:
     """Wrap email body content in the shared Stdytime green/yellow email shell."""
-    safe_center_name = resolve_center_name(owner_user_id=owner_user_id, center_name=center_name)
-
+    safe_center_name = resolve_center_name(center_name=center_name)
     if subtitle and str(subtitle).strip():
         safe_subtitle = str(subtitle).strip()
     else:
@@ -228,8 +225,7 @@ class EmailManager:
     
     def send_report_card(self, student_name: str, recipient_email: str,
                         report_data: Dict[str, any],
-                        center_name: Optional[str] = None,
-                        owner_user_id: Optional[int] = None) -> Dict[str, any]:
+                        center_name: Optional[str] = None) -> Dict[str, any]:
         """
         Send student report card via email
         
@@ -242,8 +238,7 @@ class EmailManager:
             Dictionary with 'success' status and 'message' or 'error'
         """
         subject = f"Student Report Card - {student_name}"
-        center_name = resolve_center_name(owner_user_id=owner_user_id, center_name=center_name)
-        
+        center_name = resolve_center_name(center_name=center_name)
         # Create plain text body
         body = f"""
 Dear Parent/Guardian,
@@ -272,7 +267,6 @@ Best regards,
             center_name=center_name,
             subtitle=center_name,
             footer_note=f"This is an automated message from {center_name}. Please do not reply to this email.",
-            owner_user_id=owner_user_id,
             body_html=f"""
                 <p>Dear Parent/Guardian,</p>
                 <p>Please find below the report card for <strong>{student_name}</strong>.</p>

@@ -4,9 +4,31 @@
 
 import sqlite3, os, sys
 from datetime import datetime
+import json
 
 DATA_DIR = os.getenv("DATA_DIR", "data")
 LOCAL_FALLBACK_DB_PATH = os.path.join("data", "Stdytime.db")
+
+# ---------------------------------------------------------------------------
+# Local machine config (db_config.json next to app.py) overrides env vars.
+# Each machine can point to its own Google Drive path without touching code.
+# Format: { "db_path": "C:/Users/you/Google Drive/My Drive/Stdytime/Stdytime.db" }
+# ---------------------------------------------------------------------------
+_APP_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+_DB_CONFIG_FILE = os.path.join(_APP_ROOT, "db_config.json")
+
+def _read_db_config_path() -> str | None:
+    """Return the db_path from db_config.json, or None if absent/invalid."""
+    try:
+        with open(_DB_CONFIG_FILE, encoding="utf-8") as fh:
+            cfg = json.load(fh)
+        path = cfg.get("db_path", "").strip()
+        return path if path else None
+    except FileNotFoundError:
+        return None
+    except Exception as exc:
+        print(f"[startup] WARNING: could not read {_DB_CONFIG_FILE}: {exc}", file=sys.stderr)
+        return None
 
 
 def _can_use_db_parent(path):
@@ -28,9 +50,13 @@ def _can_use_db_parent(path):
 
 
 def _resolve_db_path():
-    preferred = os.getenv("DB_PATH", os.path.join(DATA_DIR, "Stdytime.db"))
+    # Priority: db_config.json > DB_PATH env var > DATA_DIR default
+    config_path = _read_db_config_path()
+    preferred = config_path or os.getenv("DB_PATH", os.path.join(DATA_DIR, "Stdytime.db"))
     is_usable, reason = _can_use_db_parent(preferred)
     if is_usable:
+        if config_path:
+            print(f"[startup] Using Google Drive / network DB from db_config.json: {preferred}")
         return preferred
 
     normalized = preferred.replace("\\", "/")
@@ -41,7 +67,7 @@ def _resolve_db_path():
                 f"[startup] WARNING: DB_PATH '{preferred}' is unavailable ({reason}). "
                 f"Falling back to '{LOCAL_FALLBACK_DB_PATH}'. "
                 "Attach a Render persistent disk mounted at /var/data for durable storage.",
-                file=sys.stderr,
+                file=sys.stderr
             )
             return LOCAL_FALLBACK_DB_PATH
         raise RuntimeError(
@@ -59,6 +85,9 @@ def init_db():
         os.makedirs(db_parent, exist_ok=True)
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
+    # WAL mode allows concurrent reads during Google Drive sync without corruption
+    c.execute("PRAGMA journal_mode=WAL")
+    c.execute("PRAGMA busy_timeout=5000")
 
     # Students
     c.execute("""
@@ -85,8 +114,7 @@ def init_db():
             day1 TEXT DEFAULT '',
             day1_time TEXT DEFAULT '',
             day2 TEXT DEFAULT '',
-            day2_time TEXT DEFAULT '',
-            owner_user_id INTEGER NOT NULL DEFAULT 1
+            day2_time TEXT DEFAULT ''
         )
     """)
 
@@ -97,8 +125,7 @@ def init_db():
             name TEXT,
             role TEXT,
             email TEXT,
-            phone TEXT,
-            owner_user_id INTEGER NOT NULL DEFAULT 1
+            phone TEXT
         )
     """)
 
@@ -114,8 +141,7 @@ def init_db():
             available INTEGER DEFAULT 1,
             reading_level TEXT,
             copies INTEGER DEFAULT 1,
-            borrower_id INTEGER,
-            owner_user_id INTEGER NOT NULL DEFAULT 1
+            borrower_id INTEGER
         )
     """)
 
@@ -127,7 +153,6 @@ def init_db():
             start_time TEXT,
             end_time TEXT,
             duration INTEGER,
-            owner_user_id INTEGER NOT NULL DEFAULT 1,
             FOREIGN KEY(student_id) REFERENCES students(id)
         )
     """)
@@ -140,7 +165,6 @@ def init_db():
             start_time TEXT,
             end_time TEXT,
             duration INTEGER,
-            owner_user_id INTEGER NOT NULL DEFAULT 1,
             FOREIGN KEY(assistant_id) REFERENCES staff(id)
         )
     """)
@@ -164,8 +188,7 @@ def init_db():
             saturday_start TEXT, saturday_end TEXT,
             sunday_start TEXT, sunday_end TEXT,
             created_at TEXT DEFAULT CURRENT_TIMESTAMP,
-            updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
-            owner_user_id INTEGER DEFAULT 1
+            updated_at TEXT DEFAULT CURRENT_TIMESTAMP
         )
     """)
 
@@ -175,10 +198,9 @@ def init_db():
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             assistant_id INTEGER NOT NULL,
             scheduled_date TEXT NOT NULL,
-            owner_user_id INTEGER NOT NULL DEFAULT 1,
             created_at TEXT DEFAULT CURRENT_TIMESTAMP,
             FOREIGN KEY(assistant_id) REFERENCES staff(id),
-            UNIQUE(assistant_id, scheduled_date, owner_user_id)
+            UNIQUE(assistant_id, scheduled_date)
         )
     """)
 
@@ -188,23 +210,8 @@ def init_db():
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             closed_date TEXT NOT NULL,
             reason TEXT DEFAULT 'Holiday / Center Closed',
-            owner_user_id INTEGER NOT NULL DEFAULT 1,
             created_at TEXT DEFAULT CURRENT_TIMESTAMP,
-            UNIQUE(closed_date, owner_user_id)
-        )
-    """)
-
-    # Users (Identity & Authentication)
-    c.execute("""
-        CREATE TABLE IF NOT EXISTS users (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            email TEXT UNIQUE NOT NULL,
-            password_hash TEXT NOT NULL,
-            role TEXT DEFAULT 'instructor',
-            is_active INTEGER DEFAULT 1,
-            must_change_password INTEGER DEFAULT 0,
-            created_at TEXT DEFAULT CURRENT_TIMESTAMP,
-            updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+            UNIQUE(closed_date)
         )
     """)
 
@@ -225,12 +232,6 @@ def init_db():
 
     conn.commit()
 
-    c.execute("PRAGMA table_info(users)")
-    user_cols = [r[1] for r in c.fetchall()]
-    if "must_change_password" not in user_cols:
-        c.execute("ALTER TABLE users ADD COLUMN must_change_password INTEGER DEFAULT 0")
-        conn.commit()
-
     # Sample data
     if not c.execute("SELECT COUNT(*) FROM students").fetchone()[0]:
         demo = [
@@ -249,31 +250,6 @@ def init_db():
         c.execute("INSERT INTO books (title,author,isbn,available,reading_level)"
                   " VALUES (?,?,?,?,?)",
                   ("Mathematics Basics","KumoPress","111222333",1,"5A"))
-    # Optional bootstrap admin account driven by environment variables.
-    # This avoids shipping hardcoded default production credentials.
-    from werkzeug.security import generate_password_hash
-    bootstrap_admin_email = (os.getenv("BOOTSTRAP_ADMIN_EMAIL") or "").strip()
-    bootstrap_admin_password = (os.getenv("BOOTSTRAP_ADMIN_PASSWORD") or "").strip()
-    now = datetime.now().isoformat()
-
-    if bootstrap_admin_email and bootstrap_admin_password:
-        bootstrap_admin_password_hash = generate_password_hash(bootstrap_admin_password, method='pbkdf2:sha256')
-        existing_bootstrap_admin = c.execute(
-            "SELECT id FROM users WHERE email = ?",
-            (bootstrap_admin_email,)
-        ).fetchone()
-
-        if existing_bootstrap_admin:
-            c.execute("""
-                UPDATE users
-                SET password_hash = ?, role = 'admin', is_active = 1, must_change_password = 0, updated_at = ?
-                WHERE email = ?
-            """, (bootstrap_admin_password_hash, now, bootstrap_admin_email))
-        else:
-            c.execute("""
-                INSERT INTO users (email, password_hash, role, is_active, must_change_password, created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
-            """, (bootstrap_admin_email, bootstrap_admin_password_hash, "admin", 1, 0, now, now))
     conn.commit(); conn.close()
 
     # Ensure additional columns exist on students table (migration for additional fields)
@@ -308,8 +284,6 @@ def init_db():
             cur.execute("ALTER TABLE students ADD COLUMN day1_time TEXT")
         if "day2_time" not in cols:
             cur.execute("ALTER TABLE students ADD COLUMN day2_time TEXT")
-        if "owner_user_id" not in cols:
-            cur.execute("ALTER TABLE students ADD COLUMN owner_user_id INTEGER NOT NULL DEFAULT 1")
         if "subjects_json" not in cols:
             cur.execute("ALTER TABLE students ADD COLUMN subjects_json TEXT DEFAULT '[]'")
         if "subject_minutes_json" not in cols:
@@ -327,8 +301,6 @@ def init_db():
         cur = conn.cursor()
         cur.execute("PRAGMA table_info(staff)")
         cols = [r[1] for r in cur.fetchall()]
-        if "owner_user_id" not in cols:
-            cur.execute("ALTER TABLE staff ADD COLUMN owner_user_id INTEGER NOT NULL DEFAULT 1")
         if "whatsapp" in cols:
             cur.execute("ALTER TABLE staff DROP COLUMN whatsapp")
         conn.commit()
@@ -347,18 +319,7 @@ def init_db():
             cur.execute("ALTER TABLE books ADD COLUMN publisher TEXT")
         if "borrower_id" not in cols:
             cur.execute("ALTER TABLE books ADD COLUMN borrower_id INTEGER REFERENCES students(id)")
-        if "owner_user_id" not in cols:
-            cur.execute("ALTER TABLE books ADD COLUMN owner_user_id INTEGER NOT NULL DEFAULT 1")
         
-        conn.commit()
-
-    # Ensure must_change_password column exists on users table
-    with sqlite3.connect(DB_PATH) as conn:
-        cur = conn.cursor()
-        cur.execute("PRAGMA table_info(users)")
-        cols = [r[1] for r in cur.fetchall()]
-        if "must_change_password" not in cols:
-            cur.execute("ALTER TABLE users ADD COLUMN must_change_password INTEGER DEFAULT 0")
         conn.commit()
 
     # Ensure app_license table has all expected columns
@@ -398,19 +359,19 @@ def init_db():
             cur.execute("ALTER TABLE app_license ADD COLUMN metadata_json TEXT DEFAULT '{}' ")
         if "updated_at" not in cols:
             cur.execute("ALTER TABLE app_license ADD COLUMN updated_at TEXT DEFAULT CURRENT_TIMESTAMP")
+        # LemonSqueezy integration columns
+        if "ls_instance_id" not in cols:
+            cur.execute("ALTER TABLE app_license ADD COLUMN ls_instance_id TEXT DEFAULT ''")
+        if "ls_status" not in cols:
+            cur.execute("ALTER TABLE app_license ADD COLUMN ls_status TEXT DEFAULT ''")
         conn.commit()
 
-    # Ensure owner_user_id exists on sessions and assistant_sessions
     with sqlite3.connect(DB_PATH) as conn:
         cur = conn.cursor()
         cur.execute("PRAGMA table_info(sessions)")
         cols = [r[1] for r in cur.fetchall()]
-        if "owner_user_id" not in cols:
-            cur.execute("ALTER TABLE sessions ADD COLUMN owner_user_id INTEGER NOT NULL DEFAULT 1")
         cur.execute("PRAGMA table_info(assistant_sessions)")
         cols = [r[1] for r in cur.fetchall()]
-        if "owner_user_id" not in cols:
-            cur.execute("ALTER TABLE assistant_sessions ADD COLUMN owner_user_id INTEGER NOT NULL DEFAULT 1")
         conn.commit()
 
     # Ensure assistant_schedule table exists
@@ -418,8 +379,6 @@ def init_db():
         cur = conn.cursor()
         cur.execute("PRAGMA table_info(assistant_schedule)")
         cols = [r[1] for r in cur.fetchall()]
-        if "owner_user_id" not in cols and cols:
-            cur.execute("ALTER TABLE assistant_schedule ADD COLUMN owner_user_id INTEGER NOT NULL DEFAULT 1")
         conn.commit()
 
     # Ensure center_closed_dates table and columns exist
@@ -431,9 +390,8 @@ def init_db():
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 closed_date TEXT NOT NULL,
                 reason TEXT DEFAULT 'Holiday / Center Closed',
-                owner_user_id INTEGER NOT NULL DEFAULT 1,
                 created_at TEXT DEFAULT CURRENT_TIMESTAMP,
-                UNIQUE(closed_date, owner_user_id)
+                UNIQUE(closed_date)
             )
             """
         )
@@ -441,8 +399,6 @@ def init_db():
         cols = [r[1] for r in cur.fetchall()]
         if "reason" not in cols and cols:
             cur.execute("ALTER TABLE center_closed_dates ADD COLUMN reason TEXT DEFAULT 'Holiday / Center Closed'")
-        if "owner_user_id" not in cols and cols:
-            cur.execute("ALTER TABLE center_closed_dates ADD COLUMN owner_user_id INTEGER NOT NULL DEFAULT 1")
         conn.commit()
 
     # Ensure instructor_profile has center_hours column (migration for center operating hours)

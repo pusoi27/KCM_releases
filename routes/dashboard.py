@@ -9,9 +9,9 @@ from datetime import datetime
 def register_dashboard_routes(app):
     """Register dashboard and helper routes."""
     
-    def get_active_students(owner_user_id=1):
+    def get_active_students():
         """Return (name, subject, level) for currently active students."""
-        rows = student_manager.get_all_students(owner_user_id=owner_user_id)
+        rows = student_manager.get_all_students()
         active_list = []
         for r in rows:
             sid = r[0]
@@ -21,8 +21,8 @@ def register_dashboard_routes(app):
             else:
                 with sqlite3.connect(DB_PATH) as conn:
                     active_row = conn.execute(
-                        "SELECT active FROM students WHERE id=? AND owner_user_id=?",
-                        (sid, owner_user_id),
+                        "SELECT active FROM students WHERE id=?",
+                        (sid),
                     ).fetchone()
                     active_flag = active_row[0] if active_row else 0
             if active_flag == 1:
@@ -34,10 +34,9 @@ def register_dashboard_routes(app):
     @require_login
     @require_feature(auth_manager.FEATURE_KUMOCLASS)
     def dashboard():
-        owner_user_id = auth_manager.get_current_user_id()
         return render_template(
             "dashboard.html",
-            active_students=get_active_students(owner_user_id=owner_user_id),
+            active_students=get_active_students(),
             assistants=[
                 ("Sarah Chen", "2 h 15 m"),
                 ("Mike Johnson", "1 h 42 m"),
