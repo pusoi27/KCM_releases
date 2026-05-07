@@ -18,7 +18,7 @@
       {% if error %}
       <div class="alert alert-danger" role="alert">{{ error }}</div>
       {% endif %}
-      <form method="POST" action="{{ url_for('email_login') }}">
+      <form method="POST" action="{{ url_for('email_login') }}" autocomplete="off">
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
         <input type="hidden" name="next" value="{{ next_url or '/' }}">
         <div class="mb-3">
@@ -30,6 +30,7 @@
             name="email"
             value="{{ email or '' }}"
             placeholder="name@example.com"
+            autocomplete="off"
             required
             autofocus
           >

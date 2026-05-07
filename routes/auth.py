@@ -72,18 +72,36 @@ def register_auth_routes(app):
                     next_url=next_url,
                 )
 
+            retry_email = (session.get('license_retry_email') or '').strip()
+
             # Validate the email against the LemonSqueezy license (if one is active).
             ls_error = ls_license.validate_email_matches_license(email)
+
+            # If the user already saw a mismatch once and clicks Continue again,
+            # auto-apply the stored license email to avoid getting stuck because
+            # browser autofill keeps posting the previous wrong value.
+            if ls_error and retry_email:
+                retry_error = ls_license.validate_email_matches_license(retry_email)
+                if not retry_error:
+                    email = retry_email
+                    ls_error = None
+
             if ls_error:
+                # Pre-fill the form with the actual license email so the user
+                # can just click Continue again without guessing the right address.
+                correct_email = ls_license.get_license_email() or email
+                if correct_email:
+                    session['license_retry_email'] = correct_email
                 return render_template(
                     'auth/email_login.html',
                     error=ls_error,
-                    email=email,
+                    email=correct_email,
                     next_url=next_url,
                 )
 
             session['user_email'] = email
             session.permanent = True
+            session.pop('license_retry_email', None)
             user_identity_manager.save_email(email)
             user_identity_manager.sync_instructor_profile_email(email)
             return redirect(next_url)

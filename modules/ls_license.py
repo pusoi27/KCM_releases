@@ -623,6 +623,14 @@ def _mask_email(email: str) -> str:
     return f"{visible}***@{domain}"
 
 
+def get_license_email() -> str:
+    """Return the customer email stored in the activated LS license, or ''."""
+    row = _get_ls_row()
+    if not row:
+        return ""
+    return (row.get("email") or "").strip()
+
+
 def validate_email_matches_license(email: str) -> str | None:
     """
     Check that *email* matches the customer email stored in the activated

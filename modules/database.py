@@ -1,34 +1,41 @@
 ﻿#*****************************
-#database.py   ver 04--
+#database.py   ver 05--
 #*****************************
 
-import sqlite3, os, sys
-from datetime import datetime
+import sqlite3, os, sys, shutil, threading, time, atexit, socket
+from datetime import datetime, timezone
 import json
 
 DATA_DIR = os.getenv("DATA_DIR", "data")
 LOCAL_FALLBACK_DB_PATH = os.path.join("data", "Stdytime.db")
 
 # ---------------------------------------------------------------------------
-# Local machine config (db_config.json next to app.py) overrides env vars.
-# Each machine can point to its own Google Drive path without touching code.
-# Format: { "db_path": "C:/Users/you/Google Drive/My Drive/Stdytime/Stdytime.db" }
+# Config file (db_config.json next to app.py).
+# Supported keys:
+#   db_path              – local machine path for all session reads/writes
+#   gdrive_sync_path     – Google Drive path used only for background sync
+#   sync_interval_minutes – how often local is pushed to GDrive (0 = off)
 # ---------------------------------------------------------------------------
 _APP_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 _DB_CONFIG_FILE = os.path.join(_APP_ROOT, "db_config.json")
 
-def _read_db_config_path() -> str | None:
-    """Return the db_path from db_config.json, or None if absent/invalid."""
+
+def _read_db_config() -> dict:
+    """Return the full config dict from db_config.json."""
     try:
         with open(_DB_CONFIG_FILE, encoding="utf-8") as fh:
-            cfg = json.load(fh)
-        path = cfg.get("db_path", "").strip()
-        return path if path else None
+            return json.load(fh)
     except FileNotFoundError:
-        return None
+        return {}
     except Exception as exc:
         print(f"[startup] WARNING: could not read {_DB_CONFIG_FILE}: {exc}", file=sys.stderr)
-        return None
+        return {}
+
+
+def _read_db_config_path() -> str | None:
+    """Return db_path from db_config.json, or None if absent/invalid."""
+    path = _read_db_config().get("db_path", "").strip()
+    return path if path else None
 
 
 def _can_use_db_parent(path):
@@ -50,13 +57,12 @@ def _can_use_db_parent(path):
 
 
 def _resolve_db_path():
-    # Priority: db_config.json > DB_PATH env var > DATA_DIR default
+    # Priority: db_config.json db_path > DB_PATH env var > DATA_DIR default
     config_path = _read_db_config_path()
     preferred = config_path or os.getenv("DB_PATH", os.path.join(DATA_DIR, "Stdytime.db"))
     is_usable, reason = _can_use_db_parent(preferred)
     if is_usable:
-        if config_path:
-            print(f"[startup] Using Google Drive / network DB from db_config.json: {preferred}")
+        print(f"[startup] Local DB path: {preferred}")
         return preferred
 
     normalized = preferred.replace("\\", "/")
@@ -77,7 +83,299 @@ def _resolve_db_path():
     raise RuntimeError(f"DB_PATH '{preferred}' is unavailable: {reason}")
 
 
+# ====================================================================
+# Google Drive sync
+# ====================================================================
+
+def _sqlite_backup(src_path: str, dst_path: str):
+    """
+    Safe online SQLite backup using the built-in backup API.
+    Handles WAL mode correctly; dst is written atomically via a .syncing tmp file.
+    """
+    dst_dir = os.path.dirname(dst_path) or "."
+    os.makedirs(dst_dir, exist_ok=True)
+    tmp = dst_path + ".syncing"
+    src_conn = sqlite3.connect(src_path)
+    dst_conn = sqlite3.connect(tmp)
+    try:
+        src_conn.backup(dst_conn)
+    finally:
+        dst_conn.close()
+        src_conn.close()
+    os.replace(tmp, dst_path)
+
+
+def _db_summary(db_path: str) -> str:
+    """
+    Return a one-line summary of the DB state: record counts for key tables
+    and the file size.  Never raises — returns a fallback string on error.
+    """
+    try:
+        size_kb = os.path.getsize(db_path) / 1024
+        conn = sqlite3.connect(db_path)
+        cur = conn.cursor()
+        counts = {}
+        for table in ("students", "sessions", "staff", "books", "assistant_sessions"):
+            try:
+                counts[table] = cur.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
+            except Exception:
+                counts[table] = "?"
+        conn.close()
+        return (
+            f"students={counts['students']}  sessions={counts['sessions']}  "
+            f"staff={counts['staff']}  books={counts['books']}  "
+            f"assistant_sessions={counts['assistant_sessions']}  "
+            f"file={size_kb:.1f} KB"
+        )
+    except Exception as exc:
+        return f"(summary unavailable: {exc})"
+
+
+def sync_from_gdrive(local_path: str, gdrive_path: str) -> bool:
+    """
+    Pull GDrive → local on startup if the GDrive copy is newer.
+    Returns True if a pull was performed.
+    """
+    if not gdrive_path or not os.path.exists(gdrive_path):
+        return False
+    try:
+        gdrive_mtime = os.path.getmtime(gdrive_path)
+        local_mtime = os.path.getmtime(local_path) if os.path.exists(local_path) else 0
+        if gdrive_mtime > local_mtime + 10:   # 10 s tolerance avoids noise
+            print(f"[sync] Pulling DB from Google Drive (GDrive is newer): {gdrive_path}")
+            _sqlite_backup(gdrive_path, local_path)
+            print("[sync] Pull complete.")
+            return True
+        else:
+            print("[sync] Local DB is up-to-date; no pull needed.")
+            return False
+    except Exception as exc:
+        print(f"[sync] WARNING: pull from GDrive failed: {exc}", file=sys.stderr)
+        return False
+
+
+def sync_to_gdrive(local_path: str, gdrive_path: str, retries: int = 0, retry_delay: int = 5, silent: bool = False) -> bool:
+    """
+    Push local → GDrive.  Returns True on success.
+    Safe to call from a background thread.
+    retries: number of additional attempts if the file is locked (PermissionError).
+    retry_delay: seconds to wait between attempts.
+    silent: if True, suppresses all console output (used by background thread).
+    """
+    if not gdrive_path:
+        return False
+    if not os.path.exists(local_path):
+        if not silent:
+            print("[sync] WARNING: local DB does not exist yet; skipping push.", file=sys.stderr)
+        return False
+    attempts = retries + 1
+    for attempt in range(1, attempts + 1):
+        try:
+            _sqlite_backup(local_path, gdrive_path)
+            if not silent:
+                summary = _db_summary(local_path)
+                print(
+                    f"[sync] Pushed DB to Google Drive: {gdrive_path}\n"
+                    f"[sync] Snapshot → {summary}"
+                )
+            return True
+        except PermissionError as exc:
+            if attempt <= retries:
+                if not silent:
+                    print(
+                        f"[sync] GDrive file is locked (attempt {attempt}/{attempts}): {exc}. "
+                        f"Retrying in {retry_delay}s...",
+                        file=sys.stderr,
+                    )
+                time.sleep(retry_delay)
+            else:
+                if not silent:
+                    print(f"[sync] WARNING: push to GDrive failed after {attempts} attempt(s): {exc}", file=sys.stderr)
+                return False
+        except Exception as exc:
+            if not silent:
+                print(f"[sync] WARNING: push to GDrive failed: {exc}", file=sys.stderr)
+            return False
+    return False
+
+
+def sync_to_gdrive_now() -> bool:
+    """Public entry point for on-demand push (callable from routes)."""
+    return sync_to_gdrive(DB_PATH, GDRIVE_SYNC_PATH)
+
+
+# ====================================================================
+# GDrive exclusive-use lock
+# ====================================================================
+
+class GDriveLockError(RuntimeError):
+    """Raised when another machine holds the GDrive DB lock."""
+
+
+def _lock_path(gdrive_sync_path: str) -> str:
+    """Return the .lock file path next to the GDrive DB."""
+    base = os.path.splitext(gdrive_sync_path)[0]
+    return base + ".lock"
+
+
+def acquire_gdrive_lock(gdrive_sync_path: str, timeout_minutes: int = 60) -> bool:
+    """
+    Write a lock file to GDrive claiming this machine owns the DB.
+    Raises GDriveLockError if another live machine holds the lock.
+    Returns False if gdrive_sync_path is not set (no-op).
+    """
+    if not gdrive_sync_path:
+        return False
+
+    lock_file = _lock_path(gdrive_sync_path)
+    gdrive_dir = os.path.dirname(gdrive_sync_path)
+
+    # Check for an existing lock
+    if os.path.exists(lock_file):
+        try:
+            with open(lock_file, encoding="utf-8") as fh:
+                info = json.load(fh)
+            locked_at = datetime.fromisoformat(info.get("locked_at", ""))
+            age_minutes = (datetime.now(timezone.utc) - locked_at).total_seconds() / 60
+            if age_minutes < timeout_minutes:
+                holder = info.get("machine", "unknown")
+                pid = info.get("pid", "?")
+                raise GDriveLockError(
+                    f"DB is locked by machine '{holder}' (PID {pid}), "
+                    f"locked {age_minutes:.0f} min ago. "
+                    f"Close StdyTime on that machine first, or wait "
+                    f"{timeout_minutes - age_minutes:.0f} min for the lock to expire."
+                )
+            else:
+                print(
+                    f"[lock] Stale lock detected ({age_minutes:.0f} min old, "
+                    f"threshold {timeout_minutes} min). Taking over.",
+                    file=sys.stderr,
+                )
+        except GDriveLockError:
+            raise
+        except Exception as exc:
+            print(f"[lock] Could not read existing lock file: {exc}. Overwriting.", file=sys.stderr)
+
+    # Write our lock
+    try:
+        os.makedirs(gdrive_dir, exist_ok=True)
+        lock_data = {
+            "machine": socket.gethostname(),
+            "pid": os.getpid(),
+            "locked_at": datetime.now(timezone.utc).isoformat(),
+        }
+        with open(lock_file, "w", encoding="utf-8") as fh:
+            json.dump(lock_data, fh, indent=2)
+        print(f"[lock] GDrive lock acquired on {lock_data['machine']} (PID {lock_data['pid']})")
+        return True
+    except Exception as exc:
+        print(f"[lock] WARNING: could not write lock file: {exc}", file=sys.stderr)
+        return False
+
+
+def release_gdrive_lock(gdrive_sync_path: str) -> bool:
+    """
+    Remove the lock file only if it belongs to this process.
+    Returns True if removed, False otherwise.
+    """
+    if not gdrive_sync_path:
+        return False
+    lock_file = _lock_path(gdrive_sync_path)
+    if not os.path.exists(lock_file):
+        return False
+    try:
+        with open(lock_file, encoding="utf-8") as fh:
+            info = json.load(fh)
+        if info.get("machine") == socket.gethostname() and info.get("pid") == os.getpid():
+            os.remove(lock_file)
+            print("[lock] GDrive lock released.")
+            return True
+        else:
+            print("[lock] Lock belongs to a different process; not removing.", file=sys.stderr)
+            return False
+    except Exception as exc:
+        print(f"[lock] WARNING: could not release lock file: {exc}", file=sys.stderr)
+        return False
+
+
+def _start_background_sync(local_path: str, gdrive_path: str, interval_minutes: int):
+    """Daemon thread that pushes local → GDrive every interval_minutes."""
+    if interval_minutes <= 0 or not gdrive_path:
+        return
+
+    def _loop():
+        while True:
+            time.sleep(interval_minutes * 60)
+            sync_to_gdrive(local_path, gdrive_path, silent=True)
+
+    t = threading.Thread(target=_loop, daemon=True, name="gdrive-sync")
+    t.start()
+    print(f"[sync] Background sync thread started (every {interval_minutes} min → {gdrive_path})")
+
+
+# ====================================================================
+# Module-level initialisation
+# ====================================================================
+
+_cfg = _read_db_config()
+GDRIVE_SYNC_PATH: str | None = _cfg.get("gdrive_sync_path", "").strip() or None
+_SYNC_INTERVAL = int(_cfg.get("sync_interval_minutes", 5))
+
 DB_PATH = _resolve_db_path()
+
+# On startup: pull from GDrive if it is newer than the local copy
+sync_from_gdrive(DB_PATH, GDRIVE_SYNC_PATH)
+
+# Background thread: push local → GDrive periodically
+_start_background_sync(DB_PATH, GDRIVE_SYNC_PATH, _SYNC_INTERVAL)
+
+# On clean exit: release lock then do one final push
+def _sync_on_exit():
+    """
+    Called by atexit. Releases the GDrive lock then pushes the local DB to
+    Google Drive.  If GDrive has a file lock (Drive client is mid-sync) it
+    retries up to 12 times (1 minute total) and prints a visible warning
+    so the user knows NOT to shut down the machine yet.
+    """
+    release_gdrive_lock(GDRIVE_SYNC_PATH)
+
+    if not GDRIVE_SYNC_PATH or not os.path.exists(DB_PATH):
+        return
+
+    _MAX_ATTEMPTS = 12
+    _RETRY_DELAY  = 5   # seconds between retries
+
+    for attempt in range(1, _MAX_ATTEMPTS + 1):
+        try:
+            _sqlite_backup(DB_PATH, GDRIVE_SYNC_PATH)
+            summary = _db_summary(DB_PATH)
+            print(
+                f"[sync] Final exit push to Google Drive complete: {GDRIVE_SYNC_PATH}\n"
+                f"[sync] Snapshot → {summary}"
+            )
+            return
+        except PermissionError:
+            remaining = (_MAX_ATTEMPTS - attempt) * _RETRY_DELAY
+            print(
+                f"\n*** StdyTime: Google Drive file is busy (attempt {attempt}/{_MAX_ATTEMPTS}). "
+                f"Please wait ~{remaining}s before shutting down this machine. ***",
+                file=sys.stderr,
+            )
+            time.sleep(_RETRY_DELAY)
+        except Exception as exc:
+            print(f"[sync] WARNING: final exit push failed: {exc}", file=sys.stderr)
+            return
+
+    print(
+        "\n*** StdyTime WARNING: Could not push DB to Google Drive after exit. "
+        "Your latest data is safe locally but NOT yet synced to Google Drive. "
+        "Restart the app when Google Drive is available to sync. ***",
+        file=sys.stderr,
+    )
+
+
+atexit.register(_sync_on_exit)
 
 def init_db():
     db_parent = os.path.dirname(DB_PATH)
