@@ -27,6 +27,7 @@ import json
 import logging
 import os
 import sqlite3
+import time
 from datetime import datetime, timezone
 from typing import Any
 
@@ -41,7 +42,6 @@ _TIMEOUT = 10  # seconds for all outbound LS API calls
 
 # In-process validation cache — avoids calling LS on every HTTP request.
 # Refreshed automatically when TTL expires or on explicit /license/verify.
-_VALIDATION_CACHE_TTL_SECONDS = 4 * 3600  # 4 hours
 _validation_cache: dict = {"valid": None, "message": "", "checked_at": 0.0}
 
 
@@ -51,6 +51,139 @@ _validation_cache: dict = {"valid": None, "message": "", "checked_at": 0.0}
 
 def _api_key() -> str:
     return (os.getenv("LS_API_KEY") or "").strip()
+
+
+def _api_only_mode() -> bool:
+    """When true, do not rely on webhook/local fallback for validation decisions."""
+    return (os.getenv("LS_API_ONLY_MODE", "true") or "").strip().lower() == "true"
+
+
+def is_api_only_mode() -> bool:
+    """Public helper for routes/templates to check API-only mode state."""
+    return _api_only_mode()
+
+
+def _cache_ttl_seconds() -> int:
+    """Validation cache TTL, clamped to 1-4 hours."""
+    raw = (os.getenv("LS_CACHE_TTL_SECONDS") or "").strip()
+    try:
+        value = int(raw) if raw else 4 * 3600
+    except ValueError:
+        value = 4 * 3600
+    return max(3600, min(4 * 3600, value))
+
+
+def get_cache_ttl_seconds() -> int:
+    """Public helper exposing effective validation cache TTL."""
+    return _cache_ttl_seconds()
+
+
+def _grace_window_seconds() -> int:
+    """Grace window for temporary LS/network outages (default: 24 hours)."""
+    raw = (os.getenv("LS_GRACE_HOURS") or "").strip()
+    try:
+        hours = int(raw) if raw else 24
+    except ValueError:
+        hours = 24
+    return max(0, hours * 3600)
+
+
+def get_grace_hours() -> int:
+    """Public helper exposing effective network-grace window in hours."""
+    return int(_grace_window_seconds() / 3600)
+
+
+def get_nav_badge_data() -> dict[str, Any]:
+    """Telemetry for tiny top-nav badge: color, age, cache remaining, grace mode."""
+    row = _get_ls_row() or {}
+    ctx = get_ls_license_context()
+
+    age_seconds = _age_seconds_from_iso(row.get("ls_last_verified_at") or "")
+    age_text = _humanize_seconds(age_seconds) if age_seconds is not None else "n/a"
+
+    ttl = _cache_ttl_seconds()
+    checked_at = float(_validation_cache.get("checked_at") or 0.0)
+    if checked_at > 0:
+        elapsed = max(0, int(time.monotonic() - checked_at))
+        cache_remaining = max(0, ttl - elapsed)
+    else:
+        cache_remaining = 0
+
+    cache_text = _humanize_seconds(cache_remaining)
+    cache_pct = int((cache_remaining / ttl) * 100) if ttl > 0 else 0
+
+    message = str(_validation_cache.get("message") or "")
+    grace_mode = bool("grace window" in message.lower() and ctx.get("is_valid"))
+
+    if not ctx.get("has_license_key"):
+        tone = "danger"
+        label = "LS no key"
+    elif grace_mode:
+        tone = "warning"
+        label = "LS grace"
+    elif ctx.get("is_valid"):
+        tone = "success"
+        label = "LS ok"
+    else:
+        tone = "danger"
+        label = "LS invalid"
+
+    return {
+        "visible": True,
+        "tone": tone,
+        "label": label,
+        "age_text": age_text,
+        "cache_remaining_text": cache_text,
+        "cache_remaining_pct": max(0, min(100, cache_pct)),
+        "grace_mode": grace_mode,
+        "tooltip": (
+            f"Last LS check age: {age_text} | "
+            f"Cache TTL remaining: {cache_text} | "
+            f"Grace mode: {'yes' if grace_mode else 'no'}"
+        ),
+    }
+
+
+def _parse_iso_utc(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        if parsed.tzinfo is None:
+            return parsed.replace(tzinfo=timezone.utc)
+        return parsed.astimezone(timezone.utc)
+    except ValueError:
+        return None
+
+
+def _now_utc() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def _humanize_seconds(seconds: int) -> str:
+    s = max(0, int(seconds))
+    if s < 60:
+        return f"{s}s"
+    if s < 3600:
+        return f"{s // 60}m"
+    return f"{s // 3600}h {(s % 3600) // 60}m"
+
+
+def _age_seconds_from_iso(value: str | None) -> int | None:
+    parsed = _parse_iso_utc(value)
+    if not parsed:
+        return None
+    return max(0, int((_now_utc() - parsed).total_seconds()))
+
+
+def _within_grace(last_verified_at: str | None) -> bool:
+    if _grace_window_seconds() <= 0:
+        return False
+    parsed = _parse_iso_utc(last_verified_at)
+    if not parsed:
+        return False
+    age_seconds = (_now_utc() - parsed).total_seconds()
+    return age_seconds <= _grace_window_seconds()
 
 
 def _webhook_secret() -> str:
@@ -74,9 +207,13 @@ def _save_ls_fields(
     ls_expires_at: str,
     licensee: str,
     email: str,
+    ls_last_verified_at: str | None = None,
+    activation_limit: int = 0,
+    activation_usage: int = 0,
 ) -> None:
     """Upsert LemonSqueezy fields into the single app_license row."""
     now = datetime.now(timezone.utc).isoformat()
+    verified_at = ls_last_verified_at or ""
     with sqlite3.connect(DB_PATH) as conn:
         # Ensure columns exist (added by database.py migration, but guard here too)
         _ensure_ls_columns(conn)
@@ -84,17 +221,24 @@ def _save_ls_fields(
             """
             INSERT INTO app_license (
                 id, license_key, licensee, email,
-                expires_at, ls_instance_id, ls_status, updated_at
-            ) VALUES (1, '', ?, ?, ?, ?, ?, ?)
+                expires_at, ls_instance_id, ls_status, ls_last_verified_at,
+                activation_limit, activation_usage, updated_at
+            ) VALUES (1, '', ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(id) DO UPDATE SET
                 licensee        = excluded.licensee,
                 email           = excluded.email,
                 expires_at      = excluded.expires_at,
                 ls_instance_id  = excluded.ls_instance_id,
                 ls_status       = excluded.ls_status,
+                ls_last_verified_at = CASE
+                    WHEN excluded.ls_last_verified_at <> '' THEN excluded.ls_last_verified_at
+                    ELSE app_license.ls_last_verified_at
+                END,
+                activation_limit = excluded.activation_limit,
+                activation_usage = excluded.activation_usage,
                 updated_at      = excluded.updated_at
             """,
-            (licensee, email, ls_expires_at, ls_instance_id, ls_status, now),
+            (licensee, email, ls_expires_at, ls_instance_id, ls_status, verified_at, activation_limit, activation_usage, now),
         )
         conn.commit()
 
@@ -104,6 +248,9 @@ def _ensure_ls_columns(conn: sqlite3.Connection) -> None:
     for col, definition in [
         ("ls_instance_id", "TEXT DEFAULT ''"),
         ("ls_status",      "TEXT DEFAULT ''"),
+        ("ls_last_verified_at", "TEXT DEFAULT ''"),
+        ("activation_limit", "INTEGER DEFAULT 0"),
+        ("activation_usage", "INTEGER DEFAULT 0"),
     ]:
         if col not in existing:
             conn.execute(f"ALTER TABLE app_license ADD COLUMN {col} {definition}")
@@ -189,6 +336,8 @@ def activate_ls_license(license_key: str) -> tuple[bool, str, dict[str, Any]]:
     email = str(
         meta.get("customer_email") or lk_data.get("customer_email") or ""
     )
+    activation_limit = int(lk_data.get("activation_limit") or 0)
+    activation_usage = int(lk_data.get("activation_usage") or 0)
 
     _save_ls_fields(
         ls_instance_id=instance_id,
@@ -196,6 +345,8 @@ def activate_ls_license(license_key: str) -> tuple[bool, str, dict[str, Any]]:
         ls_expires_at=expires_at,
         licensee=licensee,
         email=email,
+        activation_limit=activation_limit,
+        activation_usage=activation_usage,
     )
 
     # Also store the raw license_key string for display
@@ -211,7 +362,7 @@ def activate_ls_license(license_key: str) -> tuple[bool, str, dict[str, Any]]:
     return True, message, context
 
 
-def verify_ls_license() -> tuple[bool, str]:
+def verify_ls_license(force: bool = False) -> tuple[bool, str]:
     """
     Validate the stored LS instance against the LS API.
     Returns (is_valid, message).  Called at startup and on demand.
@@ -220,8 +371,10 @@ def verify_ls_license() -> tuple[bool, str]:
     now = time.monotonic()
     cached = _validation_cache
     if (
+        not force
+        and
         cached["valid"] is not None
-        and (now - cached["checked_at"]) < _VALIDATION_CACHE_TTL_SECONDS
+        and (now - cached["checked_at"]) < _cache_ttl_seconds()
     ):
         return cached["valid"], cached["message"]
 
@@ -238,7 +391,12 @@ def _verify_ls_license_uncached() -> tuple[bool, str]:
         return valid, msg
 
     if not _api_key():
-        # No API key: fall back to trusting what is stored locally
+        if _api_only_mode():
+            valid, msg = False, "LS_API_KEY is required in API-only mode."
+            _validation_cache.update({"valid": valid, "message": msg, "checked_at": time.monotonic()})
+            return valid, msg
+
+        # Non-API-only mode: fall back to trusting what is stored locally
         stored_status = row.get("ls_status", "")
         if stored_status == "active":
             valid, msg = True, "License valid (offline check; LS_API_KEY not set)."
@@ -262,12 +420,25 @@ def _verify_ls_license_uncached() -> tuple[bool, str]:
         )
     except requests.RequestException as exc:
         logger.warning("[ls_license] validate network error: %s", exc)
-        # Fail open: if we can't reach LS, trust local state
         stored_status = row.get("ls_status", "")
-        valid = stored_status == "active"
-        msg = f"License check skipped (network error): {exc}"
-        # Don't cache network failures — retry sooner (1 min)
-        _validation_cache.update({"valid": valid, "message": msg, "checked_at": time.monotonic() - _VALIDATION_CACHE_TTL_SECONDS + 60})
+        within_grace = _within_grace(row.get("ls_last_verified_at") or "")
+        valid = stored_status == "active" and within_grace
+        if valid:
+            msg = (
+                "LemonSqueezy unreachable; allowing temporary access within grace window. "
+                f"({exc})"
+            )
+        else:
+            msg = (
+                "LemonSqueezy unreachable and grace window expired. "
+                "Please re-check when internet is available."
+            )
+        # Retry relatively soon on network failures (1 minute)
+        _validation_cache.update({
+            "valid": valid,
+            "message": msg,
+            "checked_at": time.monotonic() - _cache_ttl_seconds() + 60,
+        })
         return valid, msg
 
     try:
@@ -286,6 +457,8 @@ def _verify_ls_license_uncached() -> tuple[bool, str]:
     expires_at = str(lk_data.get("expires_at") or meta.get("expires_at") or row.get("expires_at") or "")
     licensee = str(meta.get("customer_name") or row.get("licensee") or "")
     email = str(meta.get("customer_email") or row.get("email") or "")
+    activation_limit = int(lk_data.get("activation_limit") or 0)
+    activation_usage = int(lk_data.get("activation_usage") or 0)
 
     _save_ls_fields(
         ls_instance_id=instance_id,
@@ -293,6 +466,9 @@ def _verify_ls_license_uncached() -> tuple[bool, str]:
         ls_expires_at=expires_at,
         licensee=licensee,
         email=email,
+        ls_last_verified_at=_now_utc().isoformat() if valid else None,
+        activation_limit=activation_limit,
+        activation_usage=activation_usage,
     )
 
     if valid:
@@ -302,6 +478,33 @@ def _verify_ls_license_uncached() -> tuple[bool, str]:
     error_msg = _extract_ls_error(body) or "License is not valid."
     _validation_cache.update({"valid": False, "message": error_msg, "checked_at": time.monotonic()})
     return False, error_msg
+
+
+def should_force_revalidate_request(*, method: str, path: str, endpoint: str | None = None) -> bool:
+    """
+    Decide whether this request should bypass cache and force LS revalidation.
+    Sensitive cases: exports, admin/settings paths, and write operations.
+    """
+    m = (method or "").upper()
+    p = (path or "").lower()
+    e = (endpoint or "").lower()
+
+    if "/export" in p or p.startswith("/exports"):
+        return True
+
+    if any(token in p for token in ("/admin", "/settings", "/instructor-profile", "/instructor/profile")):
+        return True
+
+    if any(token in e for token in ("admin", "setting", "export")):
+        return True
+
+    if m in {"POST", "PUT", "PATCH", "DELETE"}:
+        # Exclude high-frequency timer/session writes to avoid noisy LS traffic.
+        if p.startswith("/api/sessions") or p.startswith("/api/timer"):
+            return False
+        return True
+
+    return False
 
 
 def deactivate_ls_license() -> tuple[bool, str]:
@@ -379,6 +582,12 @@ def get_ls_license_context() -> dict[str, Any]:
         "days_remaining": days_remaining,
         "has_license_key": bool(row.get("license_key")),
         "ls_status": ls_status,
+        "ls_last_verified_at": row.get("ls_last_verified_at", ""),
+        "api_only_mode": _api_only_mode(),
+        "cache_ttl_seconds": _cache_ttl_seconds(),
+        "grace_hours": int(_grace_window_seconds() / 3600),
+        "activation_limit": row.get("activation_limit", 0),
+        "activation_usage": row.get("activation_usage", 0),
         "default_home_endpoint": "dashboard",
     }
 
@@ -403,6 +612,42 @@ def verify_webhook_signature(raw_body: bytes, signature_header: str) -> bool:
         hashlib.sha256,
     ).hexdigest()
     return hmac.compare_digest(expected, signature_header or "")
+
+
+def _mask_email(email: str) -> str:
+    """Return a privacy-safe masked version: o***@domain.com."""
+    if "@" not in email:
+        return "***"
+    local, domain = email.split("@", 1)
+    visible = local[:2] if len(local) > 2 else local[:1]
+    return f"{visible}***@{domain}"
+
+
+def validate_email_matches_license(email: str) -> str | None:
+    """
+    Check that *email* matches the customer email stored in the activated
+    LemonSqueezy license.  Returns an error message string when the emails
+    differ, or ``None`` when the check passes (or there is no LS license yet
+    to compare against).
+    """
+    row = _get_ls_row()
+    if not row or not row.get("ls_instance_id"):
+        # No LS license activated on this machine yet — nothing to compare.
+        return None
+
+    license_email = (row.get("email") or "").strip().lower()
+    if not license_email:
+        # License activated but no customer email recorded — allow.
+        return None
+
+    if email.strip().lower() == license_email:
+        return None  # Match — all good.
+
+    masked = _mask_email(license_email)
+    return (
+        f"The email you entered does not match the email used to purchase this license "
+        f"({masked}). Please enter the email you used when buying Stdytime on LemonSqueezy."
+    )
 
 
 def handle_ls_webhook_event(payload: dict[str, Any]) -> str:

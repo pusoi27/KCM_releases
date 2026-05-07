@@ -44,8 +44,16 @@ def register_license_routes(app):
     @limiter.limit("5 per minute")
     def verify_license():
         """Re-check license validity with LemonSqueezy on demand."""
-        valid, message = ls_license._verify_ls_license_uncached()
-        return jsonify({"valid": valid, "message": message})
+        valid, message = ls_license.verify_ls_license(force=True)
+        wants_json = (
+            request.args.get('format') == 'json'
+            or request.headers.get('X-Requested-With') == 'XMLHttpRequest'
+            or 'application/json' in (request.headers.get('Accept', '') or '')
+        )
+        if wants_json:
+            return jsonify({"valid": valid, "message": message})
+        flash(message, 'success' if valid else 'warning')
+        return redirect(url_for('license_page'))
 
     @app.route('/license/remove', methods=['POST'])
     def remove_license():
@@ -74,6 +82,12 @@ def register_license_routes(app):
     # -----------------------------------------------------------------------
     @app.route('/webhooks/lemonsqueezy', methods=['POST'])
     def lemonsqueezy_webhook():
+        if ls_license.is_api_only_mode():
+            return jsonify({
+                "error": "Webhook endpoint disabled: LS_API_ONLY_MODE=true",
+                "hint": "Use /license/verify or automatic API validation instead.",
+            }), 410
+
         raw_body = request.get_data()
         signature = request.headers.get('X-Signature', '')
 

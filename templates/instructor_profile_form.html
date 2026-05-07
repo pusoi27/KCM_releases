@@ -37,7 +37,7 @@
                                 class="form-control" 
                                 id="email" 
                                 name="email" 
-                                value="{{ profile.email if profile else '' }}"
+                                value="{{ (profile.email if profile and profile.email else email_prefill) if email_prefill is defined else (profile.email if profile else '') }}"
                                 placeholder="Enter email address"
                             >
                         </div>

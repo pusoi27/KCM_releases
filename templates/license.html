@@ -64,6 +64,13 @@
               <li><strong>Email:</strong> {{ license_status.email or '—' }}</li>
               <li><strong>Days remaining:</strong> {{ license_status.days_remaining if license_status.days_remaining is not none else '—' }}</li>
               <li><strong>LS status:</strong> {{ license_status.ls_status or license_status.status or '—' }}</li>
+              {% if license_status.activation_limit %}
+              <li><strong>Activation limit:</strong> {{ license_status.activation_usage }}/{{ license_status.activation_limit }} machines</li>
+              {% endif %}
+              <li><strong>Mode:</strong> {{ 'API-only' if license_status.api_only_mode else 'Webhook+API' }}</li>
+              <li><strong>Validation cache TTL:</strong> {{ (license_status.cache_ttl_seconds // 3600) if license_status.cache_ttl_seconds else '—' }} hour(s)</li>
+              <li><strong>Network grace window:</strong> {{ license_status.grace_hours if license_status.grace_hours is not none else '—' }} hour(s)</li>
+              <li><strong>Last LS verification:</strong> {{ license_status.ls_last_verified_at or 'Not verified yet' }}</li>
             </ul>
           </div>
 
@@ -71,7 +78,7 @@
           <div class="d-flex gap-2 flex-wrap mb-3">
             <form method="POST" action="{{ url_for('verify_license') }}">
               <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-              <button type="submit" class="btn btn-outline-secondary btn-sm">Re-check with LemonSqueezy</button>
+              <button type="submit" class="btn btn-outline-secondary btn-sm">Re-check License Now</button>
             </form>
           <form method="POST" action="{{ url_for('remove_license') }}" onsubmit="return confirm('Remove the saved license from this machine?');">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">

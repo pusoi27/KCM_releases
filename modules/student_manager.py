@@ -209,7 +209,7 @@ def get_student(student_id):
                    COALESCE(photo,'') AS photo,
                    COALESCE(schedule_json,'') AS schedule_json
             FROM students WHERE id=?
-        """, (student_id)).fetchone()
+        """, (student_id,)).fetchone()
         return row
 
 
@@ -340,7 +340,7 @@ def delete_student(sid):
     """Soft delete: mark student as inactive instead of hard delete with ownership check."""
     with sqlite3.connect(DB_PATH) as conn:
         c = conn.cursor()
-        c.execute("UPDATE students SET active=0 WHERE id=?", (sid))
+        c.execute("UPDATE students SET active=0 WHERE id=?", (sid,))
         conn.commit()
 
 
@@ -348,7 +348,7 @@ def permanent_delete_student(sid):
     """Permanently delete student from database (hard delete) with ownership check."""
     with sqlite3.connect(DB_PATH) as conn:
         c = conn.cursor()
-        c.execute("DELETE FROM students WHERE id=?", (sid))
+        c.execute("DELETE FROM students WHERE id=?", (sid,))
         conn.commit()
 
 
@@ -371,7 +371,7 @@ def reactivate_student(sid):
     """Reactivate a deleted/inactive student with ownership check."""
     with sqlite3.connect(DB_PATH) as conn:
         c = conn.cursor()
-        c.execute("UPDATE students SET active=1 WHERE id=?", (sid))
+        c.execute("UPDATE students SET active=1 WHERE id=?", (sid,))
         conn.commit()
 
 
@@ -417,7 +417,7 @@ def import_csv(file_path):
                 return {"error": "CSV import failed: subject must be S1 or S2 for every student."}
             
             # Check if student exists (owned by this user)
-            student_record=conn.execute("SELECT id FROM students WHERE LOWER(TRIM(name))=LOWER(?)",(name.strip())).fetchone()
+            student_record=conn.execute("SELECT id FROM students WHERE LOWER(TRIM(name))=LOWER(?)",(name.strip(),)).fetchone()
             
             if student_record:
                 # UPDATE existing student - set all fields from CSV
@@ -440,7 +440,7 @@ def import_csv(file_path):
         for student_id, student_name in db_students:
             student_name_lower = student_name.lower().strip()
             if student_name_lower not in csv_names:
-                conn.execute("DELETE FROM students WHERE id=?", (student_id))
+                conn.execute("DELETE FROM students WHERE id=?", (student_id,))
                 deleted+=1
                 print(f"Permanently deleting: {student_name}")
         
@@ -491,7 +491,7 @@ def find_duplicates_by_name(name):
             FROM students
             WHERE LOWER(TRIM(name)) = LOWER(TRIM(?))
             ORDER BY id
-        """, (name))
+        """, (name,))
         return c.fetchall()
 
 
@@ -525,7 +525,7 @@ def get_duplicate_summary():
                 WHERE LOWER(TRIM(name)) = LOWER(TRIM(?))
                 AND active = 1
                 ORDER BY id
-            """, (name_key))
+            """, (name_key,))
             students = c.fetchall()
             
             if students:

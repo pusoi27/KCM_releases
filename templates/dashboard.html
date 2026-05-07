@@ -7,7 +7,7 @@
 <!-- Dashboard Top Bar -->
 <header class="dash-topbar">
   <a class="dash-brand" href="{{ url_for(subscription_access.default_home_endpoint) }}">
-    <i class="bi bi-clock-history"></i>
+    <img src="{{ url_for('static', filename='img/logo.png') }}" alt="Stdytime" height="38" style="border-radius:50%; object-fit:cover; flex-shrink:0;" onerror="this.style.display='none'">
     <span class="dash-brand-name">StdyTime</span>
     {% if branding_center_name and branding_center_name != 'Stdytime' %}
     <span class="dash-center-name">{{ branding_center_name }}</span>
@@ -29,6 +29,24 @@
 
   <!-- Right: checked-out drawer + hamburger -->
   <div class="dash-topbar-right">
+    {% if ls_nav_badge and ls_nav_badge.visible %}
+    <span
+      class="badge rounded-pill text-bg-{{ ls_nav_badge.tone }}"
+      title="{{ ls_nav_badge.tooltip }}"
+      style="margin-right:.5rem;"
+    >
+      {{ ls_nav_badge.label }} · {{ ls_nav_badge.age_text }} · {{ ls_nav_badge.cache_remaining_text }} · {{ 'grace' if ls_nav_badge.grace_mode else 'live' }}
+    </span>
+    {% endif %}
+    {% if license_status and license_status.activation_limit %}
+    <span
+      class="badge rounded-pill bg-info"
+      title="Activation Limit: {{ license_status.activation_usage }}/{{ license_status.activation_limit }} machines active"
+      style="margin-right:.5rem;"
+    >
+      <i class="bi bi-pc-display"></i> {{ license_status.activation_usage }}/{{ license_status.activation_limit }}
+    </span>
+    {% endif %}
     {% if subscription_access.can_access_assistants %}
     <div class="staff-duty-panel-wrap">
       <button id="checkedDrawerButton" type="button" class="dash-icon-btn" title="Checked out students">
@@ -119,7 +137,7 @@
     {% endif %}
     <div class="dash-sidebar-spacer"></div>
     {% if current_user %}
-    <span class="dash-sidebar-item dash-sidebar-user" title="{{ current_user.email }}">
+    <span class="dash-sidebar-item dash-sidebar-user" title="{{ user_session.get('email') or current_user.email }}">
       <i class="bi bi-person-circle"></i>
     </span>
     {% endif %}

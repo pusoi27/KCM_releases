@@ -23,6 +23,7 @@ load_dotenv()
 from modules.database import init_db, DB_PATH
 from modules import student_manager, timer_manager, qr_generator, assistant_manager, reports, auth_manager, license_manager
 from modules import instructor_profile_manager
+from modules import user_identity_manager
 from modules import server_cache
 from modules.utils import format_hhmm
 from modules.rate_limiter import limiter
@@ -179,6 +180,13 @@ def before_request_license_state():
     ls_ctx = _ls.get_ls_license_context()
     # Prefer LS context if an instance has been activated; fall back to local HMAC
     if ls_ctx.get("has_license_key"):
+        force_revalidate = _ls.should_force_revalidate_request(
+            method=request.method,
+            path=request.path,
+            endpoint=request.endpoint,
+        )
+        _ls.verify_ls_license(force=force_revalidate)
+        ls_ctx = _ls.get_ls_license_context()
         g.license_status = ls_ctx
     else:
         g.license_status = license_manager.get_license_context()
@@ -218,6 +226,61 @@ def before_request_license_state():
 def before_request_profiler():
     """Capture request start time."""
     g.start_time = datetime.now()
+
+
+@app.before_request
+def before_request_capture_email():
+    """Require a startup email once, then reuse it across sessions."""
+    # Do not gate unlicensed flows; license middleware handles those.
+    if not (g.get('license_status') or {}).get('is_valid'):
+        return None
+
+    allowed_endpoints = {
+        'static',
+        'license_page',
+        'activate_license',
+        'remove_license',
+        'verify_license',
+        'license_expired',
+        'license_status_api',
+        'lemonsqueezy_webhook',
+        'api_csrf_token',
+        'healthz',
+        'email_login',
+        'not_found',
+    }
+
+    if request.endpoint in allowed_endpoints or request.path.startswith('/static/'):
+        return None
+
+    # Enforce persisted identity: app should not continue on transient session-only email.
+    active_email = user_identity_manager.get_saved_email()
+    if not active_email:
+        active_email = user_identity_manager.resolve_active_email(None)
+    if active_email:
+        # Cross-check the saved email against the LemonSqueezy license email.
+        from modules import ls_license as _ls_mod
+        mismatch = _ls_mod.validate_email_matches_license(active_email)
+        if mismatch:
+            # Saved email no longer matches the license — force re-entry.
+            user_identity_manager.clear_saved_email()
+            session.pop('user_email', None)
+            if request.path.startswith('/api/'):
+                return jsonify({'error': mismatch, 'setup_url': url_for('email_login')}), 428
+            return redirect(url_for('email_login', next=request.path))
+        session['user_email'] = active_email
+        session.permanent = True
+        user_identity_manager.sync_instructor_profile_email(active_email)
+        return None
+
+    if request.path.startswith('/api/'):
+        return jsonify({
+            'error': 'Email setup required before using the API.',
+            'setup_url': url_for('email_login'),
+        }), 428
+
+    next_url = request.full_path if request.query_string else request.path
+    return redirect(url_for('email_login', next=next_url))
 
 @app.after_request
 def after_request_profiler(response):
@@ -260,7 +323,7 @@ def inject_current_user():
     """Inject the single local licensed operator into all templates."""
     return dict(
         current_user=g.get('current_user'),
-        user_session={}
+        user_session={'email': session.get('user_email', '')}
     )
 
 
@@ -289,7 +352,23 @@ def inject_subscription_access():
 @app.context_processor
 def inject_license_status():
     """Expose local license metadata to templates."""
-    return dict(license_status=g.get('license_status', license_manager.get_license_context()))
+    status = g.get('license_status', license_manager.get_license_context())
+    nav_badge = {
+        'visible': False,
+        'tone': 'secondary',
+        'label': 'LS',
+        'age_text': 'n/a',
+        'cache_remaining_text': 'n/a',
+        'cache_remaining_pct': 0,
+        'grace_mode': False,
+        'tooltip': 'License telemetry unavailable.',
+    }
+    try:
+        from modules import ls_license as _ls
+        nav_badge = _ls.get_nav_badge_data()
+    except Exception:
+        pass
+    return dict(license_status=status, ls_nav_badge=nav_badge)
 
 
 @app.context_processor
@@ -555,7 +634,7 @@ _auto_generate_missing_qr_codes()
 def _startup_verify_ls_license():
     try:
         from modules import ls_license as _ls
-        valid, message = _ls.verify_ls_license()
+        valid, message = _ls.verify_ls_license(force=True)
         print(f"[startup] LS license: {message}")
     except Exception as exc:
         print(f"[startup] LS license check skipped: {exc}")

@@ -2,6 +2,15 @@
     "version": "0.2.0",
     "configurations": [
         {
+            "name": "Stdytime: app.py",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/app.py",
+            "cwd": "${workspaceFolder}",
+            "envFile": "${workspaceFolder}/.env",
+            "console": "integratedTerminal"
+        },
+        {
             "name": "Attach to Chrome",
             "port": 9222,
             "request": "attach",
@@ -24,7 +33,12 @@
                 "FLASK_APP": "app.py",
                 "FLASK_DEBUG": "1"
             },
-            "args": ["run", "--host=127.0.0.1", "--port=5000", "--reload"],
+            "args": [
+                "run",
+                "--host=127.0.0.1",
+                "--port=5000",
+                "--reload"
+            ],
             "jinja": true,
             "autoStartBrowser": false,
             "console": "integratedTerminal"

@@ -662,19 +662,27 @@
     <div class="form-card">
       <div class="form-card-title"><span class="dot"></span>Weekly Schedule</div>
       <input type="hidden" id="scheduleJsonInput" name="schedule_json" value="">
+      {% set days = [('Monday', 'monday'), ('Tuesday', 'tuesday'), ('Wednesday', 'wednesday'), ('Thursday', 'thursday'), ('Friday', 'friday'), ('Saturday', 'saturday'), ('Sunday', 'sunday')] %}
+      {% set has_profile_hours = namespace(value=false) %}
       <div class="day-picker-wrap" id="dayPickerWrap">
-        {% if profile %}
-          {% set days = [('Monday', 'monday'), ('Tuesday', 'tuesday'), ('Wednesday', 'wednesday'), ('Thursday', 'thursday'), ('Friday', 'friday'), ('Saturday', 'saturday'), ('Sunday', 'sunday')] %}
-          {% for day_name, day_key in days %}
-            {% if profile[day_key + '_start'] and profile[day_key + '_end'] %}
-              <div class="day-card" data-day="{{ day_name }}">
-                <div class="day-card-radio"></div>
-                <span class="day-card-name">{{ day_name[:3] }}</span>
-              </div>
-            {% endif %}
-          {% endfor %}
-        {% endif %}
+        {% for day_name, day_key in days %}
+          {% set start = profile[day_key + '_start'] if profile else '' %}
+          {% set end = profile[day_key + '_end'] if profile else '' %}
+          {% if start and end %}
+            {% set has_profile_hours.value = true %}
+          {% endif %}
+          <div class="day-card" data-day="{{ day_name }}" data-has-hours="{{ '1' if start and end else '0' }}">
+            <div class="day-card-radio"></div>
+            <span class="day-card-name">{{ day_name[:3] }}</span>
+            <span class="day-card-slot">{{ (start ~ ' - ' ~ end) if (start and end) else 'Any time' }}</span>
+          </div>
+        {% endfor %}
       </div>
+      {% if not has_profile_hours.value %}
+        <div class="form-text mt-2">
+          Center hours are not configured yet. You can still set schedule days and times here, or configure weekly class hours in Instructor Profile for guided slot options.
+        </div>
+      {% endif %}
     </div>
 
     <div class="sticky-actions d-flex flex-wrap gap-2 justify-content-end">
@@ -986,8 +994,12 @@
   function fillDayTimeSelect(selectEl, day, savedTime) {
     const offset = getTotalStudyMinutes();
     selectEl.innerHTML = '<option value="">-- Time --</option>';
-    if (!classHours[day]) return;
-    const slots = generateTimeSlots(classHours[day].start, classHours[day].end, offset);
+    let slots = [];
+    if (classHours[day]) {
+      slots = generateTimeSlots(classHours[day].start, classHours[day].end, offset);
+    } else {
+      slots = generateTimeSlots('06:00', '21:30', 30);
+    }
     slots.forEach(function(slot) {
       const opt = document.createElement('option');
       opt.value = slot.value;
@@ -1010,7 +1022,7 @@
     document.querySelectorAll('#dayPickerWrap .day-card.day-selected').forEach(function(card) {
       const day = card.dataset.day;
       const sel = card.querySelector('.day-card-time');
-      if (sel && classHours[day]) {
+      if (sel && sel.tagName === 'SELECT') {
         const cur = sel.value;
         fillDayTimeSelect(sel, day, cur || selectedSchedule[day] || '');
       }
@@ -1023,15 +1035,29 @@
       const day = card.dataset.day;
       const isSelected = Object.prototype.hasOwnProperty.call(selectedSchedule, day);
       card.classList.toggle('day-selected', isSelected);
+      const hasHours = !!classHours[day];
       var sel = card.querySelector('.day-card-time');
-      if (!sel) {
-        sel = document.createElement('select');
-        sel.className = 'day-card-time form-select form-select-sm';
+
+      if (!sel || (hasHours && sel.tagName !== 'SELECT') || (!hasHours && sel.tagName !== 'INPUT')) {
+        if (sel) sel.remove();
+        if (hasHours) {
+          sel = document.createElement('select');
+          sel.className = 'day-card-time form-select form-select-sm';
+        } else {
+          sel = document.createElement('input');
+          sel.type = 'time';
+          sel.className = 'day-card-time form-control form-control-sm';
+        }
         card.appendChild(sel);
       }
+
       if (isSelected) {
         sel.style.display = '';
-        fillDayTimeSelect(sel, day, selectedSchedule[day] || '');
+        if (hasHours) {
+          fillDayTimeSelect(sel, day, selectedSchedule[day] || '');
+        } else {
+          sel.value = selectedSchedule[day] || '';
+        }
         sel.onchange = (function(d, s) {
           return function() { selectedSchedule[d] = s.value; updateScheduleHidden(); };
         })(day, sel);

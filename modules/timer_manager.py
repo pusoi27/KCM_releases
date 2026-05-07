@@ -60,7 +60,7 @@ def start_session(student_id):
     with sqlite3.connect(DB_PATH) as conn:
         c = conn.cursor()
         c.execute(
-            """INSERT INTO sessions (student_id, start_time) VALUES (?, ?, ?)""",
-            (student_id, start)
+            """INSERT INTO sessions (student_id, start_time) VALUES (?, ?)""",
+            (student_id, start),
         )
         conn.commit()

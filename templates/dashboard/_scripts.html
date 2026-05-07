@@ -243,8 +243,25 @@ function buildAssistantsList(assistants){
       div.appendChild(info);
       div.onclick = async () => {
         if (confirm("Start session for " + s.name + "?")) {
-          await fetch(`/api/students/start/${s.id}`, {method: 'POST'});
-          fetchDashboardData();
+          try {
+            const res = await fetch(`/api/students/start/${s.id}`, { method: 'POST' });
+            if (!res.ok) {
+              let errorMessage = 'Failed to start session';
+              try {
+                const payload = await res.json();
+                if (payload && payload.error) {
+                  errorMessage = payload.error;
+                }
+              } catch (e) {
+                // keep default message when response isn't JSON
+              }
+              alert(errorMessage);
+              return;
+            }
+            fetchDashboardData();
+          } catch (err) {
+            alert('Failed to start session. Please try again.');
+          }
         }
       };
       return div;
@@ -904,5 +921,7 @@ resetIdleTimer();
   ensureDebugPanel();
   keepFocus();
   attachListeners();
+  window.showQuickToast = showQuickToast;
+  window.showCheckoutEmailConfirmation = showCheckoutEmailConfirmation;
 })();
 </script>

@@ -1,0 +1,131 @@
+"""
+Stdytime launcher — starts a Waitress WSGI server and shows a system tray icon.
+
+Usage:
+    python launcher.py          # starts on default port (5000)
+    python launcher.py 8080     # starts on a custom port
+
+The tray icon provides:
+    Open Stdytime   — opens the browser
+    ─────────────
+    Quit            — stops the server and exits
+"""
+
+import sys
+import os
+import threading
+import webbrowser
+import logging
+
+# ---------------------------------------------------------------------------
+# Port — first CLI arg or env var, default 5000
+# ---------------------------------------------------------------------------
+PORT = int(sys.argv[1]) if len(sys.argv) > 1 else int(os.getenv("PORT", "5000"))
+HOST = "127.0.0.1"
+URL  = f"http://{HOST}:{PORT}"
+
+# ---------------------------------------------------------------------------
+# Logging
+# ---------------------------------------------------------------------------
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(message)s",
+    datefmt="%H:%M:%S",
+)
+log = logging.getLogger("launcher")
+
+# ---------------------------------------------------------------------------
+# Import Flask app (this runs module-level setup in app.py)
+# ---------------------------------------------------------------------------
+from app import app  # noqa: E402
+
+# ---------------------------------------------------------------------------
+# Waitress server thread
+# ---------------------------------------------------------------------------
+_server = None
+_server_thread = None
+
+
+def _build_icon_image():
+    """Generate a simple coloured square as the tray icon (no external file needed)."""
+    from PIL import Image, ImageDraw
+    size = 64
+    img = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(img)
+    # Green rounded square
+    draw.rounded_rectangle([4, 4, size - 4, size - 4], radius=12, fill="#28a745")
+    # White letter S
+    draw.text((20, 14), "S", fill="white")
+    return img
+
+
+def _load_icon_image():
+    """Use app logo if it exists, otherwise generate one."""
+    logo_path = os.path.join(os.path.dirname(__file__), "static", "img", "logo.png")
+    if os.path.isfile(logo_path):
+        from PIL import Image
+        return Image.open(logo_path).convert("RGBA").resize((64, 64))
+    return _build_icon_image()
+
+
+def start_server():
+    global _server
+    from waitress import create_server
+    log.info("Starting Waitress on %s", URL)
+    _server = create_server(app, host=HOST, port=PORT, threads=8)
+    _server.run()
+
+
+def open_browser():
+    webbrowser.open(URL)
+
+
+def quit_app(icon, item=None):
+    log.info("Shutting down...")
+    icon.stop()
+    if _server:
+        _server.close()
+    os._exit(0)
+
+
+# ---------------------------------------------------------------------------
+# Main
+# ---------------------------------------------------------------------------
+def main():
+    global _server_thread
+
+    # Start Waitress in a daemon thread
+    _server_thread = threading.Thread(target=start_server, daemon=True, name="waitress")
+    _server_thread.start()
+    log.info("Stdytime running at %s", URL)
+
+    # Open browser after a short delay (let server bind first)
+    threading.Timer(1.2, open_browser).start()
+
+    # System tray icon
+    try:
+        import pystray
+        from pystray import MenuItem as Item, Menu
+
+        icon_image = _load_icon_image()
+
+        menu = Menu(
+            Item("Open Stdytime", lambda icon, item: open_browser(), default=True),
+            Menu.SEPARATOR,
+            Item("Quit", quit_app),
+        )
+
+        tray = pystray.Icon("Stdytime", icon_image, "Stdytime", menu)
+        tray.run()          # blocks until quit_app() calls icon.stop()
+
+    except Exception as exc:
+        log.warning("Tray icon unavailable (%s). Running headless — press Ctrl+C to quit.", exc)
+        # No tray: keep the main thread alive
+        try:
+            _server_thread.join()
+        except KeyboardInterrupt:
+            quit_app(None)
+
+
+if __name__ == "__main__":
+    main()

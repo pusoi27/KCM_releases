@@ -1,6 +1,6 @@
 # routes/instructor_profile.py
-from flask import render_template, request, redirect, url_for, flash, jsonify
-from modules import instructor_profile_manager, student_manager, auth_manager
+from flask import render_template, request, redirect, url_for, flash, jsonify, session
+from modules import instructor_profile_manager, student_manager, auth_manager, user_identity_manager
 from datetime import datetime
 from routes.auth import require_login
 import math
@@ -41,10 +41,16 @@ def register_instructor_profile_routes(app):
     def instructor_profile_edit():
         """Edit or create instructor profile"""
         profile = instructor_profile_manager.get_instructor_profile()
+        active_email = user_identity_manager.resolve_active_email(session.get('user_email'))
+        email_prefill = (profile.get('email') if profile else '') or active_email or ''
+        if not active_email:
+            active_email = user_identity_manager.resolve_active_email()
         
         if request.method == "POST":
             name = request.form.get("name", "").strip()
             email = request.form.get("email", "").strip()
+            if not email and active_email:
+                email = active_email
             phone = request.form.get("phone", "").strip()
             center_location = request.form.get("center_location", "").strip()
             center_address = request.form.get("center_address", "").strip()
@@ -76,6 +82,7 @@ def register_instructor_profile_routes(app):
                 return render_template(
                     "instructor_profile_form.html",
                     profile=profile,
+                    email_prefill=email_prefill,
                     action="Edit" if profile else "Create",
                     timezone_options=TIMEZONE_OPTIONS,
                 )
@@ -93,6 +100,8 @@ def register_instructor_profile_routes(app):
                     center_hours,
                     weekly_hours
                 )
+                if user_identity_manager.is_valid_email(email):
+                    user_identity_manager.save_email(email)
                 flash("Instructor profile updated successfully.", "success")
             else:
                 # Create new profile
@@ -106,14 +115,19 @@ def register_instructor_profile_routes(app):
                     center_hours,
                     weekly_hours
                 )
+                if user_identity_manager.is_valid_email(email):
+                    user_identity_manager.save_email(email)
                 flash("Instructor profile created successfully.", "success")
             
             return redirect(url_for("instructor_profile"))
         
         action = "Edit" if profile else "Create"
+        if active_email and profile and not profile.get('email'):
+            profile['email'] = active_email
         return render_template(
             "instructor_profile_form.html",
             profile=profile,
+            email_prefill=email_prefill,
             action=action,
             timezone_options=TIMEZONE_OPTIONS,
         )

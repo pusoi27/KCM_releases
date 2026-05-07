@@ -322,7 +322,7 @@ def register_api_routes(app):
                 ORDER BY id DESC
                 LIMIT 1
                 """,
-                (sid),
+                (sid,),
             ).fetchone()
             if open_row:
                 sess_id, start = open_row
@@ -507,7 +507,7 @@ def register_api_routes(app):
                 c = conn.cursor()
                 open_session = c.execute(
                     "SELECT id FROM sessions WHERE student_id=? AND end_time IS NULL LIMIT 1",
-                    (student_id)
+                    (student_id,)
                 ).fetchone()
             
             if open_session:
@@ -525,7 +525,7 @@ def register_api_routes(app):
                         ORDER BY id DESC
                         LIMIT 1
                         """,
-                        (student_id),
+                        (student_id,),
                     ).fetchone()
                     if open_row:
                         sess_id, start = open_row
