@@ -321,11 +321,16 @@ def _start_background_sync(local_path: str, gdrive_path: str, interval_minutes: 
 _cfg = _read_db_config()
 GDRIVE_SYNC_PATH: str | None = _cfg.get("gdrive_sync_path", "").strip() or None
 _SYNC_INTERVAL = int(_cfg.get("sync_interval_minutes", 5))
+_STARTUP_PULL_ENABLED = str(_cfg.get("startup_pull_from_gdrive", "false")).strip().lower() == "true"
 
 DB_PATH = _resolve_db_path()
 
-# On startup: pull from GDrive if it is newer than the local copy
-sync_from_gdrive(DB_PATH, GDRIVE_SYNC_PATH)
+# On startup: optional pull from GDrive if it is newer than local copy.
+# Default is disabled so local DB remains source-of-truth for runtime speed.
+if _STARTUP_PULL_ENABLED:
+    sync_from_gdrive(DB_PATH, GDRIVE_SYNC_PATH)
+else:
+    print("[sync] Startup pull disabled; local DB is source of truth.")
 
 # Background thread: push local → GDrive periodically
 _start_background_sync(DB_PATH, GDRIVE_SYNC_PATH, _SYNC_INTERVAL)

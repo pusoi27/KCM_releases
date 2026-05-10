@@ -714,7 +714,7 @@
   const initialSubjectRows = {{ subject_rows | tojson }};
   const defaultSubjectOptions = ['Math', 'Reading', 'Writing'];
   const MAX_SUBJECTS = 3;
-  const MAX_SCHEDULE_DAYS = 2;
+  const MAX_SCHEDULE_DAYS = 7;
 
   const classHours = {
     {% if profile %}
@@ -979,7 +979,6 @@
   var selectedSchedule = {};
   savedSchedule.forEach(function(entry) {
     if (!entry || !entry.day) return;
-    if (Object.keys(selectedSchedule).length >= MAX_SCHEDULE_DAYS) return;
     selectedSchedule[entry.day] = entry.time || '';
   });
 
@@ -1080,10 +1079,6 @@
       if (Object.prototype.hasOwnProperty.call(selectedSchedule, day)) {
         delete selectedSchedule[day];
       } else {
-        if (Object.keys(selectedSchedule).length >= MAX_SCHEDULE_DAYS) {
-          alert('You can only select up to ' + MAX_SCHEDULE_DAYS + ' schedule days.');
-          return;
-        }
         selectedSchedule[day] = '';
       }
       renderDayCards();

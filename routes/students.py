@@ -13,7 +13,7 @@ STUDENT_PHOTOS_DIR = os.path.join('static', 'img', 'students')
 _ALLOWED_PHOTO_EXTS = {'jpg', 'jpeg', 'png', 'gif', 'webp'}
 os.makedirs(STUDENT_PHOTOS_DIR, exist_ok=True)
 MAX_SUBJECTS = 3
-MAX_SCHEDULE_DAYS = 2
+MAX_SCHEDULE_DAYS = 7
 
 
 def _save_student_photo(file_storage, student_id):
@@ -66,7 +66,7 @@ def _parse_subjects_from_form(form):
 
 
 def _normalize_schedule_json(schedule_json_str):
-    """Normalize schedule payload and enforce max configured schedule days."""
+    """Normalize schedule payload and keep all unique selected days."""
     entries = []
     if schedule_json_str:
         try:
@@ -85,8 +85,6 @@ def _normalize_schedule_json(schedule_json_str):
             continue
         seen_days.add(day)
         cleaned.append({"day": day, "time": time})
-        if len(cleaned) >= MAX_SCHEDULE_DAYS:
-            break
 
     return json.dumps(cleaned)
 
@@ -142,17 +140,14 @@ def register_student_routes(app, upload_folder):
     @app.route("/students")
     @require_login
     def students_list():
-        # Get current user ID for tenant scoping
-        # Get duplicate information to display alerts
-        duplicate_summary = student_manager.get_duplicate_summary()
-        has_duplicates = student_manager.has_duplicate_names()
+        duplicate_count = student_manager.get_duplicate_name_count()
         
         return render_template(
             "students.html",
             students=student_manager.get_student_database_rows(),
             deleted_students=student_manager.get_student_database_rows(active=0),
-            has_duplicates=has_duplicates,
-            duplicate_summary=duplicate_summary,
+            has_duplicates=duplicate_count > 0,
+            duplicate_count=duplicate_count,
         )
 
     @app.route("/students/duplicates")

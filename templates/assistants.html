@@ -28,7 +28,7 @@
         <td>{{ a[4] }}</td>
         <td>
           {% set qr_file = 'assistant_' ~ a[0] ~ '.png' %}
-          <img src="/assets/qr_codes/{{ qr_file }}" alt="QR" width="64" height="64" onerror="this.src='/static/img/default.png'">
+          <img src="/assets/qr_codes/{{ qr_file }}" alt="QR" width="64" height="64" loading="lazy" decoding="async" onerror="this.src='/static/img/default.png'">
         </td>
         <td>
           <form action="{{ url_for('qr_assistant_generate', aid=a[0]) }}" method="post" class="d-inline">

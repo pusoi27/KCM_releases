@@ -6,7 +6,7 @@ import sqlite3, csv, os, json
 from modules.database import DB_PATH
 
 MAX_SUBJECTS = 3
-MAX_SCHEDULE_DAYS = 2
+MAX_SCHEDULE_DAYS = 7
 
 
 def _loads_json_list(raw_value, default=None):
@@ -510,48 +510,96 @@ def get_duplicate_names():
         return c.fetchall()
 
 
+def get_duplicate_name_count():
+    """Return how many distinct duplicate names exist among active students."""
+    with sqlite3.connect(DB_PATH) as conn:
+        c = conn.cursor()
+        row = c.execute(
+            """
+            SELECT COUNT(*)
+            FROM (
+                SELECT LOWER(TRIM(name))
+                FROM students
+                WHERE active = 1
+                GROUP BY LOWER(TRIM(name))
+                HAVING COUNT(*) > 1
+            )
+            """,
+            (),
+        ).fetchone()
+        return int(row[0] or 0) if row else 0
+
+
 def get_duplicate_summary():
     """Get a detailed summary of all duplicate names with their student information."""
-    duplicates = get_duplicate_names()
-    summary = []
-    
-    for name_key, count in duplicates:
-        # Find the original name (with correct casing) and get all students with this name
-        with sqlite3.connect(DB_PATH) as conn:
-            c = conn.cursor()
-            c.execute("""
-                SELECT id, name, email, phone, subject, day1, day1_time, day2, day2_time, el, pi, v
+    with sqlite3.connect(DB_PATH) as conn:
+        c = conn.cursor()
+        rows = c.execute(
+            """
+            WITH duplicate_names AS (
+                SELECT LOWER(TRIM(name)) AS name_key, COUNT(*) AS dup_count
                 FROM students
-                WHERE LOWER(TRIM(name)) = LOWER(TRIM(?))
-                AND active = 1
-                ORDER BY id
-            """, (name_key,))
-            students = c.fetchall()
-            
-            if students:
-                original_name = students[0][1]  # Get the actual name with correct casing
-                summary.append({
-                    'name': original_name,
-                    'count': count,
-                    'students': [
-                        {
-                            'id': s[0],
-                            'name': s[1],
-                            'email': s[2],
-                            'phone': s[3],
-                            'subject': s[4],
-                            'day1': s[5],
-                            'day1_time': s[6],
-                            'day2': s[7],
-                            'day2_time': s[8],
-                            'el': s[9],
-                            'pi': s[10],
-                            'v': s[11]
-                        }
-                        for s in students
-                    ]
-                })
-    
+                WHERE active = 1
+                GROUP BY LOWER(TRIM(name))
+                HAVING COUNT(*) > 1
+            )
+            SELECT
+                d.name_key,
+                d.dup_count,
+                s.id,
+                s.name,
+                s.email,
+                s.phone,
+                s.subject,
+                s.day1,
+                s.day1_time,
+                s.day2,
+                s.day2_time,
+                s.el,
+                s.pi,
+                s.v
+            FROM duplicate_names d
+            JOIN students s
+              ON LOWER(TRIM(s.name)) = d.name_key
+             AND s.active = 1
+            ORDER BY d.dup_count DESC, d.name_key, s.id
+            """,
+            (),
+        ).fetchall()
+
+    summary = []
+    current_key = None
+    current_block = None
+
+    for row in rows:
+        name_key = row[0]
+        dup_count = row[1]
+        if current_key != name_key:
+            current_key = name_key
+            current_block = {
+                'name': row[3],
+                'count': dup_count,
+                'students': [],
+            }
+            summary.append(current_block)
+
+        current_block['students'].append(
+            {
+                'id': row[2],
+                'name': row[3],
+                'email': row[4],
+                'phone': row[5],
+                'subject': row[6],
+                'day1': row[7],
+                'day1_time': row[8],
+                'day2': row[9],
+                'day2_time': row[10],
+                'el': row[11],
+                'pi': row[12],
+                'v': row[13],
+            }
+        )
+
     return summary
 
 

@@ -1,5 +1,9 @@
 {
-  "_comment": "Copy this file to db_config.json and set db_path to your Google Drive location.",
-  "_comment2": "db_config.json is machine-local and should NOT be committed to git.",
-  "db_path": "C:/Users/YourName/Google Drive/My Drive/Stdytime/Stdytime.db"
+  "_comment": "Copy this file to db_config.json.",
+  "_comment2": "Use a local db_path for runtime speed; gdrive_sync_path is backup/sync only.",
+  "_comment3": "Set startup_pull_from_gdrive=true only if you want GDrive to overwrite local DB on launch when newer.",
+  "db_path": "C:/Users/YourName/AppData/Local/StdyTime/Stdytime.db",
+  "gdrive_sync_path": "G:/My Drive/StdyTime/Stdytime.db",
+  "sync_interval_minutes": 5,
+  "startup_pull_from_gdrive": false
 }

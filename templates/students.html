@@ -87,35 +87,28 @@
     color: var(--brand-primary-dark);
     text-decoration: underline;
   }
-  .col-subject-slot { min-width: 110px; }
+  .col-subject-flag {
+    width: 44px;
+    min-width: 44px;
+    max-width: 44px;
+    text-align: center;
+  }
   .col-classification { min-width: 110px; text-align: center; }
-  .col-schedule-slot { min-width: 110px; font-weight: 500; }
+  .col-day-flag {
+    width: 40px;
+    min-width: 40px;
+    max-width: 40px;
+    text-align: center;
+  }
   .col-qr { width: 45px; text-align: center; }
   .col-checkbox { width: 32px; text-align: center; padding: 3px 2px !important; }
   .col-actions { min-width: 140px; }
 
-  .subject-chip {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    width: 100%;
-    min-height: 28px;
-    padding: 0.25rem 0.55rem;
-    border-radius: 999px;
-    font-size: 0.8rem;
-    font-weight: 600;
-    line-height: 1.15;
-    border: 1px solid #d7e7d5;
-    background: #f6faf4;
-    color: var(--brand-primary-dark);
-    white-space: nowrap;
-  }
-
-  .subject-chip.is-empty,
-  .schedule-chip.is-empty {
-    background: #f8fafc;
-    color: #94a3b8;
-    border-style: dashed;
+  .subject-check {
+    width: 16px;
+    height: 16px;
+    accent-color: #2e7d32;
+    cursor: default;
   }
 
   .classification-badge {
@@ -132,36 +125,13 @@
     color: var(--brand-primary-dark);
   }
 
-  .schedule-chip {
-    display: inline-flex;
-    flex-direction: column;
-    align-items: flex-start;
-    justify-content: center;
-    width: 100%;
-    min-height: 34px;
-    padding: 0.3rem 0.5rem;
-    border-radius: 10px;
-    background: #f7fbf4;
-    border: 1px solid #d7e7d5;
-    color: var(--brand-primary-dark);
-    line-height: 1.15;
-  }
-
-  .schedule-chip-day { font-weight: 700; font-size: 0.78rem; }
-  .schedule-chip-time { font-size: 0.74rem; color: #58724f; }
-
   /* Responsive adjustments for smaller screens */
   @media (max-width: 1200px) {
     .student-table { font-size: 0.8rem; }
     .student-table th { padding: 5px 3px !important; font-size: 0.75rem; }
     .student-table td { padding: 3px !important; }
     .col-name { min-width: 80px; }
-    .col-subject-slot, .col-schedule-slot { min-width: 96px; }
     .col-actions { min-width: 120px; }
-  }
-
-  @media (max-width: 992px) {
-    .col-subject-slot, .col-schedule-slot { min-width: 90px; }
   }
 </style>
 <div class="container-fluid mt-3 px-2 px-md-3">
@@ -172,7 +142,7 @@
     <div class="alert alert-warning alert-dismissible fade show" role="alert">
       <i class="bi bi-exclamation-triangle-fill"></i> 
       <strong>Duplicate Names Detected!</strong> 
-      {{ duplicate_summary|length }} student name(s) appear more than once in your database.
+      {{ duplicate_count }} student name(s) appear more than once in your database.
       <a href="{{ url_for('students_duplicates') }}" class="alert-link"><strong>View and resolve duplicates</strong></a>
       <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
     </div>
@@ -194,12 +164,16 @@
       <tr>
         <th class="col-id">ID</th>
         <th class="col-name">Name</th>
-        <th class="col-subject-slot">Subject 1</th>
-        <th class="col-subject-slot">Subject 2</th>
-        <th class="col-subject-slot">Subject 3</th>
+        <th class="col-subject-flag" title="Math" aria-label="Math">M</th>
+        <th class="col-subject-flag" title="Reading" aria-label="Reading">R</th>
+        <th class="col-subject-flag" title="Writing" aria-label="Writing">W</th>
         <th class="col-classification">Classification</th>
-        <th class="col-schedule-slot">Schedule 1</th>
-        <th class="col-schedule-slot">Schedule 2</th>
+        <th class="col-day-flag" title="Monday" aria-label="Monday">M</th>
+        <th class="col-day-flag" title="Tuesday" aria-label="Tuesday">T</th>
+        <th class="col-day-flag" title="Wednesday" aria-label="Wednesday">W</th>
+        <th class="col-day-flag" title="Thursday" aria-label="Thursday">Th</th>
+        <th class="col-day-flag" title="Friday" aria-label="Friday">F</th>
+        <th class="col-day-flag" title="Saturday" aria-label="Saturday">Sa</th>
         <th>Email</th>
         <th>Phone</th>
         <th class="col-qr">QR</th>
@@ -215,30 +189,39 @@
         <td class="col-name">
           <a href="{{ url_for('students_edit',sid=s.id) }}" class="student-name-link">{{ s.name }}</a>
         </td>
-        {% for subject_name in s.subject_slots %}
-        <td class="col-subject-slot">
-          <span class="subject-chip{% if not subject_name %} is-empty{% endif %}">{{ subject_name or '—' }}</span>
-        </td>
+        {% set ns = namespace(m=false, r=false, w=false) %}
+        {% for subject_name in s.subjects %}
+          {% set token = (subject_name or '')|trim|lower %}
+          {% if token in ['m', 'math', 'mathematics', 's2'] %}{% set ns.m = true %}{% endif %}
+          {% if token in ['r', 'reading', 'read', 's1'] %}{% set ns.r = true %}{% endif %}
+          {% if token in ['w', 'writing', 'write'] %}{% set ns.w = true %}{% endif %}
         {% endfor %}
+        <td class="col-subject-flag"><input class="form-check-input subject-check" type="checkbox" {% if ns.m %}checked{% endif %} disabled></td>
+        <td class="col-subject-flag"><input class="form-check-input subject-check" type="checkbox" {% if ns.r %}checked{% endif %} disabled></td>
+        <td class="col-subject-flag"><input class="form-check-input subject-check" type="checkbox" {% if ns.w %}checked{% endif %} disabled></td>
         <td class="col-classification">
           <span class="classification-badge">{{ s.classification }}</span>
         </td>
-        {% for slot in s.schedule_slots %}
-        <td class="col-schedule-slot">
-          {% if slot %}
-          <span class="schedule-chip">
-            <span class="schedule-chip-day">{{ slot.day }}</span>
-            <span class="schedule-chip-time">{{ format_time_12hr(slot.time) if slot.time else 'Time TBD' }}</span>
-          </span>
-          {% else %}
-          <span class="schedule-chip is-empty">—</span>
-          {% endif %}
-        </td>
+        {% set ds = namespace(m=false, t=false, w=false, th=false, f=false, sa=false) %}
+        {% for slot in s.schedule %}
+          {% set day_token = (slot.day or '')|trim|lower %}
+          {% if day_token.startswith('mon') %}{% set ds.m = true %}{% endif %}
+          {% if day_token.startswith('tue') %}{% set ds.t = true %}{% endif %}
+          {% if day_token.startswith('wed') %}{% set ds.w = true %}{% endif %}
+          {% if day_token.startswith('thu') %}{% set ds.th = true %}{% endif %}
+          {% if day_token.startswith('fri') %}{% set ds.f = true %}{% endif %}
+          {% if day_token.startswith('sat') %}{% set ds.sa = true %}{% endif %}
         {% endfor %}
+        <td class="col-day-flag"><input class="form-check-input subject-check" type="checkbox" {% if ds.m %}checked{% endif %} disabled></td>
+        <td class="col-day-flag"><input class="form-check-input subject-check" type="checkbox" {% if ds.t %}checked{% endif %} disabled></td>
+        <td class="col-day-flag"><input class="form-check-input subject-check" type="checkbox" {% if ds.w %}checked{% endif %} disabled></td>
+        <td class="col-day-flag"><input class="form-check-input subject-check" type="checkbox" {% if ds.th %}checked{% endif %} disabled></td>
+        <td class="col-day-flag"><input class="form-check-input subject-check" type="checkbox" {% if ds.f %}checked{% endif %} disabled></td>
+        <td class="col-day-flag"><input class="form-check-input subject-check" type="checkbox" {% if ds.sa %}checked{% endif %} disabled></td>
         <td>{{ s.email }}</td>
         <td>{{ s.phone }}</td>
         <td class="col-qr">
-          <img src="/assets/qr_codes/{{ s.qr_filename }}" alt="QR" width="48" height="48" onerror="this.src='/static/img/default.png'">
+          <img src="/assets/qr_codes/{{ s.qr_filename }}" alt="QR" width="48" height="48" loading="lazy" decoding="async" onerror="this.src='/static/img/default.png'">
         </td>
         <td class="text-center col-checkbox">
           {% if s.book_loaned %}<span class="badge bg-primary">B</span>{% endif %}
@@ -258,7 +241,7 @@
       <!-- Deleted Students Section -->
       {% if deleted_students %}
       <tr>
-        <td colspan="13" class="table-section-header bg-light px-3 py-2">
+        <td colspan="17" class="table-section-header bg-light px-3 py-2">
           <strong class="text-muted">Deleted Students</strong>
         </td>
       </tr>
@@ -266,30 +249,39 @@
       <tr class="deleted-student-row">
         <td class="col-id text-muted">{{ s.id }}</td>
         <td class="col-name text-muted">{{ s.name }}</td>
-        {% for subject_name in s.subject_slots %}
-        <td class="col-subject-slot">
-          <span class="subject-chip{% if not subject_name %} is-empty{% endif %}" style="opacity:0.65;">{{ subject_name or '—' }}</span>
-        </td>
+        {% set ns = namespace(m=false, r=false, w=false) %}
+        {% for subject_name in s.subjects %}
+          {% set token = (subject_name or '')|trim|lower %}
+          {% if token in ['m', 'math', 'mathematics', 's2'] %}{% set ns.m = true %}{% endif %}
+          {% if token in ['r', 'reading', 'read', 's1'] %}{% set ns.r = true %}{% endif %}
+          {% if token in ['w', 'writing', 'write'] %}{% set ns.w = true %}{% endif %}
         {% endfor %}
+        <td class="col-subject-flag"><input class="form-check-input subject-check" type="checkbox" {% if ns.m %}checked{% endif %} disabled style="opacity:0.6;"></td>
+        <td class="col-subject-flag"><input class="form-check-input subject-check" type="checkbox" {% if ns.r %}checked{% endif %} disabled style="opacity:0.6;"></td>
+        <td class="col-subject-flag"><input class="form-check-input subject-check" type="checkbox" {% if ns.w %}checked{% endif %} disabled style="opacity:0.6;"></td>
         <td class="col-classification text-muted">
           <span class="classification-badge" style="opacity:0.7;">{{ s.classification }}</span>
         </td>
-        {% for slot in s.schedule_slots %}
-        <td class="col-schedule-slot">
-          {% if slot %}
-          <span class="schedule-chip" style="opacity:0.7;">
-            <span class="schedule-chip-day">{{ slot.day }}</span>
-            <span class="schedule-chip-time">{{ format_time_12hr(slot.time) if slot.time else 'Time TBD' }}</span>
-          </span>
-          {% else %}
-          <span class="schedule-chip is-empty" style="opacity:0.7;">—</span>
-          {% endif %}
-        </td>
+        {% set ds = namespace(m=false, t=false, w=false, th=false, f=false, sa=false) %}
+        {% for slot in s.schedule %}
+          {% set day_token = (slot.day or '')|trim|lower %}
+          {% if day_token.startswith('mon') %}{% set ds.m = true %}{% endif %}
+          {% if day_token.startswith('tue') %}{% set ds.t = true %}{% endif %}
+          {% if day_token.startswith('wed') %}{% set ds.w = true %}{% endif %}
+          {% if day_token.startswith('thu') %}{% set ds.th = true %}{% endif %}
+          {% if day_token.startswith('fri') %}{% set ds.f = true %}{% endif %}
+          {% if day_token.startswith('sat') %}{% set ds.sa = true %}{% endif %}
         {% endfor %}
+        <td class="col-day-flag"><input class="form-check-input subject-check" type="checkbox" {% if ds.m %}checked{% endif %} disabled style="opacity:0.6;"></td>
+        <td class="col-day-flag"><input class="form-check-input subject-check" type="checkbox" {% if ds.t %}checked{% endif %} disabled style="opacity:0.6;"></td>
+        <td class="col-day-flag"><input class="form-check-input subject-check" type="checkbox" {% if ds.w %}checked{% endif %} disabled style="opacity:0.6;"></td>
+        <td class="col-day-flag"><input class="form-check-input subject-check" type="checkbox" {% if ds.th %}checked{% endif %} disabled style="opacity:0.6;"></td>
+        <td class="col-day-flag"><input class="form-check-input subject-check" type="checkbox" {% if ds.f %}checked{% endif %} disabled style="opacity:0.6;"></td>
+        <td class="col-day-flag"><input class="form-check-input subject-check" type="checkbox" {% if ds.sa %}checked{% endif %} disabled style="opacity:0.6;"></td>
         <td class="text-muted">{{ s.email }}</td>
         <td class="text-muted">{{ s.phone }}</td>
         <td class="col-qr">
-          <img src="/assets/qr_codes/{{ s.qr_filename }}" alt="QR" width="48" height="48" onerror="this.src='/static/img/default.png'" style="opacity: 0.5;">
+          <img src="/assets/qr_codes/{{ s.qr_filename }}" alt="QR" width="48" height="48" loading="lazy" decoding="async" onerror="this.src='/static/img/default.png'" style="opacity: 0.5;">
         </td>
         <td class="text-center col-checkbox text-muted">
           {% if s.book_loaned %}<span class="badge bg-secondary">B</span>{% endif %}

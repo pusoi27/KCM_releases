@@ -20,7 +20,7 @@ import logging
 # Load environment variables from .env file
 load_dotenv()
 
-from modules.database import init_db, DB_PATH
+from modules.database import init_db, DB_PATH, GDriveLockError
 from modules import student_manager, timer_manager, qr_generator, assistant_manager, reports, auth_manager, license_manager
 from modules import instructor_profile_manager
 from modules import user_identity_manager
@@ -62,6 +62,14 @@ app.config['WTF_CSRF_TIME_LIMIT'] = 3600  # CSRF token valid for 1 hour
 try:
     init_db()
     print(f"[startup] Database initialized at: {DB_PATH}")
+except GDriveLockError as lock_err:
+    print(
+        f"\n[startup] BLOCKED: {lock_err}\n"
+        "StdyTime cannot start while another machine is using the database.\n"
+        "Close the app on the other machine, then restart here.",
+        file=sys.stderr,
+    )
+    sys.exit(1)
 except Exception as db_init_error:
     print(
         f"[startup] FATAL: Database initialization failed for DB_PATH='{DB_PATH}': {db_init_error}",
@@ -374,7 +382,7 @@ def inject_license_status():
 @app.context_processor
 def inject_app_version():
     """Inject app version from VERSION file into all templates."""
-    return dict(app_version=_ensure_version_up_to_date())
+    return dict(app_version=get_app_version())
 
 
 @app.context_processor
@@ -490,6 +498,17 @@ def _ensure_version_up_to_date():
     return version
 
 
+_APP_VERSION_CACHE = None
+
+
+def get_app_version(force_refresh=False):
+    """Return app version with in-process caching to avoid repeated filesystem scans."""
+    global _APP_VERSION_CACHE
+    if force_refresh or not _APP_VERSION_CACHE:
+        _APP_VERSION_CACHE = _ensure_version_up_to_date()
+    return _APP_VERSION_CACHE
+
+
 # ================================================================
 #  Register all route modules
 # ================================================================
@@ -572,7 +591,7 @@ _clear_state_on_startup()
 # ================================================================
 def _check_version_on_startup():
     """Check and auto-bump version on app startup if source files have changed."""
-    current_version = _ensure_version_up_to_date()
+    current_version = get_app_version(force_refresh=True)
     print(f"[startup] Stdytime version: {current_version}")
 
 if os.getenv('ENABLE_VERSION_AUTOBUMP', 'true').lower() == 'true':
@@ -703,10 +722,11 @@ if __name__ == "__main__":
         serve(app, host="127.0.0.1", port=port, threads=8)
     else:
         # Development: Flask dev server with reloader for fast iteration
+        use_reloader = os.getenv("FLASK_USE_RELOADER", "false").lower() == "true"
         app.run(
             host="127.0.0.1",
             port=port,
             debug=True,
-            use_reloader=True,
+            use_reloader=use_reloader,
             threaded=True,
         )
