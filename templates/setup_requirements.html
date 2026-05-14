@@ -1,0 +1,94 @@
+{% extends "base.html" %}
+
+{% block title %}First-Time Setup{% endblock %}
+
+{% block content %}
+<div class="container mt-4">
+    <div class="row">
+        <div class="col-lg-9 mx-auto">
+            <div class="card shadow-sm">
+                <div class="card-header brand-card-header">
+                    <h4 class="mb-0"><i class="bi bi-wrench-adjustable-circle"></i> First-Time Setup</h4>
+                </div>
+                <div class="card-body">
+                    <p class="mb-4 text-muted">
+                        Complete these setup steps before using Stdytime on this machine.
+                    </p>
+
+                    <div class="border rounded p-3 mb-3">
+                        <div class="d-flex justify-content-between align-items-start gap-3">
+                            <div>
+                                <h5 class="mb-1">1) Database storage path</h5>
+                                <p class="mb-1 text-muted">Confirm local DB path + Google Drive sync path.</p>
+                                {% if storage_status.is_ready %}
+                                    <span class="badge bg-success">Ready</span>
+                                {% else %}
+                                    <span class="badge bg-danger">Action required</span>
+                                {% endif %}
+                            </div>
+                            <a href="{{ url_for('setup_storage') }}" class="btn btn-outline-primary btn-sm">Configure</a>
+                        </div>
+                    </div>
+
+                    <div class="border rounded p-3 mb-3">
+                        <div class="d-flex justify-content-between align-items-start gap-3">
+                            <div>
+                                <h5 class="mb-1">2) Instructor profile and class hours</h5>
+                                <p class="mb-1 text-muted">Create/update profile and add at least one day of class hours.</p>
+                                {% if profile_status.is_ready %}
+                                    <span class="badge bg-success">Ready</span>
+                                {% else %}
+                                    <span class="badge bg-danger">Action required</span>
+                                {% endif %}
+                            </div>
+                            <a href="{{ url_for('instructor_profile_edit', setup='1') }}" class="btn btn-outline-primary btn-sm">Open profile setup</a>
+                        </div>
+                    </div>
+
+                    {% if all_ready %}
+                    <div class="alert alert-success mt-3 mb-0" role="alert">
+                        {% if show_complete_banner %}
+                        <div class="fw-semibold mb-1"><i class="bi bi-check-circle-fill"></i> Setup complete 🎉</div>
+                        {% endif %}
+                        <div>
+                            Setup is complete.
+                            <a class="alert-link" href="{{ url_for('dashboard') }}">Continue to Dashboard</a>
+                        </div>
+
+                        {% if auto_redirect_enabled %}
+                        <div class="small mt-2">
+                            Redirecting automatically in <span id="setup-redirect-count">{{ auto_redirect_seconds }}</span>s...
+                            <a class="alert-link ms-2" href="{{ url_for('setup_requirements', auto='0') }}">Stay on this page</a>
+                        </div>
+                        <script>
+                            (function () {
+                                var remaining = {{ auto_redirect_seconds|int }};
+                                var countEl = document.getElementById('setup-redirect-count');
+                                var timer = window.setInterval(function () {
+                                    remaining -= 1;
+                                    if (countEl && remaining >= 0) countEl.textContent = String(remaining);
+                                    if (remaining <= 0) {
+                                        window.clearInterval(timer);
+                                        window.location.href = {{ url_for('dashboard')|tojson }};
+                                    }
+                                }, 1000);
+                            })();
+                        </script>
+                        {% else %}
+                        <div class="small mt-2">
+                            Auto-redirect is paused.
+                            <a class="alert-link" href="{{ url_for('setup_requirements', auto='1') }}">Enable auto-redirect</a>
+                        </div>
+                        {% endif %}
+                    </div>
+                    {% else %}
+                    <div class="alert alert-info mt-3 mb-0" role="alert">
+                        You will be redirected back here until both setup items are complete.
+                    </div>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

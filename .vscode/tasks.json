@@ -1,10 +1,10 @@
-﻿{
+{
 	"version": "2.0.0",
 	"tasks": [
 		{
 			"label": "Run app to verify availability rules",
 			"type": "shell",
-			"command": "c:\\Users\\octav\\AppData\\Local\\Programs\\Python\\Python312\\005_Stdytime\\.venv\\Scripts\\python.exe",
+			"command": "c:\\Users\\octav\\AppData\\Local\\Programs\\Python\\Python312\\stdytime\\.venv\\Scripts\\python.exe",
 			"args": [
 				"app.py"
 			],
@@ -15,7 +15,7 @@
 		{
 			"label": "Bump app version",
 			"type": "shell",
-			"command": "c:\\Users\\octav\\AppData\\Local\\Programs\\Python\\Python312\\005_Stdytime\\.venv\\Scripts\\python.exe",
+			"command": "c:\\Users\\octav\\AppData\\Local\\Programs\\Python\\Python312\\stdytime\\.venv\\Scripts\\python.exe",
 			"args": [
 				"scripts/version_bump.py"
 			],

@@ -165,8 +165,8 @@ def register_reports_routes(app):
         writer.writerow([])
         writer.writerow(['Employee Name', 'Day Attended', 'Start Time', 'End Time', 'Hours Logged (HH:MM)'])
         for name, date_only, start_iso, end_iso, duration_sec in sessions:
-            start_time = start_iso.split('T')[1][:5] if 'T' in start_iso else start_iso
-            end_time = end_iso.split('T')[1][:5] if 'T' in end_iso else end_iso
+            start_time = start_iso.split('T')[1][:5] if start_iso and 'T' in start_iso else (start_iso or '--:--')
+            end_time = end_iso.split('T')[1][:5] if end_iso and 'T' in end_iso else (end_iso or '--:--')
             # Convert duration to HH:MM format
             hours = int(duration_sec // 3600)
             minutes = int((duration_sec % 3600) // 60)

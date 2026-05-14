@@ -1,0 +1,166 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="container-fluid mt-4">
+  <div class="row mb-4">
+    <div class="col-md-8">
+      <h2><i class="bi bi-box-seam"></i> Devices</h2>
+      <p class="text-muted">Total devices: <strong>{{ total_materials }}</strong></p>
+    </div>
+    <div class="col-md-4 text-end">
+      <a href="{{ url_for('materials_add') }}" class="btn btn-primary btn-sm">
+        <i class="bi bi-plus-circle"></i> Add Device
+      </a>
+    </div>
+  </div>
+
+  <div class="card mb-4">
+    <div class="card-body">
+      <div class="row g-3">
+        <div class="col-md-6">
+          <input type="text" id="searchInput" class="form-control" placeholder="Search by title, author, publisher, or QR code...">
+        </div>
+        <div class="col-md-3">
+          <select id="levelFilter" class="form-select">
+            <option value="">All Levels</option>
+            <option value="7A">7A</option><option value="6A">6A</option><option value="5A">5A</option>
+            <option value="4A">4A</option><option value="3A">3A</option><option value="2A">2A</option>
+            <option value="A">A</option><option value="B">B</option><option value="C">C</option>
+            <option value="D">D</option><option value="E">E</option><option value="F">F</option>
+            <option value="G">G</option><option value="H">H</option><option value="I">I</option>
+            <option value="J">J</option><option value="K">K</option><option value="L">L</option>
+          </select>
+        </div>
+        <div class="col-md-3">
+          <button id="searchBtn" class="btn btn-outline-primary w-100"><i class="bi bi-search"></i> Search</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="table-responsive">
+      <table class="table table-hover mb-0" id="materialsTable">
+        <thead class="table-light">
+          <tr>
+            <th>Title</th>
+            <th>Author</th>
+            <th>Publisher</th>
+            <th class="text-center">Level</th>
+            <th class="text-center">Copies</th>
+            <th class="text-center">Available</th>
+            <th class="text-center">Borrower</th>
+            <th class="text-center">QR Code</th>
+            <th width="140" class="text-center">Actions</th>
+          </tr>
+        </thead>
+        <tbody id="materialsTableBody">
+          {% if materials %}
+            {% for material in materials %}
+            <tr class="material-row" data-id="{{ material.id }}">
+              <td class="fw-500">{{ material.title or 'Untitled' }}</td>
+              <td>{{ material.author or 'Unknown' }}</td>
+              <td class="text-muted small">{{ (material.publisher or '')[:40] }}{% if (material.publisher or '')|length > 40 %}...{% endif %}</td>
+              <td class="text-center"><span class="badge bg-info">{{ material.reading_level or '-' }}</span></td>
+              <td class="text-center">{{ material.copies or 0 }}</td>
+              <td class="text-center">
+                {% if material.available and material.qr_code %}
+                  <span class="badge bg-success">Yes</span>
+                {% else %}
+                  <span class="badge bg-danger">No</span>
+                {% endif %}
+              </td>
+              <td class="text-center small">{{ material.borrower_name or '-' }}</td>
+              <td class="text-center small text-muted">{{ material.qr_code or '-' }}</td>
+              <td class="text-center">
+                <a href="{{ url_for('materials_edit', material_id=material.id) }}" class="btn btn-outline-info btn-sm">Edit</a>
+                {% if current_user and current_user.is_admin() %}
+                <button type="button" class="btn btn-outline-danger btn-sm" onclick="submitDeleteMaterial({{ material.id }})">Del</button>
+                {% endif %}
+              </td>
+            </tr>
+            {% endfor %}
+          {% else %}
+            <tr><td colspan="9" class="text-center text-muted py-4">No materials found</td></tr>
+          {% endif %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+  const csrfToken = document.querySelector('meta[name="csrf-token"]')?.getAttribute('content') || '';
+  const searchInput = document.getElementById('searchInput');
+  const levelFilter = document.getElementById('levelFilter');
+  const searchBtn = document.getElementById('searchBtn');
+  const body = document.getElementById('materialsTableBody');
+
+  window.submitDeleteMaterial = function(materialId) {
+    if (!confirm('Delete material?')) return;
+    const form = document.createElement('form');
+    form.method = 'POST';
+    form.action = `/materials/delete/${materialId}`;
+    form.innerHTML = `<input type="hidden" name="csrf_token" value="${csrfToken}">`;
+    document.body.appendChild(form);
+    form.submit();
+  };
+
+  function escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text == null ? '' : text;
+    return div.innerHTML;
+  }
+
+  function performSearch() {
+    const query = searchInput.value.trim();
+    const level = levelFilter.value.trim();
+
+    if (!query && !level) {
+      document.querySelectorAll('.material-row').forEach(row => row.style.display = '');
+      return;
+    }
+
+    fetch(`/api/materials/search?q=${encodeURIComponent(query)}&level=${encodeURIComponent(level)}`)
+      .then(resp => resp.json())
+      .then(data => {
+        body.innerHTML = '';
+        if (data.materials && data.materials.length > 0) {
+          data.materials.forEach(material => {
+            const row = document.createElement('tr');
+            row.className = 'material-row';
+            row.dataset.id = material.id;
+            row.innerHTML = `
+              <td class="fw-500">${escapeHtml(material.title)}</td>
+              <td>${escapeHtml(material.author || 'Unknown')}</td>
+              <td class="text-muted small">${escapeHtml((material.publisher || '').substring(0, 40))}</td>
+              <td class="text-center"><span class="badge bg-info">${escapeHtml(material.reading_level || '-')}</span></td>
+              <td class="text-center">${material.copies || 0}</td>
+              <td class="text-center"><span class="badge ${(material.available && material.qr_code) ? 'bg-success' : 'bg-danger'}">${(material.available && material.qr_code) ? 'Yes' : 'No'}</span></td>
+              <td class="text-center small">${escapeHtml(material.borrower_name || '-')}</td>
+              <td class="text-center small text-muted">${escapeHtml(material.qr_code || '-')}</td>
+              <td class="text-center">
+                <a href="/materials/edit/${material.id}" class="btn btn-outline-info btn-sm">Edit</a>
+                {% if current_user and current_user.is_admin() %}
+                <button type="button" class="btn btn-outline-danger btn-sm" onclick="submitDeleteMaterial(${material.id})">Del</button>
+                {% endif %}
+              </td>
+            `;
+            body.appendChild(row);
+          });
+        } else {
+          const row = document.createElement('tr');
+          row.innerHTML = '<td colspan="9" class="text-center text-muted py-4">No materials found</td>';
+          body.appendChild(row);
+        }
+      })
+      .catch(err => alert('Search failed: ' + err));
+  }
+
+  searchBtn.addEventListener('click', performSearch);
+  searchInput.addEventListener('keypress', e => { if (e.key === 'Enter') performSearch(); });
+  levelFilter.addEventListener('change', performSearch);
+});
+</script>
+{% endblock %}

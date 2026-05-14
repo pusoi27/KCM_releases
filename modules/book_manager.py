@@ -69,7 +69,7 @@ def sync_all_students_book_status():
                     WHEN COALESCE(copies, 0) > 0
                      AND ((isbn IS NOT NULL AND TRIM(isbn) != '') OR (isbn13 IS NOT NULL AND TRIM(isbn13) != ''))
                     THEN 1 ELSE 0 END
-            WHERE              AND id NOT IN (
+            WHERE id NOT IN (
                 SELECT bl.book_id
                 FROM book_loans bl
                 JOIN books b ON b.id = bl.book_id
@@ -92,7 +92,7 @@ def sync_all_students_book_status():
                 LIMIT 1
             ),
             available = 0
-            WHERE              AND id IN (
+            WHERE id IN (
                 SELECT bl.book_id
                 FROM book_loans bl
                 JOIN books b ON b.id = bl.book_id
@@ -115,7 +115,7 @@ def get_books():
             """
             SELECT id, title, author, available, reading_level, isbn, isbn13, publisher, copies, borrower_id
             FROM books
-            WHERE            ORDER BY title
+            ORDER BY title
             """,
             (),
         )
@@ -132,9 +132,43 @@ def get_book(book_id):
             FROM books
             WHERE id = ?
             """,
-            (book_id),
+            (book_id,),
         )
         return c.fetchone()
+
+
+def _coerce_blob(raw_value):
+    """Convert database BLOB to bytes."""
+    if raw_value is None:
+        return None
+    if isinstance(raw_value, memoryview):
+        return raw_value.tobytes()
+    if isinstance(raw_value, bytes):
+        return raw_value
+    return None
+
+
+def set_book_qr_code(book_id, qr_blob):
+    """Store a book's QR code as BLOB in database."""
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.execute(
+            "UPDATE books SET qr_code_blob=? WHERE id=?",
+            (sqlite3.Binary(qr_blob) if qr_blob else None, book_id),
+        )
+        conn.commit()
+
+
+def get_book_qr_code(book_id):
+    """Retrieve a book's QR code blob from database."""
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.row_factory = sqlite3.Row
+        row = conn.execute(
+            "SELECT qr_code_blob FROM books WHERE id=?",
+            (book_id,),
+        ).fetchone()
+        if row and row['qr_code_blob']:
+            return _coerce_blob(row['qr_code_blob'])
+    return None
 
 
 def add_book(title, author, publisher, isbn=None, isbn13=None, available=1, reading_level=None, copies=1):
@@ -152,7 +186,7 @@ def add_book(title, author, publisher, isbn=None, isbn13=None, available=1, read
         c.execute(
             """
             INSERT INTO books (title, author, publisher, isbn, isbn13, available, reading_level, copies)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (title, author, publisher, isbn, isbn13, available, reading_level, copies),
         )
@@ -361,7 +395,7 @@ def return_book(book_id: int):
                 SELECT id FROM book_loans
                 WHERE book_id = ?
                   AND return_date IS NULL
-                  AND student_id IN (SELECT id FROM students WHERE                ORDER BY checkout_date DESC
+                                ORDER BY checkout_date DESC
                 LIMIT 1
             )
             """,
@@ -491,7 +525,7 @@ def clear_active_loan(book_id: int, student_id: int):
             WHERE book_id = ?
               AND student_id = ?
               AND return_date IS NULL
-              AND book_id IN (SELECT id FROM books WHERE              AND student_id IN (SELECT id FROM students WHERE            ORDER BY checkout_date DESC
+                        ORDER BY checkout_date DESC
             LIMIT 1
             """,
             (book_id, student_id),
@@ -531,7 +565,7 @@ def find_book_by_title(title: str):
         c.execute(
             "SELECT id, title, author, available, reading_level, isbn, isbn13, publisher, copies, borrower_id "
             "FROM books WHERE lower(title) = lower(?) LIMIT 1",
-            (title.strip()),
+            (title.strip(),),
         )
         return c.fetchone()
 

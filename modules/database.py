@@ -2,7 +2,7 @@
 #database.py   ver 05--
 #*****************************
 
-import sqlite3, os, sys, shutil, threading, time, atexit, socket
+import sqlite3, os, sys, shutil, threading, time, atexit, socket, mimetypes
 from datetime import datetime, timezone
 import json
 
@@ -36,6 +36,73 @@ def _read_db_config_path() -> str | None:
     """Return db_path from db_config.json, or None if absent/invalid."""
     path = _read_db_config().get("db_path", "").strip()
     return path if path else None
+
+
+def get_db_config_status() -> dict:
+    """Return readiness status for local DB path + Google Drive sync path setup."""
+    cfg = _read_db_config()
+    db_path = str(cfg.get("db_path", "") or "").strip()
+    gdrive_sync_path = str(cfg.get("gdrive_sync_path", "") or "").strip()
+
+    issues: list[str] = []
+    warnings: list[str] = []
+
+    if not db_path:
+        issues.append("Local database path is not configured.")
+    else:
+        usable, reason = _can_use_db_parent(db_path)
+        if not usable:
+            issues.append(f"Local database path is not writable: {reason}")
+
+    if not gdrive_sync_path:
+        issues.append("Google Drive sync path is not configured.")
+    else:
+        usable, reason = _can_use_db_parent(gdrive_sync_path)
+        if not usable:
+            issues.append(f"Google Drive sync path is not writable: {reason}")
+        normalized = gdrive_sync_path.replace('\\', '/').lower()
+        if "google drive" not in normalized and "my drive" not in normalized and not normalized.startswith("g:/"):
+            warnings.append(
+                "Path does not look like a Google Drive location. This is allowed, but sync may not work as intended."
+            )
+
+    return {
+        "is_ready": len(issues) == 0,
+        "issues": issues,
+        "warnings": warnings,
+        "config": {
+            "db_path": db_path,
+            "gdrive_sync_path": gdrive_sync_path,
+            "sync_interval_minutes": int(cfg.get("sync_interval_minutes", 5) or 5),
+            "startup_pull_from_gdrive": bool(cfg.get("startup_pull_from_gdrive", False)),
+        },
+        "example": {
+            "db_path": "C:/Users/YourName/AppData/Local/StdyTime/Stdytime.db",
+            "gdrive_sync_path": "G:/My Drive/StdyTime/Stdytime.db",
+        },
+    }
+
+
+def save_db_config_paths(*, db_path: str, gdrive_sync_path: str, sync_interval_minutes: int | None = None) -> dict:
+    """Persist db_path and gdrive_sync_path to db_config.json and return updated status."""
+    db_path = (db_path or "").strip().replace("\\", "/")
+    gdrive_sync_path = (gdrive_sync_path or "").strip().replace("\\", "/")
+
+    cfg = _read_db_config()
+    cfg["_comment"] = "db_path = local machine path (fast, all session reads/writes go here)."
+    cfg["_comment2"] = "gdrive_sync_path = Google Drive path used only for background sync."
+    cfg["_comment3"] = "sync_interval_minutes = how often local DB is pushed to Google Drive (0 = disable)."
+    cfg["db_path"] = db_path
+    cfg["gdrive_sync_path"] = gdrive_sync_path
+    if sync_interval_minutes is not None:
+        cfg["sync_interval_minutes"] = max(0, int(sync_interval_minutes))
+    elif "sync_interval_minutes" not in cfg:
+        cfg["sync_interval_minutes"] = 5
+
+    with open(_DB_CONFIG_FILE, "w", encoding="utf-8") as fh:
+        json.dump(cfg, fh, indent=2)
+
+    return get_db_config_status()
 
 
 def _can_use_db_parent(path):
@@ -131,6 +198,69 @@ def _db_summary(db_path: str) -> str:
         return f"(summary unavailable: {exc})"
 
 
+def _student_photos_dir() -> str:
+    return os.path.join(_APP_ROOT, "static", "img", "students")
+
+
+def _guess_photo_mime(filename: str) -> str:
+    mime, _ = mimetypes.guess_type(filename or "")
+    return mime or "image/png"
+
+
+def _migrate_student_photos_to_blob(db_path: str) -> None:
+    """Backfill the new BLOB photo columns from the legacy filename column."""
+    photos_dir = _student_photos_dir()
+    if not os.path.isdir(photos_dir):
+        return
+
+    with sqlite3.connect(db_path) as conn:
+        cur = conn.cursor()
+        rows = cur.execute(
+            """
+            SELECT id, photo, photo_blob, photo_mime, photo_filename
+            FROM students
+            WHERE COALESCE(photo, '') <> ''
+              AND (photo_blob IS NULL OR length(photo_blob) = 0)
+            """
+        ).fetchall()
+
+        if not rows:
+            return
+
+        for student_id, legacy_photo, photo_blob, photo_mime, photo_filename in rows:
+            legacy_name = str(legacy_photo or photo_filename or '').strip()
+            if not legacy_name:
+                continue
+
+            photo_path = os.path.join(photos_dir, legacy_name)
+            if not os.path.isfile(photo_path):
+                continue
+
+            try:
+                with open(photo_path, 'rb') as fh:
+                    blob = fh.read()
+                if not blob:
+                    continue
+                cur.execute(
+                    """
+                    UPDATE students
+                    SET photo_blob=?, photo_mime=?, photo_filename=?, photo=?
+                    WHERE id=?
+                    """,
+                    (
+                        sqlite3.Binary(blob),
+                        photo_mime or _guess_photo_mime(legacy_name),
+                        photo_filename or legacy_name,
+                        legacy_name,
+                        student_id,
+                    ),
+                )
+            except Exception as exc:
+                print(f"[startup] WARNING: failed to migrate photo for student {student_id}: {exc}", file=sys.stderr)
+
+        conn.commit()
+
+
 def sync_from_gdrive(local_path: str, gdrive_path: str) -> bool:
     """
     Pull GDrive → local on startup if the GDrive copy is newer.
@@ -176,7 +306,7 @@ def sync_to_gdrive(local_path: str, gdrive_path: str, retries: int = 0, retry_de
                 summary = _db_summary(local_path)
                 print(
                     f"[sync] Pushed DB to Google Drive: {gdrive_path}\n"
-                    f"[sync] Snapshot → {summary}"
+                    f"[sync] Snapshot -> {summary}"
                 )
             return True
         except PermissionError as exc:
@@ -311,7 +441,7 @@ def _start_background_sync(local_path: str, gdrive_path: str, interval_minutes: 
 
     t = threading.Thread(target=_loop, daemon=True, name="gdrive-sync")
     t.start()
-    print(f"[sync] Background sync thread started (every {interval_minutes} min → {gdrive_path})")
+    print(f"[sync] Background sync thread started (every {interval_minutes} min -> {gdrive_path})")
 
 
 # ====================================================================
@@ -357,7 +487,7 @@ def _sync_on_exit():
             summary = _db_summary(DB_PATH)
             print(
                 f"[sync] Final exit push to Google Drive complete: {GDRIVE_SYNC_PATH}\n"
-                f"[sync] Snapshot → {summary}"
+                f"[sync] Snapshot -> {summary}"
             )
             return
         except PermissionError:
@@ -445,6 +575,33 @@ def init_db():
             reading_level TEXT,
             copies INTEGER DEFAULT 1,
             borrower_id INTEGER
+        )
+    """)
+
+    # Devices (QR-based inventory, mirrors books module behavior)
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS materials (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            title TEXT,
+            author TEXT,
+            qr_code TEXT,
+            publisher TEXT,
+            available INTEGER DEFAULT 1,
+            reading_level TEXT,
+            copies INTEGER DEFAULT 1,
+            borrower_id INTEGER
+        )
+    """)
+
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS material_loans (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            material_id INTEGER NOT NULL,
+            student_id INTEGER NOT NULL,
+            checkout_date TEXT NOT NULL,
+            return_date TEXT,
+            FOREIGN KEY(material_id) REFERENCES materials(id),
+            FOREIGN KEY(student_id) REFERENCES students(id)
         )
     """)
 
@@ -595,9 +752,19 @@ def init_db():
             cur.execute("ALTER TABLE students ADD COLUMN total_study_minutes INTEGER DEFAULT 30")
         if "photo" not in cols:
             cur.execute("ALTER TABLE students ADD COLUMN photo TEXT DEFAULT ''")
+        if "photo_blob" not in cols:
+            cur.execute("ALTER TABLE students ADD COLUMN photo_blob BLOB")
+        if "photo_mime" not in cols:
+            cur.execute("ALTER TABLE students ADD COLUMN photo_mime TEXT DEFAULT ''")
+        if "photo_filename" not in cols:
+            cur.execute("ALTER TABLE students ADD COLUMN photo_filename TEXT DEFAULT ''")
         if "schedule_json" not in cols:
             cur.execute("ALTER TABLE students ADD COLUMN schedule_json TEXT DEFAULT ''")
+        if "qr_code" not in cols:
+            cur.execute("ALTER TABLE students ADD COLUMN qr_code BLOB")
         conn.commit()
+
+    _migrate_student_photos_to_blob(DB_PATH)
 
     # Ensure required columns exist on staff table; drop orphaned columns
     with sqlite3.connect(DB_PATH) as conn:
@@ -606,6 +773,12 @@ def init_db():
         cols = [r[1] for r in cur.fetchall()]
         if "whatsapp" in cols:
             cur.execute("ALTER TABLE staff DROP COLUMN whatsapp")
+        if "qr_code" not in cols:
+            cur.execute("ALTER TABLE staff ADD COLUMN qr_code BLOB")
+        if "icon_picture" not in cols:
+            cur.execute("ALTER TABLE staff ADD COLUMN icon_picture BLOB")
+        if "icon_picture_mime" not in cols:
+            cur.execute("ALTER TABLE staff ADD COLUMN icon_picture_mime TEXT DEFAULT ''")
         conn.commit()
 
     # Ensure new book columns exist (migration for book inventory management)
@@ -622,7 +795,56 @@ def init_db():
             cur.execute("ALTER TABLE books ADD COLUMN publisher TEXT")
         if "borrower_id" not in cols:
             cur.execute("ALTER TABLE books ADD COLUMN borrower_id INTEGER REFERENCES students(id)")
+        if "qr_code_blob" not in cols:
+            cur.execute("ALTER TABLE books ADD COLUMN qr_code_blob BLOB")
         
+        conn.commit()
+
+    # Ensure devices table/columns exist (migration for devices inventory management)
+    with sqlite3.connect(DB_PATH) as conn:
+        cur = conn.cursor()
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS materials (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                title TEXT,
+                author TEXT,
+                qr_code TEXT,
+                publisher TEXT,
+                available INTEGER DEFAULT 1,
+                reading_level TEXT,
+                copies INTEGER DEFAULT 1,
+                borrower_id INTEGER
+            )
+        """)
+        cur.execute("PRAGMA table_info(materials)")
+        cols = [r[1] for r in cur.fetchall()]
+
+        if "qr_code" not in cols:
+            cur.execute("ALTER TABLE materials ADD COLUMN qr_code TEXT")
+        if "qr_code_blob" not in cols:
+            cur.execute("ALTER TABLE materials ADD COLUMN qr_code_blob BLOB")
+        if "publisher" not in cols:
+            cur.execute("ALTER TABLE materials ADD COLUMN publisher TEXT")
+        if "available" not in cols:
+            cur.execute("ALTER TABLE materials ADD COLUMN available INTEGER DEFAULT 1")
+        if "reading_level" not in cols:
+            cur.execute("ALTER TABLE materials ADD COLUMN reading_level TEXT")
+        if "copies" not in cols:
+            cur.execute("ALTER TABLE materials ADD COLUMN copies INTEGER DEFAULT 1")
+        if "borrower_id" not in cols:
+            cur.execute("ALTER TABLE materials ADD COLUMN borrower_id INTEGER REFERENCES students(id)")
+
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS material_loans (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                material_id INTEGER NOT NULL,
+                student_id INTEGER NOT NULL,
+                checkout_date TEXT NOT NULL,
+                return_date TEXT,
+                FOREIGN KEY(material_id) REFERENCES materials(id),
+                FOREIGN KEY(student_id) REFERENCES students(id)
+            )
+        """)
         conn.commit()
 
     # Ensure app_license table has all expected columns

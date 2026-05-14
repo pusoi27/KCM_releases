@@ -264,7 +264,7 @@ def register_book_routes(app):
             c = conn.cursor()
             rows = c.execute(
                 "SELECT id, name FROM students WHERE lower(name) LIKE lower(?) ORDER BY name LIMIT 10",
-                (f"{q}%")
+                (f"{q}%",)
             ).fetchall()
             suggestions = [{'id': row[0], 'name': row[1]} for row in rows]
             return jsonify({'suggestions': suggestions})
@@ -296,7 +296,7 @@ def register_book_routes(app):
             c = conn.cursor()
             row = c.execute(
                 "SELECT id, name FROM students WHERE lower(name) = lower(?) LIMIT 1",
-                (q)
+                (q,)
             ).fetchone()
             if row:
                 return jsonify({'student': {'id': row[0], 'name': row[1]}})

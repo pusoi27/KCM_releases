@@ -7,8 +7,10 @@ from modules import instructor_profile_manager
 from modules.database import DB_PATH
 from modules.utils import duration_seconds, time_now
 from datetime import datetime
+import base64
 import sqlite3
 import json
+import traceback
 from routes.auth import require_login, require_admin, require_feature
 
 # Global helper cache for performance (UI helpers)
@@ -23,11 +25,51 @@ def _trace_column3(event: str, **fields) -> None:
         print(f"[column3-trace] {event}")
 
 
+def _trace_staff_duty(event: str, **fields) -> None:
+    """Terminal trace helper for Staff on Duty modal/list/toggle flows."""
+    if fields:
+        details = " ".join(f"{key}={fields[key]!r}" for key in sorted(fields))
+        print(f"[staff-duty-trace] {event} {details}")
+    else:
+        print(f"[staff-duty-trace] {event}")
+
+
 def _students_list_cache_key() -> str:
     return server_cache.STUDENTS_LIST_CACHE_KEY
 
 def _student_goal_cache_key(student_id) -> str:
     return f"{server_cache.STUDENT_GOAL_CACHE_PREFIX}{student_id}"
+
+
+def _has_photo_blob(student_row) -> bool:
+    """Return True when the student row contains a non-empty photo blob."""
+    if not student_row or len(student_row) <= 20:
+        return False
+    raw = student_row[20]
+    if raw is None:
+        return False
+    if isinstance(raw, memoryview):
+        return len(raw.tobytes()) > 0
+    if isinstance(raw, (bytes, bytearray)):
+        return len(raw) > 0
+    return False
+
+
+def _photo_data_uri(student_row) -> str:
+    """Return a data URI for a student blob photo, or empty string if absent."""
+    if not _has_photo_blob(student_row):
+        return ''
+    blob = student_row[20]
+    if isinstance(blob, memoryview):
+        blob = blob.tobytes()
+    if not isinstance(blob, (bytes, bytearray)) or not blob:
+        return ''
+    mime = ''
+    if len(student_row) > 21:
+        mime = str(student_row[21] or '').strip()
+    mime = mime or 'image/png'
+    encoded = base64.b64encode(blob).decode('ascii')
+    return f'data:{mime};base64,{encoded}'
 
 def _assistants_profile_cache_key() -> str:
     return server_cache.ASSISTANTS_PROFILE_LIST_CACHE_KEY
@@ -231,6 +273,7 @@ def register_api_routes(app):
                     "start_time": start_time,
                     "total_seconds": total_seconds,
                     "duration": dur,
+                    "photo_url": f"/students/photo/{sid}" if _has_photo_blob(s) else "",
                 }
                 result.append(student_dict)
 
@@ -457,7 +500,8 @@ def register_api_routes(app):
                 "paper_ws": s[9] if len(s) > 9 else 0,
                 "start_time": start,
                 "subjects": json.loads(s[17] or '[]') if len(s) > 17 and s[17] else ([s[2]] if s[2] else []),
-                "photo": s[20] if len(s) > 20 else '',
+                "photo_url": f"/students/photo/{sid}" if _has_photo_blob(s) else '',
+                "photo_data_uri": _photo_data_uri(s),
             })
 
         return jsonify(result)
@@ -660,14 +704,44 @@ def register_api_routes(app):
         """Return all assistants with on-duty status and start time.
         DB is the source of truth: an "open" assistant_sessions row (end_time NULL) => on duty.
         """
+        _trace_staff_duty("list_request", method=request.method, path=request.path)
+
         def _build_duty_payload():
+            _trace_staff_duty("list_build_begin")
             assistants = assistant_manager.get_all_assistants()
             with sqlite3.connect(DB_PATH) as conn:
                 c = conn.cursor()
-                open_rows = c.execute(
-                    "SELECT assistant_id, start_time FROM assistant_sessions WHERE end_time IS NULL",
-                    (),
-                ).fetchall()
+                try:
+                    open_rows = c.execute(
+                        "SELECT assistant_id, start_time FROM assistant_sessions WHERE end_time IS NULL",
+                        (),
+                    ).fetchall()
+                except sqlite3.OperationalError as e:
+                    msg = str(e).lower()
+                    if "no such table" in msg and "assistant_sessions" in msg:
+                        _trace_staff_duty("list_missing_table_autocreate")
+                        c.execute(
+                            """
+                            CREATE TABLE IF NOT EXISTS assistant_sessions (
+                                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                                assistant_id INTEGER,
+                                start_time TEXT,
+                                end_time TEXT,
+                                duration INTEGER,
+                                FOREIGN KEY(assistant_id) REFERENCES staff(id)
+                            )
+                            """,
+                            (),
+                        )
+                        conn.commit()
+                        open_rows = []
+                    else:
+                        raise
+            _trace_staff_duty(
+                "list_build_source",
+                assistants_count=len(assistants),
+                open_rows_count=len(open_rows),
+            )
             open_map = {aid: start for (aid, start) in open_rows}
             result = []
             for a in assistants:
@@ -683,14 +757,21 @@ def register_api_routes(app):
                         start_time=open_map.get(aid),
                     )
                 )
+            _trace_staff_duty("list_build_done", payload_count=len(result))
             return result
 
-        payload = server_cache.get_or_set(
-            _assistants_duty_cache_key(),
-            _build_duty_payload,
-            policy="assistant_duty",
-        )
-        return jsonify(payload)
+        try:
+            payload = server_cache.get_or_set(
+                _assistants_duty_cache_key(),
+                _build_duty_payload,
+                policy="assistant_duty",
+            )
+            _trace_staff_duty("list_response_ok", payload_type=type(payload).__name__, payload_count=(len(payload) if isinstance(payload, list) else -1))
+            return jsonify(payload)
+        except Exception as e:
+            _trace_staff_duty("list_response_error", error=str(e))
+            print(traceback.format_exc())
+            return jsonify({"error": f"Staff list failed: {e}"}), 500
 
     @app.route("/api/assistants/select/<int:aid>", methods=["POST"])
     @require_login
@@ -699,38 +780,49 @@ def register_api_routes(app):
         """Toggle assistant on/off duty with payroll time tracking.
         Uses DB open-row semantics so checkout works reliably (even after restarts).
         """
-        assistant = assistant_manager.get_assistant(aid)
-        if not assistant:
-            return jsonify({"error": "Staff member not found"}), 404
+        _trace_staff_duty("select_request", aid=aid, method=request.method, path=request.path)
+        try:
+            assistant = assistant_manager.get_assistant(aid)
+            if not assistant:
+                _trace_staff_duty("select_not_found", aid=aid)
+                return jsonify({"error": "Staff member not found"}), 404
 
-        now = datetime.now()
-        with sqlite3.connect(DB_PATH) as conn:
-            cur = conn.cursor()
-            open_row = cur.execute(
-                "SELECT id, start_time FROM assistant_sessions WHERE assistant_id=? AND end_time IS NULL ORDER BY id DESC LIMIT 1",
-                (aid)
-            ).fetchone()
+            now = datetime.now()
+            with sqlite3.connect(DB_PATH) as conn:
+                cur = conn.cursor()
+                open_row = cur.execute(
+                    "SELECT id, start_time FROM assistant_sessions WHERE assistant_id=? AND end_time IS NULL ORDER BY id DESC LIMIT 1",
+                    (aid,),
+                ).fetchone()
 
-            if open_row:
-                sess_id, start_iso = open_row
-                try:
-                    start_dt = datetime.fromisoformat(start_iso) if start_iso else None
-                except Exception:
-                    start_dt = None
-                duration = int((now - start_dt).total_seconds()) if start_dt else 0
-                cur.execute(
-                    "UPDATE assistant_sessions SET end_time=?, duration=? WHERE id=?",
-                    (now.isoformat(), duration, sess_id)
-                )
-                conn.commit()
-                server_cache.invalidate(_assistants_duty_cache_key())
-                return jsonify({"success": True, "on_duty": False, "duration": duration})
-            else:
-                # Start new open session
-                cur.execute(
-                    "INSERT INTO assistant_sessions (assistant_id, start_time, end_time, duration) VALUES (?,?,NULL,NULL,?)",
-                    (aid, now.isoformat())
-                )
-                conn.commit()
-                server_cache.invalidate(_assistants_duty_cache_key())
-                return jsonify({"success": True, "on_duty": True})
+                _trace_staff_duty("select_open_row", aid=aid, has_open_row=bool(open_row))
+
+                if open_row:
+                    sess_id, start_iso = open_row
+                    try:
+                        start_dt = datetime.fromisoformat(start_iso) if start_iso else None
+                    except Exception:
+                        start_dt = None
+                    duration = int((now - start_dt).total_seconds()) if start_dt else 0
+                    cur.execute(
+                        "UPDATE assistant_sessions SET end_time=?, duration=? WHERE id=?",
+                        (now.isoformat(), duration, sess_id),
+                    )
+                    conn.commit()
+                    server_cache.invalidate(_assistants_duty_cache_key())
+                    _trace_staff_duty("select_checkout_ok", aid=aid, sess_id=sess_id, duration=duration)
+                    return jsonify({"success": True, "on_duty": False, "duration": duration})
+                else:
+                    # Start new open session
+                    cur.execute(
+                        "INSERT INTO assistant_sessions (assistant_id, start_time, end_time, duration) VALUES (?, ?, NULL, NULL)",
+                        (aid, now.isoformat()),
+                    )
+                    conn.commit()
+                    server_cache.invalidate(_assistants_duty_cache_key())
+                    _trace_staff_duty("select_checkin_ok", aid=aid)
+                    return jsonify({"success": True, "on_duty": True})
+        except Exception as e:
+            _trace_staff_duty("select_error", aid=aid, error=str(e))
+            print(traceback.format_exc())
+            return jsonify({"error": f"Staff toggle failed: {e}"}), 500

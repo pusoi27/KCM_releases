@@ -41,6 +41,7 @@ def register_instructor_profile_routes(app):
     def instructor_profile_edit():
         """Edit or create instructor profile"""
         profile = instructor_profile_manager.get_instructor_profile()
+        setup_mode = request.args.get('setup', '').strip() == '1' or request.form.get('setup_mode', '').strip() == '1'
         active_email = user_identity_manager.resolve_active_email(session.get('user_email'))
         email_prefill = (profile.get('email') if profile else '') or active_email or ''
         if not active_email:
@@ -85,6 +86,22 @@ def register_instructor_profile_routes(app):
                     email_prefill=email_prefill,
                     action="Edit" if profile else "Create",
                     timezone_options=TIMEZONE_OPTIONS,
+                    setup_mode=setup_mode,
+                )
+
+            has_any_class_hours = any(
+                weekly_hours.get(f'{day}_start') and weekly_hours.get(f'{day}_end')
+                for day in days
+            )
+            if not has_any_class_hours:
+                flash("Please add center class hours for at least one day before continuing.", "error")
+                return render_template(
+                    "instructor_profile_form.html",
+                    profile=profile,
+                    email_prefill=email_prefill,
+                    action="Edit" if profile else "Create",
+                    timezone_options=TIMEZONE_OPTIONS,
+                    setup_mode=setup_mode,
                 )
             
             if profile:
@@ -119,6 +136,9 @@ def register_instructor_profile_routes(app):
                     user_identity_manager.save_email(email)
                 flash("Instructor profile created successfully.", "success")
             
+            if setup_mode:
+                session['setup_complete_once'] = True
+                return redirect(url_for("setup_requirements"))
             return redirect(url_for("instructor_profile"))
         
         action = "Edit" if profile else "Create"
@@ -130,6 +150,7 @@ def register_instructor_profile_routes(app):
             email_prefill=email_prefill,
             action=action,
             timezone_options=TIMEZONE_OPTIONS,
+            setup_mode=setup_mode,
         )
 
     @app.route("/api/instructor/profile", methods=["GET"])

@@ -34,8 +34,8 @@ def get_student_attendance_summary(days=30):
         LEFT JOIN sessions AS sess
           ON s.id = sess.student_id
          AND sess.start_time >= DATE('now','-{days} days')
-         AND sess.        WHERE s.active = 1
-          AND s.        GROUP BY s.id
+                WHERE s.active = 1
+                GROUP BY s.id
         ORDER BY s.name;
     """
     rows = []
@@ -57,7 +57,7 @@ def get_assistant_hours_summary(days=30):
         LEFT JOIN assistant_sessions AS a
           ON st.id = a.assistant_id
          AND a.start_time >= DATE('now','-{days} days')
-         AND a.        WHERE st.        GROUP BY st.id
+        GROUP BY st.id
         ORDER BY st.name;
     """
     rows = []
@@ -91,7 +91,7 @@ def get_assistant_hours_between(start_date, end_date):
         LEFT JOIN assistant_sessions AS a
           ON st.id = a.assistant_id
          AND DATE(a.start_time) BETWEEN ? AND ?
-        WHERE st.        GROUP BY st.id
+        GROUP BY st.id
         ORDER BY st.name;
     """
     rows = []

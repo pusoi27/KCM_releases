@@ -9,6 +9,20 @@ MAX_SUBJECTS = 3
 MAX_SCHEDULE_DAYS = 7
 
 
+def _photo_url(student_id, has_photo):
+    return f"/students/photo/{student_id}" if has_photo else ''
+
+
+def _coerce_blob(raw_value):
+    if raw_value is None:
+        return None
+    if isinstance(raw_value, memoryview):
+        return raw_value.tobytes()
+    if isinstance(raw_value, bytes):
+        return raw_value
+    return None
+
+
 def _loads_json_list(raw_value, default=None):
     """Safely decode a JSON list value."""
     if default is None:
@@ -82,6 +96,7 @@ def _build_student_database_row(row):
     for idx, entry in enumerate(schedule_entries[:MAX_SCHEDULE_DAYS]):
         schedule_slots[idx] = entry
 
+    photo_blob = _coerce_blob(row[17] if len(row) > 17 else None)
     return {
         'id': row[0],
         'name': row[1],
@@ -95,6 +110,8 @@ def _build_student_database_row(row):
         'pi': bool(row[9]),
         'subjects': subjects,
         'subject_slots': subject_slots,
+        'photo_url': _photo_url(row[0], bool(photo_blob)),
+        'has_photo': bool(photo_blob),
         'classification': _classification_label(el=row[8], pi=row[9], paper_ws=row[7], v=row[16]),
         'virtual': bool(row[16]),
         'schedule': schedule_entries,
@@ -126,7 +143,11 @@ def get_student_database_rows(active=1):
                 COALESCE(s.day1_time, ''),
                 COALESCE(s.day2, ''),
                 COALESCE(s.day2_time, ''),
-                s.v
+                s.v,
+                s.photo_blob,
+                COALESCE(s.photo_mime, ''),
+                COALESCE(s.photo_filename, ''),
+                COALESCE(s.photo, '')
             FROM students s
             WHERE s.active = ?
             ORDER BY s.name
@@ -187,7 +208,8 @@ def get_all_students():
         c.execute("""
              SELECT s.id, s.name, s.subject, s.level, s.email, s.phone, '' AS legacy_contact, s.active, s.book_loaned, s.paper_ws,
                  s.el, s.pi, s.v, s.day1, s.day1_time, s.day2, s.day2_time, s.subjects_json, s.subject_minutes_json, s.total_study_minutes,
-                 COALESCE(s.photo, '') AS photo
+                  s.photo_blob,
+                  COALESCE(s.photo_mime, '') AS photo_mime
             FROM students s
             WHERE s.active = 1
             ORDER BY s.name
@@ -204,10 +226,11 @@ def get_student(student_id):
     with sqlite3.connect(DB_PATH) as conn:
         c = conn.cursor()
         row = c.execute("""
-            SELECT id,name,subject,email,phone,'' AS legacy_contact,active,book_loaned,paper_ws,
-                   el,pi,v,day1,day2,day1_time,day2_time,subjects_json,subject_minutes_json,total_study_minutes,
-                   COALESCE(photo,'') AS photo,
-                   COALESCE(schedule_json,'') AS schedule_json
+             SELECT id,name,subject,email,phone,'' AS legacy_contact,active,book_loaned,paper_ws,
+                 el,pi,v,day1,day2,day1_time,day2_time,subjects_json,subject_minutes_json,total_study_minutes,
+                 photo_blob,
+                 COALESCE(photo_mime,'') AS photo_mime,
+                 COALESCE(schedule_json,'') AS schedule_json
             FROM students WHERE id=?
         """, (student_id,)).fetchone()
         return row
@@ -237,19 +260,70 @@ def get_student_static_profile(student_id):
         'subjects': json.loads(row[16] or '[]') if len(row) > 16 else ([row[2]] if row[2] else []),
         'subject_minutes': json.loads(row[17] or '[]') if len(row) > 17 else ([30] if row[2] else []),
         'total_study_minutes': int(row[18] or 30) if len(row) > 18 else 30,
-        'photo': str(row[19] or '') if len(row) > 19 else '',
+        'photo_blob': _coerce_blob(row[19] if len(row) > 19 else None),
+        'photo_mime': str(row[20] or '') if len(row) > 20 else '',
+        'photo_url': _photo_url(row[0], bool(_coerce_blob(row[19] if len(row) > 19 else None))),
     }
 
 
-def set_student_photo(student_id, photo_filename):
-    """Set or clear a student's photo filename."""
+def get_student_photo(student_id):
+    """Return the stored photo blob and metadata for a student."""
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.row_factory = sqlite3.Row
+        row = conn.execute(
+            """
+            SELECT photo_blob, COALESCE(photo_mime, '') AS photo_mime
+            FROM students
+            WHERE id=?
+            """,
+            (student_id,),
+        ).fetchone()
+        if not row:
+            return None
+        blob = _coerce_blob(row['photo_blob'])
+        return {
+            'photo_blob': blob,
+            'photo_mime': str(row['photo_mime'] or '') or 'image/png',
+        }
+
+
+def set_student_photo(student_id, photo_blob=None, photo_mime='', photo_filename='', legacy_photo=''):
+    """Set or clear a student's photo bytes and metadata."""
     with sqlite3.connect(DB_PATH) as conn:
         conn.execute(
-            "UPDATE students SET photo=? WHERE id=?",
-            (photo_filename or '', student_id),
+            "UPDATE students SET photo_blob=?, photo_mime=?, photo_filename=?, photo=? WHERE id=?",
+            (
+                sqlite3.Binary(photo_blob) if photo_blob else None,
+                photo_mime or '',
+                photo_filename or '',
+                '',
+                student_id,
+            ),
         )
         conn.commit()
 
+
+def set_student_qr_code(student_id, qr_blob):
+    """Store a student's QR code as BLOB in database."""
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.execute(
+            "UPDATE students SET qr_code=? WHERE id=?",
+            (sqlite3.Binary(qr_blob) if qr_blob else None, student_id),
+        )
+        conn.commit()
+
+
+def get_student_qr_code(student_id):
+    """Retrieve a student's QR code blob from database."""
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.row_factory = sqlite3.Row
+        row = conn.execute(
+            "SELECT qr_code FROM students WHERE id=?",
+            (student_id,),
+        ).fetchone()
+        if row and row['qr_code']:
+            return _coerce_blob(row['qr_code'])
+    return None
 
 
 def add_student(name, subject, email, phone, book_loaned=0, paper_ws=0, el=0, pi=0, v=0, day1="", day2="", day1_time="", day2_time="", subjects=None, subject_minutes=None, schedule_json=""):
@@ -290,11 +364,12 @@ def add_student(name, subject, email, phone, book_loaned=0, paper_ws=0, el=0, pi
         student_id = c.lastrowid
         conn.commit()
     
-    # Automatically generate QR code for the new student
+    # Automatically generate QR code for the new student and store in DB
     try:
         from modules import qr_generator
         qr_data = f"ID:{student_id}\nName:{name}"
-        qr_generator.generate_qr(qr_data, f"student_{student_id}")
+        qr_blob = qr_generator.generate_qr_bytes(qr_data)
+        set_student_qr_code(student_id, qr_blob)
     except Exception as e:
         print(f"Warning: Failed to generate QR code for student {student_id}: {e}")
     

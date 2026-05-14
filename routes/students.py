@@ -1,31 +1,36 @@
 # routes/students.py
-from flask import render_template, request, redirect, url_for, flash
-from werkzeug.utils import secure_filename
+from io import BytesIO
+
+from flask import abort, render_template, request, redirect, url_for, flash, send_file
 from modules import student_manager, instructor_profile_manager, server_cache, db_backup_recovery, auth_manager
 from routes.auth import require_login, require_admin
 from routes.operation_utils import flash_scoped_failure, invalidate_scoped_cache
 import sqlite3
 from modules.database import DB_PATH
-import os
 import json
-
-STUDENT_PHOTOS_DIR = os.path.join('static', 'img', 'students')
 _ALLOWED_PHOTO_EXTS = {'jpg', 'jpeg', 'png', 'gif', 'webp'}
-os.makedirs(STUDENT_PHOTOS_DIR, exist_ok=True)
 MAX_SUBJECTS = 3
 MAX_SCHEDULE_DAYS = 7
 
 
-def _save_student_photo(file_storage, student_id):
-    """Validate and save an uploaded photo.  Returns the saved filename or '' on failure."""
+def _read_student_photo(file_storage, student_id):
+    """Validate and read an uploaded photo as raw bytes plus mime type."""
     if not file_storage or not file_storage.filename:
-        return ''
+        return None
     ext = file_storage.filename.rsplit('.', 1)[-1].lower() if '.' in file_storage.filename else ''
     if ext not in _ALLOWED_PHOTO_EXTS:
-        return ''
-    filename = secure_filename(f'student_{student_id}.{ext}')
-    file_storage.save(os.path.join(STUDENT_PHOTOS_DIR, filename))
-    return filename
+        return None
+    photo_bytes = file_storage.read()
+    if not photo_bytes:
+        return None
+    photo_mime = file_storage.mimetype or {
+        'jpg': 'image/jpeg',
+        'jpeg': 'image/jpeg',
+        'png': 'image/png',
+        'gif': 'image/gif',
+        'webp': 'image/webp',
+    }.get(ext, 'image/png')
+    return photo_bytes, photo_mime
 
 
 def _parse_subjects_from_form(form):
@@ -134,6 +139,16 @@ def _invalidate_student_goal_caches(student_id=None, all_goal_keys_for_user=Fals
         server_cache.invalidate_prefix(_student_goal_cache_prefix())
 
 
+def _student_photo_url(student_row):
+    if not student_row:
+        return ''
+    raw = student_row[19] if len(student_row) > 19 else None
+    if isinstance(raw, memoryview):
+        raw = raw.tobytes()
+    has_blob = isinstance(raw, (bytes, bytearray)) and len(raw) > 0
+    return url_for('students_photo', sid=student_row[0]) if has_blob else ''
+
+
 def register_student_routes(app, upload_folder):
     """Register student CRUD and CSV routes."""
     
@@ -149,6 +164,22 @@ def register_student_routes(app, upload_folder):
             has_duplicates=duplicate_count > 0,
             duplicate_count=duplicate_count,
         )
+
+    @app.route("/students/photo/<int:sid>")
+    @require_login
+    def students_photo(sid):
+        photo = student_manager.get_student_photo(sid)
+        if not photo or not photo.get('photo_blob'):
+            abort(404)
+        response = send_file(
+            BytesIO(photo['photo_blob']),
+            mimetype=photo.get('photo_mime') or 'image/png',
+            download_name=f'student_{sid}.png',
+            max_age=0,
+        )
+        response.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate, max-age=0'
+        response.headers['Pragma'] = 'no-cache'
+        return response
 
     @app.route("/students/duplicates")
     @require_login
@@ -211,9 +242,10 @@ def register_student_routes(app, upload_folder):
             # Save photo after we have the student_id
             photo_file = request.files.get('photo')
             if photo_file and photo_file.filename:
-                saved = _save_student_photo(photo_file, student_id)
-                if saved:
-                    student_manager.set_student_photo(student_id, saved)
+                photo_info = _read_student_photo(photo_file, student_id)
+                if photo_info:
+                    photo_bytes, photo_mime = photo_info
+                    student_manager.set_student_photo(student_id, photo_bytes, photo_mime)
             flash("Student added successfully.", "success")
             return redirect(url_for("students_list"))
         
@@ -224,7 +256,7 @@ def register_student_routes(app, upload_folder):
             {"name": "Reading", "minutes": 30, "selected": False},
             {"name": "Writing", "minutes": 30, "selected": False},
         ]
-        return render_template("student_form.html", action="Add", student=None, profile=profile, subject_rows=subject_rows, student_photo='', student_schedule=[])
+        return render_template("student_form.html", action="Add", student=None, profile=profile, subject_rows=subject_rows, student_photo_url='', student_schedule=[])
 
     @app.route("/students/edit/<int:sid>", methods=["GET", "POST"])
     @require_login
@@ -264,9 +296,10 @@ def register_student_routes(app, upload_folder):
             # Save photo if a new one was uploaded
             photo_file = request.files.get('photo')
             if photo_file and photo_file.filename:
-                saved = _save_student_photo(photo_file, sid)
-                if saved:
-                    student_manager.set_student_photo(sid, saved)
+                photo_info = _read_student_photo(photo_file, sid)
+                if photo_info:
+                    photo_bytes, photo_mime = photo_info
+                    student_manager.set_student_photo(sid, photo_bytes, photo_mime)
             flash("Student updated.", "info")
             # Check if came from calendar
             from_calendar = request.args.get('from_calendar')
@@ -312,9 +345,10 @@ def register_student_routes(app, upload_folder):
         subject_rows = subject_rows[:MAX_SUBJECTS]
 
         student_schedule = []
-        if len(stu) > 20 and stu[20]:
+        schedule_json = stu[21] if len(stu) > 21 else ''
+        if schedule_json:
             try:
-                student_schedule = json.loads(stu[20])
+                student_schedule = json.loads(schedule_json)
             except (ValueError, TypeError):
                 pass
         if not student_schedule:
@@ -330,7 +364,7 @@ def register_student_routes(app, upload_folder):
             profile=profile,
             from_calendar=from_calendar,
             subject_rows=subject_rows,
-            student_photo=str(stu[19] or '') if len(stu) > 19 else '',
+            student_photo_url=_student_photo_url(stu),
             student_schedule=student_schedule,
         )
 

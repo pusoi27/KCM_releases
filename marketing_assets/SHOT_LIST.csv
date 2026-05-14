@@ -1,0 +1,9 @@
+scene,start,end,visual_file,motion,overlay_text
+1,0:00,0:06,screenshots/01-dashboard-home.png,Slow zoom in,All-in-one center operations
+2,0:06,0:14,screenshots/02-student-database.png,Left-to-right pan,Student management made simple
+3,0:14,0:22,screenshots/03-library-books.png,Slow zoom out,Library tracking in one view
+4,0:22,0:32,screenshots/04-qr-generate.png,Center punch-in,Generate QR in seconds
+5,0:32,0:41,screenshots/05-payroll-report.png,Top-down pan,Attendance and payroll reports
+6,0:41,0:49,screenshots/06-instructor-profile.png,Subtle drift right,Personalized for your center
+7,0:49,0:57,screenshots/07-qr-scanner.png,Scanner area spotlight,Fast reliable check-ins
+8,0:57,1:00,screenshots/01-dashboard-home.png,Zoom in + fade out,Focus on students

@@ -5,30 +5,22 @@
 <link href="{{ url_for('static', filename='css/style.css') }}" rel="stylesheet">
 
 <!-- Dashboard Top Bar -->
-<header class="dash-topbar">
-  <a class="dash-brand" href="{{ url_for(subscription_access.default_home_endpoint) }}">
-    <img src="{{ url_for('static', filename='img/logo.png') }}" alt="Stdytime" height="38" style="border-radius:50%; object-fit:cover; flex-shrink:0;" onerror="this.style.display='none'">
-    <span class="dash-brand-name">StdyTime</span>
-    {% if branding_center_name and branding_center_name != 'Stdytime' %}
-    <span class="dash-center-name">{{ branding_center_name }}</span>
-    {% endif %}
-    <span class="dash-version">v{{ app_version }}</span>
-  </a>
-
-  <!-- Staff on Duty — center -->
-  <div class="dash-duty-center">
-    {% if subscription_access.can_access_assistants %}
-    <div id="assistantsOnDutySection" class="d-flex align-items-center gap-2 w-100 overflow-hidden">
-      <span class="dash-duty-label"><i class="bi bi-person-badge"></i> Staff on Duty:</span>
-      <div id="assistantsDutyList" class="d-flex flex-wrap gap-2 align-items-center">
-        <!-- Populated by JS -->
-      </div>
-    </div>
-    {% endif %}
+<header class="dash-topbar d-flex justify-content-between align-items-center">
+  <div class="dash-brand-left-wrap d-flex align-items-center">
+    <a class="app-home-btn" href="{{ url_for(subscription_access.default_home_endpoint) }}" title="Dashboard Home" aria-label="Dashboard Home">
+      <i class="bi bi-house-fill"></i>
+    </a>
+    <a class="dash-brand" href="{{ url_for(subscription_access.default_home_endpoint) }}">
+      <img src="{{ url_for('static', filename='img/logo.png') }}" alt="Stdytime" height="38" style="border-radius:50%; object-fit:cover; flex-shrink:0;" onerror="this.style.display='none'">
+      <span class="dash-brand-name">StdyTime</span>
+      <span class="dash-version">v{{ app_version }}</span>
+    </a>
   </div>
+  {% if branding_center_name and branding_center_name != 'Stdytime' %}
+  <span class="dash-center-name dash-center-name-floating">{{ branding_center_name }}</span>
+  {% endif %}
 
-  <!-- Right: checked-out drawer + hamburger -->
-  <div class="dash-topbar-right">
+  <div class="dash-topbar-right d-flex align-items-center ms-auto">
     {% if ls_nav_badge and ls_nav_badge.visible %}
     <span
       class="badge rounded-pill text-bg-{{ ls_nav_badge.tone }}"
@@ -46,19 +38,6 @@
     >
       <i class="bi bi-pc-display"></i> {{ license_status.activation_usage }}/{{ license_status.activation_limit }}
     </span>
-    {% endif %}
-    {% if subscription_access.can_access_assistants %}
-    <div class="staff-duty-panel-wrap">
-      <button id="checkedDrawerButton" type="button" class="dash-icon-btn" title="Checked out students">
-        <i class="bi bi-list"></i>
-      </button>
-      <div id="checkedDrawerPanel" class="checked-drawer-panel">
-        <h6 class="text-danger fw-bold mb-1"><i class="bi bi-box-arrow-right"></i> Checked Out</h6>
-        <p class="small text-muted mb-1" id="checkedCount"></p>
-        <p class="small text-primary mb-2" id="daySessionCount"></p>
-        <ul id="checkedList" class="list-group list-group-flush overflow-auto" style="max-height:65vh;"></ul>
-      </div>
-    </div>
     {% endif %}
     <button class="dash-icon-btn" data-bs-toggle="offcanvas" data-bs-target="#dashNav" title="Menu">
       <i class="bi bi-list" style="font-size:1.6rem; line-height:1;"></i>
@@ -78,9 +57,9 @@
       <li class="list-group-item"><a href="{{ url_for('students_add') }}" class="offcanvas-link"><i class="bi bi-person-plus me-2"></i>Add Student</a></li>
       <li class="list-group-item"><a href="{{ url_for('students_list') }}" class="offcanvas-link"><i class="bi bi-people me-2"></i>View / Edit / Delete</a></li>
       {% if subscription_access.can_access_books %}
-      <li class="list-group-item offcanvas-section-header">Library Books</li>
+      <li class="list-group-item offcanvas-section-header">Books/Devices</li>
       <li class="list-group-item"><a href="{{ url_for('books_add') }}" class="offcanvas-link"><i class="bi bi-plus-square me-2"></i>Add Book</a></li>
-      <li class="list-group-item"><a href="{{ url_for('books_list') }}" class="offcanvas-link"><i class="bi bi-journal-bookmark me-2"></i>View / Edit / Delete</a></li>
+      <li class="list-group-item"><a href="{{ url_for('books_list') }}" class="offcanvas-link"><i class="bi bi-journal-bookmark me-2"></i>Books View / Edit / Delete</a></li>
       <li class="list-group-item"><a href="{{ url_for('books_loan_page') }}" class="offcanvas-link"><i class="bi bi-arrow-left-right me-2"></i>Book Loan</a></li>
       {% endif %}
       {% if subscription_access.can_access_instructor_reports %}
@@ -114,14 +93,11 @@
 
   <!-- Left: icon sidebar menu bar -->
   <nav class="dash-sidebar">
-    <a href="{{ url_for(subscription_access.default_home_endpoint) }}" class="dash-sidebar-item active" title="Dashboard">
-      <i class="bi bi-house-fill"></i>
-    </a>
     <a href="{{ url_for('students_list') }}" class="dash-sidebar-item" title="Students">
       <i class="bi bi-people-fill"></i>
     </a>
     {% if subscription_access.can_access_books %}
-    <a href="{{ url_for('books_list') }}" class="dash-sidebar-item" title="Library Books">
+    <a href="{{ url_for('books_list') }}" class="dash-sidebar-item" title="Books/Devices">
       <i class="bi bi-journal-bookmark-fill"></i>
     </a>
     {% endif %}
@@ -131,7 +107,7 @@
     </a>
     {% endif %}
     {% if subscription_access.can_access_instructor_profile %}
-    <a href="{{ url_for('instructor_profile') }}" class="dash-sidebar-item" title="Utilities">
+    <a href="{{ url_for('center_calendar') }}" class="dash-sidebar-item" title="Utilities">
       <i class="bi bi-tools"></i>
     </a>
     {% endif %}

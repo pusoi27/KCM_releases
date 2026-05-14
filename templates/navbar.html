@@ -2,6 +2,15 @@
 <nav class="navbar navbar-expand-lg navbar-dark" style="background-color:#2e7d32; font-weight:600;">
   <div class="container-fluid">
 
+    <a
+      href="{{ url_for(subscription_access.default_home_endpoint) }}"
+      class="app-home-btn me-2"
+      title="Home"
+      aria-label="Home"
+    >
+      <i class="bi bi-house-fill"></i>
+    </a>
+
     <!-- Brand -->
     <a class="navbar-brand fw-bold d-flex align-items-center gap-2" style="color:white;" href="{{ url_for(subscription_access.default_home_endpoint) }}">
       <img src="{{ url_for('static', filename='img/logo.png') }}" alt="Stdytime" height="36" style="border-radius:50%; object-fit:cover;" onerror="this.style.display='none'">
@@ -29,18 +38,22 @@
              role="button" data-bs-toggle="dropdown"><i class="bi bi-people"></i> Students</a>
           <ul class="dropdown-menu">
             <li><a class="dropdown-item" href="{{ url_for('students_add') }}">Add Student</a></li>
-            <li><a class="dropdown-item" href="{{ url_for('students_list') }}">View / Edit / Delete</a></li>
+            <li><a class="dropdown-item" href="{{ url_for('students_list') }}">Books View / Edit / Delete</a></li>
           </ul>
         </li>
 
         <!-- Books -->
         {% if subscription_access.can_access_books %}
         <li class="nav-item dropdown">
-          <a class="nav-link dropdown-toggle text-white" href="#" id="booksMenu" role="button" data-bs-toggle="dropdown"><i class="bi bi-journal-bookmark"></i> Library Books</a>
+          <a class="nav-link dropdown-toggle text-white" href="#" id="booksMenu" role="button" data-bs-toggle="dropdown"><i class="bi bi-journal-bookmark"></i> Books/Devices</a>
           <ul class="dropdown-menu">
             <li><a class="dropdown-item" href="{{ url_for('books_add') }}">Add Book</a></li>
-            <li><a class="dropdown-item" href="{{ url_for('books_list') }}">View / Edit / Delete</a></li>
+            <li><a class="dropdown-item" href="{{ url_for('books_list') }}">Books View / Edit / Delete</a></li>
             <li><a class="dropdown-item" href="{{ url_for('books_loan_page') }}">Book Loan</a></li>
+            <li><hr class="dropdown-divider"></li>
+            <li><a class="dropdown-item" href="{{ url_for('materials_add') }}">Add Device</a></li>
+            <li><a class="dropdown-item" href="{{ url_for('materials_list') }}">Devices View / Edit / Delete</a></li>
+            <li><a class="dropdown-item" href="{{ url_for('materials_loan_page') }}">Device Loan</a></li>
           </ul>
         </li>
         {% endif %}
@@ -67,14 +80,6 @@
     <li><a class="dropdown-item" href="{{ url_for('instructor_profile') }}">Center Profile</a></li>
     <li><a class="dropdown-item" href="{{ url_for('center_calendar') }}"><i class="bi bi-calendar-week"></i> Students Calendar</a></li>
     {% if subscription_access.can_access_assistants %}
-    <li class="dropdown-submenu">
-      <a class="dropdown-item" href="#" id="utilAssistMenu">
-        <i class="bi bi-person-badge"></i> Staff on Duty
-      </a>
-      <ul class="dropdown-menu" id="assistantsList">
-        <li><a class="dropdown-item disabled text-muted" href="#">Loading staff...</a></li>
-      </ul>
-    </li>
     <li><a class="dropdown-item" href="{{ url_for('assistants_list') }}">Manage Staff</a></li>
     <li><a class="dropdown-item" href="{{ url_for('schedule_assistants') }}">Staff Calendar</a></li>
     {% endif %}

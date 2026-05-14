@@ -561,8 +561,8 @@
         <input id="photoFileInput" name="photo" type="file" accept="image/jpeg,image/png,image/gif,image/webp" style="display:none;">
         <div class="photo-avatar-wrap" id="photoAvatarWrap" title="Click to upload photo">
           <div class="photo-avatar" id="photoAvatar">
-            {% if student_photo %}
-              <img id="photoPreviewImg" src="{{ url_for('static', filename='img/students/' + student_photo) }}" alt="Student photo">
+            {% if student_photo_url %}
+              <img id="photoPreviewImg" src="{{ student_photo_url }}" alt="Student photo">
             {% else %}
               <span class="photo-avatar-icon">&#128100;</span>
               <img id="photoPreviewImg" src="" alt="" style="display:none;">
@@ -618,7 +618,7 @@
         <div>
           <input class="classification-option" type="checkbox" name="el" id="assistedCheck" {% if student and student[9] %}checked{% endif %}>
           <label class="classification-label" for="assistedCheck">
-            <div class="classification-card card-assisted">
+            <div class="classification-card card-assisted" title="Student needs one-on-one assistance; dedicated staff must be available to work with the student." aria-label="Student needs one-on-one assistance; dedicated staff must be available to work with the student.">
               <div class="classification-radio"></div>
               <div class="classification-name">Assisted</div>
               <div class="classification-copy">Requires direct support</div>
@@ -628,7 +628,7 @@
         <div>
           <input class="classification-option" type="checkbox" name="pi" id="monitoredCheck" {% if (student and student[10]) or (not student) or (student and not student[8] and not student[9] and not student[10] and not student[11]) %}checked{% endif %}>
           <label class="classification-label" for="monitoredCheck">
-            <div class="classification-card card-monitored">
+            <div class="classification-card card-monitored" title="Student is semi-independent, needs guidance from staff, staff can service 2 to 4 students." aria-label="Student is semi-independent, needs guidance from staff, staff can service 2 to 4 students.">
               <div class="classification-radio"></div>
               <div class="classification-name">Monitored</div>
               <div class="classification-copy">Periodic check-ins</div>
@@ -638,7 +638,7 @@
         <div>
           <input class="classification-option" type="checkbox" name="paper_ws" id="independentCheck" {% if student and student[8] %}checked{% endif %}>
           <label class="classification-label" for="independentCheck">
-            <div class="classification-card card-independent">
+            <div class="classification-card card-independent" title="Student is capable of working independently; staff planning per center guidelines." aria-label="Student is capable of working independently; staff planning per center guidelines.">
               <div class="classification-radio"></div>
               <div class="classification-name">Independent</div>
               <div class="classification-copy">Self-guided pace</div>
@@ -648,7 +648,7 @@
         <div>
           <input class="classification-option" type="checkbox" name="v" id="virtualCheck" {% if student and student[11] %}checked{% endif %}>
           <label class="classification-label" for="virtualCheck">
-            <div class="classification-card card-virtual">
+            <div class="classification-card card-virtual" title="Student joins the afterschool activity online, staff can service 2 to 4 students." aria-label="Student joins the afterschool activity online, staff can service 2 to 4 students.">
               <div class="classification-radio"></div>
               <div class="classification-name">Virtual</div>
               <div class="classification-copy">100% remote learning</div>

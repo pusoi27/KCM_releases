@@ -1,0 +1,93 @@
+{% extends "base.html" %}
+
+{% block title %}Setup Database Paths{% endblock %}
+
+{% block content %}
+<div class="container mt-4">
+    <div class="row">
+        <div class="col-lg-9 mx-auto">
+            <div class="card shadow-sm">
+                <div class="card-header brand-card-header">
+                    <h4 class="mb-0"><i class="bi bi-hdd-stack"></i> Configure Database Paths</h4>
+                </div>
+                <div class="card-body">
+                    <p class="text-muted">
+                        Set where Stdytime stores the local runtime database and where it syncs a backup in Google Drive.
+                    </p>
+
+                    <form method="POST" action="{{ url_for('setup_storage') }}">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
+                        <div class="mb-3">
+                            <label class="form-label" for="db_path">Local DB path</label>
+                            <input
+                                class="form-control"
+                                type="text"
+                                id="db_path"
+                                name="db_path"
+                                value="{{ status.config.db_path if status and status.config else '' }}"
+                                placeholder="C:/Users/YourName/AppData/Local/StdyTime/Stdytime.db"
+                                required
+                            >
+                            <div class="form-text">Fast local path used for reads/writes during runtime.</div>
+                        </div>
+
+                        <div class="mb-3">
+                            <label class="form-label" for="gdrive_sync_path">Google Drive sync path</label>
+                            <input
+                                class="form-control"
+                                type="text"
+                                id="gdrive_sync_path"
+                                name="gdrive_sync_path"
+                                value="{{ status.config.gdrive_sync_path if status and status.config else '' }}"
+                                placeholder="G:/My Drive/StdyTime/Stdytime.db"
+                                required
+                            >
+                            <div class="form-text">Example: {{ status.example.gdrive_sync_path if status and status.example else 'G:/My Drive/StdyTime/Stdytime.db' }}</div>
+                        </div>
+
+                        <div class="mb-3">
+                            <label class="form-label" for="sync_interval_minutes">Sync interval (minutes)</label>
+                            <input
+                                class="form-control"
+                                type="number"
+                                min="0"
+                                id="sync_interval_minutes"
+                                name="sync_interval_minutes"
+                                value="{{ status.config.sync_interval_minutes if status and status.config else 5 }}"
+                            >
+                            <div class="form-text">Set to 0 to disable background push sync.</div>
+                        </div>
+
+                        {% if status and status.issues %}
+                        <div class="alert alert-danger" role="alert">
+                            <div class="fw-semibold mb-1">Please fix these issues:</div>
+                            <ul class="mb-0">
+                                {% for issue in status.issues %}
+                                <li>{{ issue }}</li>
+                                {% endfor %}
+                            </ul>
+                        </div>
+                        {% endif %}
+
+                        {% if status and status.warnings %}
+                        <div class="alert alert-warning" role="alert">
+                            <ul class="mb-0">
+                                {% for warning in status.warnings %}
+                                <li>{{ warning }}</li>
+                                {% endfor %}
+                            </ul>
+                        </div>
+                        {% endif %}
+
+                        <div class="d-flex justify-content-between">
+                            <a class="btn btn-secondary" href="{{ url_for('setup_requirements') }}">Back</a>
+                            <button class="btn btn-primary" type="submit">Save and validate</button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

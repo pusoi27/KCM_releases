@@ -20,7 +20,7 @@ import logging
 # Load environment variables from .env file
 load_dotenv()
 
-from modules.database import init_db, DB_PATH, GDriveLockError
+from modules.database import init_db, DB_PATH, GDriveLockError, get_db_config_status
 from modules import student_manager, timer_manager, qr_generator, assistant_manager, reports, auth_manager, license_manager
 from modules import instructor_profile_manager
 from modules import user_identity_manager
@@ -146,9 +146,9 @@ class RequestProfiler:
             f"\n{'='*80}\n"
             f"REQUEST PROFILE SUMMARY\n"
             f"{'='*80}\n"
-            f"📖 Total READs  (GET):                 {self.total_reads}\n"
-            f"✏️  Total WRITEs (POST/PUT/DELETE):   {self.total_writes}\n"
-            f"📊 Total Requests:                     {total}\n"
+            f"Total READs  (GET):                    {self.total_reads}\n"
+            f"Total WRITEs (POST/PUT/DELETE):        {self.total_writes}\n"
+            f"Total Requests:                        {total}\n"
             f"{'='*80}\n"
         )
         print(summary)
@@ -289,6 +289,57 @@ def before_request_capture_email():
 
     next_url = request.full_path if request.query_string else request.path
     return redirect(url_for('email_login', next=next_url))
+
+
+def _has_configured_instructor_hours() -> bool:
+    profile = instructor_profile_manager.get_instructor_profile()
+    if not profile:
+        return False
+    days = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday']
+    return any(
+        (profile.get(f'{day}_start') or '').strip() and (profile.get(f'{day}_end') or '').strip()
+        for day in days
+    )
+
+
+@app.before_request
+def before_request_enforce_first_run_setup():
+    """Hard-stop all app flows until storage config and class-hours setup are complete."""
+    if not (g.get('license_status') or {}).get('is_valid'):
+        return None
+
+    setup_allowed_endpoints = {
+        'static',
+        'setup_requirements',
+        'setup_storage',
+        'instructor_profile_edit',
+        'instructor_profile',
+        'api_setup_status',
+        'api_csrf_token',
+        'healthz',
+        'not_found',
+    }
+
+    if request.endpoint in setup_allowed_endpoints or request.path.startswith('/static/'):
+        return None
+
+    storage_ready = bool(get_db_config_status().get('is_ready'))
+    profile_ready = _has_configured_instructor_hours()
+
+    if storage_ready and profile_ready:
+        return None
+
+    if request.path.startswith('/api/'):
+        return jsonify({
+            'error': 'First-time setup is required before using the API.',
+            'setup_url': url_for('setup_requirements'),
+            'requirements': {
+                'storage_ready': storage_ready,
+                'profile_hours_ready': profile_ready,
+            },
+        }), 428
+
+    return redirect(url_for('setup_requirements'))
 
 @app.after_request
 def after_request_profiler(response):
@@ -490,7 +541,7 @@ def _ensure_version_up_to_date():
             try:
                 with open(vpath, 'w', encoding='utf-8') as vf:
                     vf.write(version)
-                print(f"[version] Bumped: {old_version} → {version}")
+                print(f"[version] Bumped: {old_version} -> {version}")
             except Exception as e:
                 print(f"[version] Failed to write VERSION file: {e}")
     except Exception as e:
@@ -499,13 +550,25 @@ def _ensure_version_up_to_date():
 
 
 _APP_VERSION_CACHE = None
+_APP_VERSION_CACHE_MTIME = None
 
 
 def get_app_version(force_refresh=False):
     """Return app version with in-process caching to avoid repeated filesystem scans."""
-    global _APP_VERSION_CACHE
-    if force_refresh or not _APP_VERSION_CACHE:
+    global _APP_VERSION_CACHE, _APP_VERSION_CACHE_MTIME
+    version_file = os.path.join(os.path.dirname(__file__), 'VERSION')
+    try:
+        current_mtime = os.path.getmtime(version_file) if os.path.exists(version_file) else None
+    except Exception:
+        current_mtime = None
+
+    cache_stale = _APP_VERSION_CACHE_MTIME != current_mtime
+    if force_refresh or not _APP_VERSION_CACHE or cache_stale:
         _APP_VERSION_CACHE = _ensure_version_up_to_date()
+        try:
+            _APP_VERSION_CACHE_MTIME = os.path.getmtime(version_file) if os.path.exists(version_file) else None
+        except Exception:
+            _APP_VERSION_CACHE_MTIME = None
     return _APP_VERSION_CACHE
 
 
@@ -522,7 +585,9 @@ from routes.api import register_api_routes
 from routes.qr import register_qr_routes
 from routes.reports import register_reports_routes
 from routes.books import register_book_routes
+from routes.materials import register_material_routes
 from routes.instructor_profile import register_instructor_profile_routes
+from routes.setup import register_setup_routes
 
 # Register scanner route
 @app.route('/qr/scanner')
@@ -560,6 +625,8 @@ register_api_routes(app)
 register_qr_routes(app)
 register_reports_routes(app)
 register_book_routes(app)
+register_material_routes(app)
+register_setup_routes(app)
 
 
 
@@ -602,23 +669,21 @@ if os.getenv('ENABLE_VERSION_AUTOBUMP', 'true').lower() == 'true':
 #  Auto-generate QR codes for students and staff without them
 # ================================================================
 def _auto_generate_missing_qr_codes():
-    """Generate QR codes for any students or staff that don't have them yet."""
+    """Generate QR codes for any students or staff that don't have them yet (stored in database)."""
     try:
-        import os
-        out_dir = os.path.join('assets', 'qr_codes')
-        os.makedirs(out_dir, exist_ok=True)
-        
         # Generate QR codes for students without them
         students = student_manager.get_all_students()
         student_count = 0
         for s in students:
             sid = s[0]
             name = s[1]
-            qr_path = os.path.join(out_dir, f"student_{sid}.png")
-            if not os.path.exists(qr_path):
+            # Check if QR code exists in database
+            existing_qr = student_manager.get_student_qr_code(sid)
+            if not existing_qr:
                 try:
                     qr_data = f"ID:{sid}\nName:{name}"
-                    qr_generator.generate_qr(qr_data, f"student_{sid}")
+                    qr_blob = qr_generator.generate_qr_bytes(qr_data)
+                    student_manager.set_student_qr_code(sid, qr_blob)
                     student_count += 1
                 except Exception as e:
                     print(f"[startup] Failed to generate QR for student {sid}: {e}")
@@ -629,11 +694,13 @@ def _auto_generate_missing_qr_codes():
         for a in assistants:
             aid = a[0]
             name = a[1]
-            qr_path = os.path.join(out_dir, f"assistant_{aid}.png")
-            if not os.path.exists(qr_path):
+            # Check if QR code exists in database
+            existing_qr = assistant_manager.get_assistant_qr_code(aid)
+            if not existing_qr:
                 try:
                     qr_data = f"ASST:{aid}\nName:{name}"
-                    qr_generator.generate_qr(qr_data, f"assistant_{aid}")
+                    qr_blob = qr_generator.generate_qr_bytes(qr_data)
+                    assistant_manager.set_assistant_qr_code(aid, qr_blob)
                     assistant_count += 1
                 except Exception as e:
                     print(f"[startup] Failed to generate QR for assistant {aid}: {e}")
@@ -722,7 +789,7 @@ if __name__ == "__main__":
         serve(app, host="127.0.0.1", port=port, threads=8)
     else:
         # Development: Flask dev server with reloader for fast iteration
-        use_reloader = os.getenv("FLASK_USE_RELOADER", "false").lower() == "true"
+        use_reloader = os.getenv("FLASK_USE_RELOADER", "true").lower() == "true"
         app.run(
             host="127.0.0.1",
             port=port,

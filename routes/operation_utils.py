@@ -59,7 +59,7 @@ def flash_scoped_failure(
     invalidators: Iterable[Callable[[], object]] = (),
 ) -> Exception | None:
     """Restore tenant-scoped state and flash a standardized failure message."""
-    restore_error = restore_scoped_state(backup_path, table_names=table_names, invalidators=invalidators)
+    restore_error = restore_scoped_state(backup_path, table_names, *invalidators)
     flash(build_scoped_failure_message(backup_path, error, restore_error), category)
     return restore_error
 
@@ -74,7 +74,7 @@ def json_scoped_failure(
     extra_payload: dict | None = None,
 ):
     """Restore tenant-scoped state and return a standardized JSON failure response."""
-    restore_error = restore_scoped_state(backup_path, table_names=table_names, invalidators=invalidators)
+    restore_error = restore_scoped_state(backup_path, table_names, *invalidators)
     payload = {
         "error": str(error),
         "status": "restore_failed" if restore_error else "rolled_back",

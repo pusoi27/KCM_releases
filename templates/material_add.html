@@ -1,0 +1,260 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="container mt-4">
+  <div class="row mb-3">
+    <div class="col-md-8">
+      <h2><i class="bi bi-box-seam"></i> Add / Update Device (Scan QR)</h2>
+      <p class="text-muted mb-0">Scan or type the device QR code. Reading level is required for new devices.</p>
+    </div>
+    <div class="col-md-4 text-end">
+      <a href="{{ url_for('materials_list') }}" class="btn btn-outline-secondary">
+        <i class="bi bi-arrow-left"></i> Back to Devices List
+      </a>
+    </div>
+  </div>
+
+  <div class="card shadow-sm mb-4">
+    <div class="card-body">
+      <form id="materialForm">
+        <input type="hidden" id="materialId" name="materialId">
+        <div class="row g-3 align-items-end">
+          <div class="col-md-6">
+            <label class="form-label">Material QR Code (scan or type)</label>
+            <input type="text" class="form-control" id="qrInput" placeholder="MAT-000001-ABC123" autofocus>
+          </div>
+          <div class="col-md-3">
+            <button type="button" id="lookupBtn" class="btn btn-primary w-100"><i class="bi bi-upc-scan"></i> Lookup</button>
+          </div>
+          <div class="col-md-3 text-end"><span id="lookupStatus" class="text-muted small"></span></div>
+        </div>
+
+        <hr class="my-4" />
+
+        <div class="row g-3">
+          <div class="col-md-6">
+            <label class="form-label">Title <span class="text-danger">*</span></label>
+            <input type="text" class="form-control" id="titleInput" required>
+          </div>
+          <div class="col-md-6">
+            <label class="form-label">Author</label>
+            <input type="text" class="form-control" id="authorInput">
+          </div>
+          <div class="col-md-6">
+            <label class="form-label">Publisher</label>
+            <input type="text" class="form-control" id="publisherInput">
+          </div>
+          <div class="col-md-3">
+            <label class="form-label">QR Code</label>
+            <input type="text" class="form-control" id="qrCodeInput" maxlength="64">
+          </div>
+          <div class="col-md-3">
+            <label class="form-label">Reading Level <span class="text-danger" id="levelRequiredStar">*</span></label>
+            <select class="form-select" id="levelInput" required>
+              <option value="">Select level...</option>
+              <option value="7A">7A</option><option value="6A">6A</option><option value="5A">5A</option>
+              <option value="4A">4A</option><option value="3A">3A</option><option value="2A">2A</option>
+              <option value="A">A</option><option value="B">B</option><option value="C">C</option>
+              <option value="D">D</option><option value="E">E</option><option value="F">F</option>
+              <option value="G">G</option><option value="H">H</option><option value="I">I</option>
+              <option value="J">J</option><option value="K">K</option><option value="L">L</option>
+            </select>
+          </div>
+          <div class="col-md-3">
+            <label class="form-label">Copies</label>
+            <input type="number" class="form-control" id="copiesInput" min="0" value="1">
+          </div>
+        </div>
+
+        <div class="mt-4 d-flex gap-2">
+          <button type="button" id="saveBtn" class="btn btn-success"><i class="bi bi-save"></i> Save Material</button>
+          <button type="button" id="incrementBtn" class="btn btn-info d-none"><i class="bi bi-plus-circle"></i> Increase Copies</button>
+          <button type="button" id="resetBtn" class="btn btn-outline-secondary">Clear</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <div id="alertBox" class="alert d-none" role="alert"></div>
+</div>
+
+<script>
+(function() {
+  const qrInput = document.getElementById('qrInput');
+  const lookupBtn = document.getElementById('lookupBtn');
+  const statusEl = document.getElementById('lookupStatus');
+  const alertBox = document.getElementById('alertBox');
+  const saveBtn = document.getElementById('saveBtn');
+  const resetBtn = document.getElementById('resetBtn');
+  const incrementBtn = document.getElementById('incrementBtn');
+
+  const editMaterialId = {{ edit_material_id if edit_material_id is not none else 'null' }};
+
+  const materialIdEl = document.getElementById('materialId');
+  const titleEl = document.getElementById('titleInput');
+  const authorEl = document.getElementById('authorInput');
+  const publisherEl = document.getElementById('publisherInput');
+  const qrCodeEl = document.getElementById('qrCodeInput');
+  const levelEl = document.getElementById('levelInput');
+  const copiesEl = document.getElementById('copiesInput');
+
+  let existingMaterial = null;
+  qrInput.focus();
+
+  lookupBtn.addEventListener('click', lookupMaterial);
+  qrInput.addEventListener('keypress', e => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      lookupMaterial();
+    }
+  });
+
+  resetBtn.addEventListener('click', clearForm);
+
+  if (editMaterialId) {
+    loadMaterialForEdit(editMaterialId);
+  }
+
+  saveBtn.addEventListener('click', async () => {
+    if (!titleEl.value.trim()) {
+      showAlert('Title is required.', 'danger');
+      return;
+    }
+    if (!materialIdEl.value && !levelEl.value.trim()) {
+      showAlert('Reading level is required for new devices.', 'danger');
+      return;
+    }
+
+    const payload = {
+      id: materialIdEl.value || null,
+      title: titleEl.value.trim(),
+      author: authorEl.value.trim(),
+      publisher: publisherEl.value.trim(),
+      qr_code: qrCodeEl.value.trim() || qrInput.value.trim(),
+      reading_level: levelEl.value.trim(),
+      copies: parseInt(copiesEl.value || '1', 10),
+    };
+
+    try {
+      const resp = await fetch('/api/materials/save', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      const data = await resp.json();
+      if (!resp.ok) throw new Error(data.error || 'Save failed');
+      showAlert(data.status === 'updated' ? 'Material updated.' : 'Material added.', 'success');
+      clearForm();
+    } catch (err) {
+      showAlert(err.message, 'danger');
+    }
+  });
+
+  incrementBtn.addEventListener('click', async () => {
+    if (!existingMaterial) return;
+    try {
+      const resp = await fetch('/api/materials/increase_copies', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: existingMaterial.id, additional_copies: 1 }),
+      });
+      const data = await resp.json();
+      if (!resp.ok) throw new Error(data.error || 'Failed to increase copies');
+      showAlert(`Copies increased successfully. New total: ${data.new_copies}`, 'success');
+      clearForm();
+    } catch (err) {
+      showAlert(err.message, 'danger');
+    }
+  });
+
+  async function lookupMaterial() {
+    const raw = qrInput.value.trim();
+    if (!raw) {
+      showAlert('Please scan or enter a material QR code or title.', 'warning');
+      return;
+    }
+
+    statusEl.textContent = 'Searching devices...';
+    try {
+      const resp = await fetch(`/api/materials/search?q=${encodeURIComponent(raw)}&level=`);
+      const data = await resp.json();
+      if (!resp.ok) throw new Error(data.error || 'Lookup failed');
+
+      if (!data.materials || data.materials.length === 0) {
+        existingMaterial = null;
+        materialIdEl.value = '';
+        qrCodeEl.value = raw;
+        showAlert('No existing material found. Complete details and save as a new material.', 'info');
+        statusEl.textContent = '';
+        return;
+      }
+
+      const material = data.materials[0];
+      existingMaterial = material;
+      materialIdEl.value = material.id;
+      titleEl.value = material.title || '';
+      authorEl.value = material.author || '';
+      publisherEl.value = material.publisher || '';
+      qrCodeEl.value = material.qr_code || '';
+      levelEl.value = material.reading_level || '';
+      copiesEl.value = material.copies || 1;
+
+      incrementBtn.classList.remove('d-none');
+      showAlert(`Found material: "${material.title}" (${material.copies} copies).`, 'info');
+    } catch (err) {
+      showAlert(err.message, 'danger');
+    } finally {
+      statusEl.textContent = '';
+    }
+  }
+
+  async function loadMaterialForEdit(materialId) {
+    try {
+      statusEl.textContent = 'Loading material...';
+      const resp = await fetch(`/api/materials/${materialId}`);
+      const data = await resp.json();
+      if (!resp.ok) throw new Error(data.error || 'Failed to load material');
+      const material = data.material || {};
+
+      materialIdEl.value = material.id || '';
+      titleEl.value = material.title || '';
+      authorEl.value = material.author || '';
+      publisherEl.value = material.publisher || '';
+      qrCodeEl.value = material.qr_code || '';
+      levelEl.value = material.reading_level || '';
+      copiesEl.value = material.copies || 1;
+      showAlert('Editing existing material. Update fields and click Save.', 'info');
+    } catch (err) {
+      showAlert(err.message, 'danger');
+    } finally {
+      statusEl.textContent = '';
+    }
+  }
+
+  function showAlert(msg, type = 'info') {
+    if (!msg) {
+      alertBox.classList.add('d-none');
+      alertBox.textContent = '';
+      return;
+    }
+    alertBox.className = 'alert alert-' + type;
+    alertBox.textContent = msg;
+    alertBox.classList.remove('d-none');
+  }
+
+  function clearForm() {
+    existingMaterial = null;
+    materialIdEl.value = '';
+    qrInput.value = '';
+    titleEl.value = '';
+    authorEl.value = '';
+    publisherEl.value = '';
+    qrCodeEl.value = '';
+    levelEl.value = '';
+    copiesEl.value = 1;
+    incrementBtn.classList.add('d-none');
+    qrInput.focus();
+  }
+})();
+</script>
+{% endblock %}

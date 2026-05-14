@@ -15,8 +15,15 @@
                 </div>
 
                 <div class="card-body">
+                    {% if setup_mode %}
+                    <div class="alert alert-info" role="alert">
+                        <i class="bi bi-info-circle"></i>
+                        First-time setup: add your instructor details and at least one day of center class hours to continue.
+                    </div>
+                    {% endif %}
                     <form method="POST" action="{{ url_for('instructor_profile_edit') }}">
                         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                        <input type="hidden" name="setup_mode" value="{{ '1' if setup_mode else '0' }}">
                         <div class="mb-3">
                             <label for="name" class="form-label">Instructor Name <span class="text-danger">*</span></label>
                             <input 

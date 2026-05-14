@@ -7,33 +7,68 @@
   <div class="mb-2">
     <a href="{{ url_for('assistants_add') }}" class="btn btn-success btn-sm">Add Staff</a>
     <form action="{{ url_for('qr_assistants_generate_all') }}" method="post" class="d-inline">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
       <button type="submit" class="btn btn-outline-primary btn-sm">Generate All QRs</button>
     </form>
     <a href="{{ url_for('qr_assistants_pdf') }}" class="btn btn-outline-secondary btn-sm">Print Staff QRs (Avery 8163)</a>
   </div>
 
+  <!-- Staff on Duty Button -->
+  <button class="btn btn-primary mb-3" data-bs-toggle="modal" data-bs-target="#staffDutyModal">
+      <i class="bi bi-person-badge"></i> Staff on Duty
+  </button>
+
+  <!-- Staff on Duty Modal -->
+  <div class="modal fade" id="staffDutyModal" tabindex="-1" aria-labelledby="staffDutyModalLabel" aria-hidden="true">
+      <div class="modal-dialog">
+          <div class="modal-content">
+              <div class="modal-header">
+                  <h5 class="modal-title" id="staffDutyModalLabel">
+                      <i class="bi bi-person-badge"></i> Staff on Duty
+                  </h5>
+                  <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+              </div>
+              <div class="modal-body">
+                  <p>No staff on duty currently.</p>
+              </div>
+              <div class="modal-footer">
+                  <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+              </div>
+          </div>
+      </div>
+  </div>
+
   <table class="table table-sm table-striped align-middle">
     <thead class="table-primary">
       <tr>
-        <th>ID</th><th>Name</th><th>Role</th><th>Email</th><th>Phone</th><th>QR</th><th>Actions</th>
+        <th>Photo</th><th>Name</th><th>Role</th><th>Email</th><th>Phone</th><th>QR</th><th>Actions</th>
       </tr>
     </thead>
     <tbody>
       {% for a in assistants %}
       <tr>
-        <td>{{ a[0] }}</td>
+        <td>
+          <img id="photo_{{ a[0] }}" src="/staff/icon/{{ a[0] }}" alt="{{ a[1] }}" width="40" height="40" style="border-radius: 50%; object-fit: cover;" onerror="this.onerror=null;this.innerHTML='<span style=\'font-size:20px\'>👤</span>';">
+        </td>
         <td>{{ a[1] }}</td>
         <td>{{ a[2] }}</td>
         <td>{{ a[3] }}</td>
         <td>{{ a[4] }}</td>
         <td>
           {% set qr_file = 'assistant_' ~ a[0] ~ '.png' %}
-          <img src="/assets/qr_codes/{{ qr_file }}" alt="QR" width="64" height="64" loading="lazy" decoding="async" onerror="this.src='/static/img/default.png'">
+          <img src="{{ url_for('serve_staff_qr', aid=a[0]) }}?v={{ date_str|replace(',', '')|replace(' ', '') }}{{ time_str|replace(':', '')|replace(' ', '') }}" alt="QR" width="64" height="64" loading="lazy" decoding="async" onerror="this.onerror=null;this.src='{{ url_for('static', filename='img/logo.png') }}';">
         </td>
         <td>
-          <form action="{{ url_for('qr_assistant_generate', aid=a[0]) }}" method="post" class="d-inline">
-            <button type="submit" class="btn btn-outline-primary btn-sm">Generate QR</button>
-          </form>
+          <div class="form-check d-inline-flex align-items-center me-2">
+            <input
+              class="form-check-input on-duty-checkbox"
+              type="checkbox"
+              id="onDuty_{{ a[0] }}"
+              data-aid="{{ a[0] }}"
+              aria-label="Set {{ a[1] }} on duty"
+            >
+            <label class="form-check-label ms-1 small" for="onDuty_{{ a[0] }}">On Duty</label>
+          </div>
           <a href="{{ url_for('assistants_edit', aid=a[0]) }}" class="btn btn-outline-info btn-sm">Edit</a>
           {% if current_user and current_user.is_admin() %}
           <form method="POST" action="{{ url_for('assistants_delete', aid=a[0]) }}" class="d-inline">
@@ -47,4 +82,50 @@
     </tbody>
   </table>
 </div>
+
+<script>
+document.addEventListener('DOMContentLoaded', () => {
+  const checkboxes = Array.from(document.querySelectorAll('.on-duty-checkbox'));
+
+  async function syncOnDutyStates() {
+    try {
+      const res = await fetch('/api/assistants/list', { cache: 'no-store' });
+      const assistants = await res.json();
+      const dutyMap = new Map((assistants || []).map(a => [String(a.id), !!a.on_duty]));
+      checkboxes.forEach(cb => {
+        cb.checked = dutyMap.get(cb.dataset.aid) || false;
+      });
+    } catch (error) {
+      console.error('Error loading on-duty states:', error);
+    }
+  }
+
+  async function toggleOnDuty(event) {
+    const checkbox = event.currentTarget;
+    const assistantId = checkbox.dataset.aid;
+    const previousState = !checkbox.checked;
+    checkbox.disabled = true;
+
+    try {
+      const res = await fetch(`/api/assistants/select/${assistantId}`, { method: 'POST' });
+      const data = await res.json();
+      if (!data || !data.success) {
+        checkbox.checked = previousState;
+        alert('Could not update On Duty status.');
+        return;
+      }
+      checkbox.checked = !!data.on_duty;
+    } catch (error) {
+      console.error('Error toggling on-duty status:', error);
+      checkbox.checked = previousState;
+      alert('Error updating On Duty status.');
+    } finally {
+      checkbox.disabled = false;
+    }
+  }
+
+  checkboxes.forEach(cb => cb.addEventListener('change', toggleOnDuty));
+  syncOnDutyStates();
+});
+</script>
 {% endblock %}

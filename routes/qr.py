@@ -2,14 +2,40 @@
 import os
 import io
 import sqlite3
-from flask import render_template, request, jsonify, send_file
-from modules import student_manager, assistant_manager, qr_generator, auth_manager
+from flask import render_template, request, jsonify, send_file, flash, redirect, url_for
+from modules import student_manager, assistant_manager, qr_generator, auth_manager, book_manager, materials_manager
 from modules.database import DB_PATH
 from routes.auth import require_login, require_feature
 from reportlab.lib.pagesizes import letter
 from reportlab.lib.units import inch
 from reportlab.pdfgen import canvas
 from reportlab.graphics.barcode import code128
+
+
+def _generate_missing_student_qrs():
+    """Generate QR codes only for students missing them in database.
+
+    Returns (generated, skipped, errors) where each item is a list.
+    """
+    students = student_manager.get_all_students()
+    generated = []
+    skipped = []
+    errors = []
+    for s in students:
+        try:
+            sid = s[0]
+            # Check if QR code exists in database
+            existing_qr = student_manager.get_student_qr_code(sid)
+            if existing_qr:
+                skipped.append(f"student_{sid}.png")
+                continue
+            qr_data = f"ID:{sid}\nName:{s[1]}"
+            qr_blob = qr_generator.generate_qr_bytes(qr_data)
+            student_manager.set_student_qr_code(sid, qr_blob)
+            generated.append(f"student_{sid}.png")
+        except Exception as e:
+            errors.append({'id': sid, 'error': str(e)})
+    return generated, skipped, errors
 
 def register_qr_routes(app):
     """Register QR code generation and printing routes."""
@@ -30,46 +56,60 @@ def register_qr_routes(app):
     @require_login
     @require_feature(auth_manager.FEATURE_INSTRUCTOR_SETTINGS)
     def qr_generate_student(sid):
-        """Generate and return QR code PNG for a student."""
+        """Generate and return QR code PNG for a student from database."""
         student = student_manager.get_student(sid)
         if not student:
             return "Student not found", 404
         qr_data = f"ID:{student[0]}\nName:{student[1]}"
-        path = qr_generator.generate_qr(qr_data, f"student_{student[0]}")
-        return send_file(path, mimetype='image/png')
+        qr_blob = qr_generator.generate_qr_bytes(qr_data)
+        student_manager.set_student_qr_code(sid, qr_blob)
+        return send_file(io.BytesIO(qr_blob), mimetype='image/png')
 
     @app.route("/qr/generate_all", methods=["POST"])
     @require_login
     @require_feature(auth_manager.FEATURE_INSTRUCTOR_SETTINGS)
     def qr_generate_all():
         """Generate QR codes for all students where missing."""
-        students = student_manager.get_all_students()
-        generated = []
-        skipped = []
-        errors = []
-        out_dir = os.path.join('assets', 'qr_codes')
-        os.makedirs(out_dir, exist_ok=True)
-        for s in students:
-            try:
-                sid = s[0]
-                name = f"student_{sid}"
-                dest = os.path.join(out_dir, f"{name}.png")
-                if os.path.exists(dest):
-                    skipped.append(name + '.png')
-                    continue
-                qr_data = f"ID:{sid}\nName:{s[1]}"
-                path = qr_generator.generate_qr(qr_data, name)
-                generated.append(os.path.basename(path))
-            except Exception as e:
-                errors.append({'id': sid, 'error': str(e)})
+        generated, skipped, errors = _generate_missing_student_qrs()
         return jsonify({'generated': generated, 'skipped': skipped, 'errors': errors, 'generated_count': len(generated), 'skipped_count': len(skipped)})
 
-    @app.route('/assets/qr_codes/<path:filename>')
-    def serve_qr_code(filename):
-        """Serve generated QR code images from assets/qr_codes folder."""
-        qr_dir = os.path.join(os.getcwd(), 'assets', 'qr_codes')
-        from flask import send_from_directory
-        return send_from_directory(qr_dir, filename)
+    @app.route("/qr/students/generate_all", methods=["POST"])
+    @require_login
+    @require_feature(auth_manager.FEATURE_STUDENT_DATABASE)
+    def qr_students_generate_all_dashboard():
+        """Generate missing student QRs from dashboard action and redirect with flash message."""
+        generated, skipped, errors = _generate_missing_student_qrs()
+
+        if errors:
+            flash(
+                f"Generated {len(generated)} QR code(s), skipped {len(skipped)}, with {len(errors)} error(s).",
+                "warning",
+            )
+        elif generated:
+            flash(
+                f"Generated {len(generated)} QR code(s) for students without assigned QR codes.",
+                "success",
+            )
+        else:
+            flash("No QR codes generated; all students have assigned QR codes", "info")
+
+        return redirect(url_for("students_list"))
+
+    @app.route('/students/qr/<int:sid>')
+    def serve_student_qr(sid):
+        """Serve student QR code from database."""
+        qr_blob = student_manager.get_student_qr_code(sid)
+        if not qr_blob:
+            return "QR code not found", 404
+        return send_file(io.BytesIO(qr_blob), mimetype='image/png')
+
+    @app.route('/staff/qr/<int:aid>')
+    def serve_staff_qr(aid):
+        """Serve staff QR code from database."""
+        qr_blob = assistant_manager.get_assistant_qr_code(aid)
+        if not qr_blob:
+            return "QR code not found", 404
+        return send_file(io.BytesIO(qr_blob), mimetype='image/png')
 
     # ================================================================
     # QR Code Generation - Assistants
@@ -79,44 +119,57 @@ def register_qr_routes(app):
     @require_login
     @require_feature(auth_manager.FEATURE_INSTRUCTOR_SETTINGS)
     def qr_assistants_generate_all():
-        """Generate QR codes for all assistants where missing."""
+        """Generate QR codes for all assistants where missing and store in database."""
         assistants = assistant_manager.get_all_assistants()
         generated, skipped, errors = [], [], []
-        out_dir = os.path.join('assets', 'qr_codes')
-        os.makedirs(out_dir, exist_ok=True)
         for a in assistants:
             aid = a[0]
             name = a[1]
-            qr_name = f"assistant_{aid}"
-            dest = os.path.join(out_dir, f"{qr_name}.png")
-            if os.path.exists(dest):
-                skipped.append(qr_name + '.png')
-                continue
             try:
+                # Check if QR code exists in database
+                existing_qr = assistant_manager.get_assistant_qr_code(aid)
+                if existing_qr:
+                    skipped.append(f"assistant_{aid}.png")
+                    continue
                 qr_data = f"ASST:{aid}\nName:{name}"
-                path = qr_generator.generate_qr(qr_data, qr_name)
-                generated.append(os.path.basename(path))
+                qr_blob = qr_generator.generate_qr_bytes(qr_data)
+                assistant_manager.set_assistant_qr_code(aid, qr_blob)
+                generated.append(f"assistant_{aid}.png")
             except Exception as e:
                 errors.append({'id': aid, 'error': str(e)})
-        return jsonify({'generated': generated, 'skipped': skipped, 'errors': errors})
+
+        if errors:
+            flash(
+                f"Generated {len(generated)} QR code(s), skipped {len(skipped)}, with {len(errors)} error(s).",
+                "warning",
+            )
+        elif generated:
+            flash(
+                f"Generated {len(generated)} QR code(s) for staff without assigned QR codes.",
+                "success",
+            )
+        else:
+            flash("No QR codes generated; all staff has assigned QR codes", "info")
+
+        return redirect(url_for("assistants_list"))
 
     @app.route("/qr/assistants/generate/<int:aid>", methods=["POST"])
     @require_login
     @require_feature(auth_manager.FEATURE_INSTRUCTOR_SETTINGS)
     def qr_assistant_generate(aid):
-        """Generate QR code for a single assistant."""
+        """Generate QR code for a single assistant and store in database."""
         assistant = assistant_manager.get_assistant(aid)
         if not assistant:
             return "Staff member not found", 404
-        out_dir = os.path.join('assets', 'qr_codes')
-        os.makedirs(out_dir, exist_ok=True)
-        qr_name = f"assistant_{aid}"
-        dest = os.path.join(out_dir, f"{qr_name}.png")
-        if os.path.exists(dest):
-            return jsonify({'message': 'exists', 'file': os.path.basename(dest)})
+        
+        existing_qr = assistant_manager.get_assistant_qr_code(aid)
+        if existing_qr:
+            return jsonify({'message': 'exists', 'file': f'assistant_{aid}.png'})
+        
         qr_data = f"ASST:{aid}\nName:{assistant[1]}"
-        path = qr_generator.generate_qr(qr_data, qr_name)
-        return jsonify({'message': 'generated', 'file': os.path.basename(path)})
+        qr_blob = qr_generator.generate_qr_bytes(qr_data)
+        assistant_manager.set_assistant_qr_code(aid, qr_blob)
+        return jsonify({'message': 'generated', 'file': f'assistant_{aid}.png'})
 
     # ================================================================
     # QR Code Generation - Books
@@ -126,23 +179,22 @@ def register_qr_routes(app):
     @require_login
     @require_feature(auth_manager.FEATURE_INSTRUCTOR_SETTINGS)
     def qr_books_generate_all():
-        """Generate QR codes for all books where missing."""
+        """Generate QR codes for all books where missing and store in database."""
         generated, skipped, errors = [], [], []
-        out_dir = os.path.join('assets', 'qr_codes')
-        os.makedirs(out_dir, exist_ok=True)
         with sqlite3.connect(DB_PATH) as conn:
             c = conn.cursor()
             c.execute("SELECT id, title FROM books")
             for (bid, title) in c.fetchall():
                 try:
-                    qr_name = f"book_{bid}"
-                    dest = os.path.join(out_dir, f"{qr_name}.png")
-                    if os.path.exists(dest):
-                        skipped.append(qr_name + '.png')
+                    # Check if QR code exists in database
+                    existing_qr = book_manager.get_book_qr_code(bid)
+                    if existing_qr:
+                        skipped.append(f"book_{bid}.png")
                         continue
                     qr_data = f"BOOK:{bid}\nTitle:{title or ''}"
-                    path = qr_generator.generate_qr(qr_data, qr_name)
-                    generated.append(os.path.basename(path))
+                    qr_blob = qr_generator.generate_qr_bytes(qr_data)
+                    book_manager.set_book_qr_code(bid, qr_blob)
+                    generated.append(f"book_{bid}.png")
                 except Exception as e:
                     errors.append({'id': bid, 'error': str(e)})
         return jsonify({'generated': generated, 'skipped': skipped, 'errors': errors})
@@ -151,21 +203,21 @@ def register_qr_routes(app):
     @require_login
     @require_feature(auth_manager.FEATURE_INSTRUCTOR_SETTINGS)
     def qr_book_generate(bid):
-        """Generate QR code for a single book."""
+        """Generate QR code for a single book and store in database."""
         with sqlite3.connect(DB_PATH) as conn:
             c = conn.cursor()
-            row = c.execute("SELECT id, title FROM books WHERE id=?", (bid)).fetchone()
+            row = c.execute("SELECT id, title FROM books WHERE id=?", (bid,)).fetchone()
         if not row:
             return jsonify({"error": "Book not found"}), 404
-        out_dir = os.path.join('assets', 'qr_codes')
-        os.makedirs(out_dir, exist_ok=True)
-        qr_name = f"book_{bid}"
-        dest = os.path.join(out_dir, f"{qr_name}.png")
-        if os.path.exists(dest):
-            return jsonify({'message': 'exists', 'file': os.path.basename(dest)})
+        
+        existing_qr = book_manager.get_book_qr_code(bid)
+        if existing_qr:
+            return jsonify({'message': 'exists', 'file': f'book_{bid}.png'})
+        
         qr_data = f"BOOK:{bid}\nTitle:{row[1] or ''}"
-        path = qr_generator.generate_qr(qr_data, qr_name)
-        return jsonify({'message': 'generated', 'file': os.path.basename(path)})
+        qr_blob = qr_generator.generate_qr_bytes(qr_data)
+        book_manager.set_book_qr_code(bid, qr_blob)
+        return jsonify({'message': 'generated', 'file': f'book_{bid}.png'})
 
     # ================================================================
     # QR Code PDF Generation
@@ -179,8 +231,20 @@ def register_qr_routes(app):
         student = student_manager.get_student(sid)
         if not student:
             return "Student not found", 404
-        qr_path = os.path.join(os.getcwd(), 'assets', 'qr_codes', f'student_{sid}.png')
-        labels = [{'name': student[1], 'qr_path': qr_path}]
+        
+        qr_blob = student_manager.get_student_qr_code(sid)
+        if not qr_blob:
+            # Generate and store if missing
+            try:
+                qr_data = f"ID:{sid}\nName:{student[1]}"
+                qr_blob = qr_generator.generate_qr_bytes(qr_data)
+                student_manager.set_student_qr_code(sid, qr_blob)
+            except Exception:
+                qr_blob = None
+        
+        # Convert bytes to BytesIO for PDF rendering
+        qr_io = io.BytesIO(qr_blob) if qr_blob else None
+        labels = [{'name': student[1], 'qr_blob': qr_io}]
         buf = _build_avery_pdf(labels)
         filename = f'student_{sid}_labels.pdf'
         return send_file(buf, mimetype='application/pdf', as_attachment=True, download_name=filename)
@@ -194,8 +258,18 @@ def register_qr_routes(app):
         labels = []
         for s in students:
             sid = s[0]
-            qr_path = os.path.join(os.getcwd(), 'assets', 'qr_codes', f'student_{sid}.png')
-            labels.append({'name': s[1], 'qr_path': qr_path if os.path.exists(qr_path) else None})
+            qr_blob = student_manager.get_student_qr_code(sid)
+            if not qr_blob:
+                # Generate and store if missing
+                try:
+                    qr_data = f"ID:{sid}\nName:{s[1]}"
+                    qr_blob = qr_generator.generate_qr_bytes(qr_data)
+                    student_manager.set_student_qr_code(sid, qr_blob)
+                except Exception:
+                    qr_blob = None
+            
+            qr_io = io.BytesIO(qr_blob) if qr_blob else None
+            labels.append({'name': s[1], 'qr_blob': qr_io})
         buf = _build_avery_pdf(labels)
         filename = 'students_qr_labels.pdf'
         return send_file(buf, mimetype='application/pdf', as_attachment=True, download_name=filename)
@@ -207,12 +281,12 @@ def register_qr_routes(app):
         """Generate Avery 8163 PDF for assistants with existing QR codes."""
         assistants = assistant_manager.get_all_assistants()
         labels = []
-        qr_dir = os.path.join('assets', 'qr_codes')
         for a in assistants:
             aid = a[0]
-            qr_path = os.path.join(qr_dir, f"assistant_{aid}.png")
-            if os.path.exists(qr_path):
-                labels.append({'name': a[1], 'qr_path': qr_path})
+            qr_blob = assistant_manager.get_assistant_qr_code(aid)
+            if qr_blob:
+                qr_io = io.BytesIO(qr_blob)
+                labels.append({'name': a[1], 'qr_blob': qr_io})
         if not labels:
             return "No staff QR codes found. Generate them first.", 400
         pdf_buffer = _build_avery8163_pdf(labels)
@@ -226,10 +300,17 @@ def register_qr_routes(app):
         assistant = assistant_manager.get_assistant(aid)
         if not assistant:
             return "Staff member not found", 404
-        qr_path = os.path.join('assets', 'qr_codes', f"assistant_{aid}.png")
-        if not os.path.exists(qr_path):
-            return "QR code not found. Generate it first.", 400
-        labels = [{'name': assistant[1], 'qr_path': qr_path}]
+        qr_blob = assistant_manager.get_assistant_qr_code(aid)
+        if not qr_blob:
+            # Generate and store if missing
+            try:
+                qr_data = f"ASST:{aid}\nName:{assistant[1]}"
+                qr_blob = qr_generator.generate_qr_bytes(qr_data)
+                assistant_manager.set_assistant_qr_code(aid, qr_blob)
+            except Exception:
+                return "Failed to generate QR code.", 500
+        qr_io = io.BytesIO(qr_blob)
+        labels = [{'name': assistant[1], 'qr_blob': qr_io}]
         pdf_buffer = _build_avery8163_pdf(labels)
         return send_file(pdf_buffer, as_attachment=True, download_name=f"assistant_{aid}_qr.pdf", mimetype='application/pdf')
 
@@ -243,12 +324,12 @@ def register_qr_routes(app):
             c.execute("SELECT id, title FROM books")
             books = c.fetchall()
         labels = []
-        qr_dir = os.path.join('assets', 'qr_codes')
         for b in books:
             bid = b[0]
-            qr_path = os.path.join(qr_dir, f"book_{bid}.png")
-            if os.path.exists(qr_path):
-                labels.append({'name': b[1], 'qr_path': qr_path})
+            qr_blob = book_manager.get_book_qr_code(bid)
+            if qr_blob:
+                qr_io = io.BytesIO(qr_blob)
+                labels.append({'name': b[1], 'qr_blob': qr_io})
         if not labels:
             return "No book QR codes found. Generate them first.", 400
         pdf_buffer = _build_avery8163_pdf(labels)
@@ -261,13 +342,20 @@ def register_qr_routes(app):
         """Generate PDF for a single book QR."""
         with sqlite3.connect(DB_PATH) as conn:
             c = conn.cursor()
-            row = c.execute("SELECT id, title FROM books WHERE id=?", (bid)).fetchone()
+            row = c.execute("SELECT id, title FROM books WHERE id=?", (bid,)).fetchone()
         if not row:
             return "Book not found", 404
-        qr_path = os.path.join('assets', 'qr_codes', f"book_{bid}.png")
-        if not os.path.exists(qr_path):
-            return "QR code not found. Generate it first.", 400
-        labels = [{'name': row[1], 'qr_path': qr_path}]
+        qr_blob = book_manager.get_book_qr_code(bid)
+        if not qr_blob:
+            # Generate and store if missing
+            try:
+                qr_data = f"BOOK:{bid}\nTitle:{row[1] or ''}"
+                qr_blob = qr_generator.generate_qr_bytes(qr_data)
+                book_manager.set_book_qr_code(bid, qr_blob)
+            except Exception:
+                return "Failed to generate QR code.", 500
+        qr_io = io.BytesIO(qr_blob)
+        labels = [{'name': row[1], 'qr_blob': qr_io}]
         pdf_buffer = _build_avery8163_pdf(labels)
         return send_file(pdf_buffer, as_attachment=True, download_name=f"book_{bid}_qr.pdf", mimetype='application/pdf')
 
@@ -375,6 +463,8 @@ def _build_avery_pdf(labels):
     - Label size: 1" H x 2.625" W
     - Left/Right margins: 0.3125"
     - Top/Bottom margins: 0.5"
+    
+    Labels can have 'qr_blob' (BytesIO) or 'qr_path' (file path) for backward compatibility.
     """
     buffer = io.BytesIO()
     page_width, page_height = letter  # 8.5" x 11"
@@ -437,9 +527,16 @@ def _build_avery_pdf(labels):
                     # text_y is the baseline, so center QR around it
                     qr_y = text_y - (qr_size / 2) + (font_size / 2)
 
-                    if lab.get('qr_path') and os.path.exists(lab['qr_path']):
+                    # Try qr_blob first (database source), then qr_path (file source for backward compatibility)
+                    qr_source = None
+                    if lab.get('qr_blob'):
+                        qr_source = lab['qr_blob']
+                    elif lab.get('qr_path') and os.path.exists(lab['qr_path']):
+                        qr_source = lab['qr_path']
+                    
+                    if qr_source:
                         try:
-                            c.drawImage(lab['qr_path'], qr_x, qr_y, width=qr_size, height=qr_size, preserveAspectRatio=True, mask='auto')
+                            c.drawImage(qr_source, qr_x, qr_y, width=qr_size, height=qr_size, preserveAspectRatio=True, mask='auto')
                         except Exception:
                             pass
                     
@@ -678,7 +775,10 @@ def _build_isbn_8163_pdf(labels):
 
 
 def _build_avery8163_pdf(labels):
-    """Build PDF for Avery 8163 (2" x 4" labels, 2 columns x 5 rows per page)."""
+    """Build PDF for Avery 8163 (2" x 4" labels, 2 columns x 5 rows per page).
+    
+    Labels can have 'qr_blob' (BytesIO) or 'qr_path' (file path) for backward compatibility.
+    """
     buffer = io.BytesIO()
     page_width, page_height = letter  # portrait
     c = canvas.Canvas(buffer, pagesize=(page_width, page_height))
@@ -708,8 +808,18 @@ def _build_avery8163_pdf(labels):
                 c.setStrokeColorRGB(0.85, 0.85, 0.85)
                 c.rect(x, y, label_w, label_h, stroke=1, fill=0)
 
-                if label.get("qr_path") and os.path.exists(label.get("qr_path")):
-                    c.drawImage(label.get("qr_path"), x + 0.2 * inch, y + (label_h - qr_size) / 2, qr_size, qr_size, preserveAspectRatio=True)
+                # Try qr_blob first (database source), then qr_path (file source for backward compatibility)
+                qr_source = None
+                if label.get('qr_blob'):
+                    qr_source = label['qr_blob']
+                elif label.get("qr_path") and os.path.exists(label.get("qr_path")):
+                    qr_source = label.get("qr_path")
+                
+                if qr_source:
+                    try:
+                        c.drawImage(qr_source, x + 0.2 * inch, y + (label_h - qr_size) / 2, qr_size, qr_size, preserveAspectRatio=True)
+                    except Exception:
+                        pass
 
                 c.setFont("Helvetica-Bold", 14)
                 c.drawString(x + qr_size + 0.4 * inch, y + label_h / 2 + 4, label.get("name", ""))
