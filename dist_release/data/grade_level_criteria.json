@@ -1,0 +1,21 @@
+{
+  "reading_levels": [
+    "7A", "6A", "5A", "4A", "3A", "2A", "AI", "AII",
+    "BI", "BII", "CI", "CII", "DI", "DII", "EI", "EII", "FI", "FII", "GI", "GII", "HI",
+    "HII", "II", "III", "J", "K", "L"
+  ],
+  "math_levels": [
+    "6A", "5A", "4A", "3A", "2A", "A", "B", "C", "D", "E", "F", "G", "H", "I", "J", "K", "L"
+  ],
+  "description": "Worksheet level progression hierarchy. Index position indicates advancement: 0=least advanced (e.g., 7A/6A), higher index=more advanced (e.g., L). For levels not in Levels_by_grade.xlsx, interpolate between known levels.",
+  "grade_levels": {
+    "Grade 1": {"math": "B", "reading": "A"},
+    "Grade 2": {"math": "C", "reading": "B"},
+    "Grade 3": {"math": "D", "reading": "C"},
+    "Grade 4": {"math": "E", "reading": "D"},
+    "Grade 5": {"math": "F", "reading": "E"},
+    "Grade 6": {"math": "F", "reading": "F"}
+  },
+  "above_threshold": 200,
+  "below_threshold": -200
+}

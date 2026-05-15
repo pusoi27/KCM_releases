@@ -1,0 +1,59 @@
+{% extends "base.html" %}
+
+{% block title %}Development Trace Folder{% endblock %}
+
+{% block content %}
+<div class="container py-3">
+  <div class="d-flex justify-content-between align-items-center mb-3">
+    <div>
+      <h5 class="mb-1"><i class="bi bi-folder2-open"></i> Development Trace Folder</h5>
+      <div class="text-muted small">{{ trace_dir }}</div>
+    </div>
+    <div class="d-flex gap-2">
+      <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('instructor_profile') }}">Back to Utilities</a>
+      {% if dev_trace_filename %}
+      <a class="btn btn-sm btn-primary" href="{{ url_for('instructor_dev_trace') }}">Download current trace</a>
+      {% endif %}
+      <form method="post" action="{{ url_for('instructor_dev_trace_cleanup') }}" class="d-inline">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <input type="hidden" name="keep_count" value="20">
+        <button type="submit" class="btn btn-sm btn-outline-danger">Delete old traces</button>
+      </form>
+    </div>
+  </div>
+
+  {% if trace_files %}
+  <div class="table-responsive">
+    <table class="table table-sm table-striped align-middle">
+      <thead>
+        <tr>
+          <th>Trace file</th>
+          <th>Modified</th>
+          <th class="text-end">Size (bytes)</th>
+          <th class="text-end">Action</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for f in trace_files %}
+        <tr>
+          <td>
+            {{ f.name }}
+            {% if f.is_current %}
+            <span class="badge text-bg-success ms-2">current</span>
+            {% endif %}
+          </td>
+          <td>{{ f.modified_at }}</td>
+          <td class="text-end">{{ f.size_bytes }}</td>
+          <td class="text-end">
+            <a class="btn btn-sm btn-outline-primary" href="{{ url_for('instructor_dev_trace_file', filename=f.name) }}">Download</a>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <div class="alert alert-info mb-0">No trace files found yet. Restart the app in development mode to generate one.</div>
+  {% endif %}
+</div>
+{% endblock %}

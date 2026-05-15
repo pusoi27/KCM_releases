@@ -1,0 +1,8 @@
+[trace] Development trace enabled: C:\Users\octav\AppData\Local\Programs\Python\Python312\stdytime\trace_logs\trace_20260514_230423_12296.txt
+[startup] Database initialized at: C:/Users/octav/AppData/Local/StdyTime/Stdytime.db
+[startup] closed open DB sessions: 0
+[version] Bumped: 00.07.091 -> 00.07.092
+[startup] Stdytime version: 00.07.092
+[startup] LS license: No LemonSqueezy license activated on this machine.
+WARNING:werkzeug: * Debugger is active!
+INFO:werkzeug: * Debugger PIN: 577-684-658

@@ -1,0 +1,84 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="container py-3">
+  <h4>Class Attendance Report</h4>
+  <form class="row gy-2 gx-2 align-items-end" method="get" action="{{ url_for('class_attendance_page') }}">
+    <div class="col-auto">
+      <label for="start" class="form-label small mb-0">Start date</label>
+      <input type="date" id="start" name="start" class="form-control form-control-sm" value="{{ start }}">
+    </div>
+    <div class="col-auto">
+      <label for="end" class="form-label small mb-0">End date</label>
+      <input type="date" id="end" name="end" class="form-control form-control-sm" value="{{ end }}">
+    </div>
+    <div class="col-auto">
+      <button type="submit" class="btn btn-primary btn-sm">Update</button>
+    </div>
+    <div class="col-auto ms-auto">
+      <button type="button" class="btn btn-outline-secondary btn-sm" onclick="printPDF()">Print to PDF</button>
+    </div>
+  </form>
+
+  {% if error %}
+    <div class="alert alert-warning mt-3 mb-0">{{ error }}</div>
+  {% endif %}
+
+  <div class="card mt-3">
+    <div class="card-body">
+      <div class="d-flex justify-content-between small text-muted mb-2">
+        <div>Date Range: {{ start }} to {{ end }}</div>
+        <div></div>
+      </div>
+      <div class="table-responsive">
+        <table class="table table-sm align-middle">
+          <thead>
+            <tr>
+              <th style="width: 12rem;">Session Date</th>
+              <th style="width: 10rem;"># Active Students</th>
+              <th>Active Student List</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% if by_day and by_day|length > 0 %}
+              {% for row in by_day %}
+              <tr>
+                <td>{{ row.day }}</td>
+                <td>{{ row.count }}</td>
+                <td>
+                  {% if row.names %}
+                    {{ row.names | join(', ') }}
+                  {% else %}
+                    
+                  {% endif %}
+                </td>
+              </tr>
+              {% endfor %}
+            {% else %}
+              <tr><td colspan="3" class="text-muted">No data for selected range.</td></tr>
+            {% endif %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+function printPDF(){
+  const start = document.getElementById('start').value;
+  const end = document.getElementById('end').value;
+  if(!start || !end){ alert('Please select start and end dates.'); return; }
+  if(start > end){ alert('Start date must be before or equal to end date.'); return; }
+  // Enforce last 30 calendar days
+  const today = new Date().toISOString().slice(0,10);
+  const past30 = new Date(); past30.setDate(new Date().getDate()-30);
+  const earliest = past30.toISOString().slice(0,10);
+  if(start < earliest || end > today){
+    alert('Dates must be within the last 30 calendar days.');
+    return;
+  }
+  const url = `/reports/class-attendance/pdf?start=${start}&end=${end}`;
+  window.open(url, '_blank');
+}
+</script>
+{% endblock %}

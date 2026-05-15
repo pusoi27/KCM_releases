@@ -1,0 +1,465 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="container mt-4">
+  <div class="row mb-3">
+    <div class="col-md-8">
+      <h2><i class="bi bi-journal-plus"></i> Add / Update Book (Scan ISBN)</h2>
+      <p class="text-muted mb-0">Scan or type the ISBN. We'll fetch details from Google Books. Reading level is required.</p>
+    </div>
+    <div class="col-md-4 text-end">
+      <a href="{{ url_for('books_list') }}" class="btn btn-outline-secondary">
+        <i class="bi bi-arrow-left"></i> Back to Book List
+      </a>
+    </div>
+  </div>
+
+  <div class="card shadow-sm mb-4">
+    <div class="card-body">
+      <form id="bookForm">
+        <input type="hidden" id="bookId" name="bookId">
+        <div class="row g-3 align-items-end">
+          <div class="col-md-6">
+            <label class="form-label">ISBN (scan or type)</label>
+            <input type="text" class="form-control" id="isbnInput" placeholder="ISBN-10 or ISBN-13" autofocus>
+          </div>
+          <div class="col-md-3">
+            <button type="button" id="lookupBtn" class="btn btn-primary w-100">
+              <i class="bi bi-upc-scan"></i> Lookup
+            </button>
+          </div>
+          <div class="col-md-3 text-end">
+            <span id="lookupStatus" class="text-muted small"></span>
+          </div>
+        </div>
+
+        <hr class="my-4" />
+
+        <div class="row g-3">
+          <div class="col-md-6">
+            <label class="form-label">Title <span class="text-danger">*</span></label>
+            <input type="text" class="form-control" id="titleInput" required>
+          </div>
+          <div class="col-md-6">
+            <label class="form-label">Author</label>
+            <input type="text" class="form-control" id="authorInput">
+          </div>
+          <div class="col-md-6">
+            <label class="form-label">Publisher</label>
+            <input type="text" class="form-control" id="publisherInput">
+          </div>
+          <div class="col-md-3">
+            <label class="form-label">ISBN-10</label>
+            <input type="text" class="form-control" id="isbn10Input" maxlength="10">
+          </div>
+          <div class="col-md-3">
+            <label class="form-label">ISBN-13</label>
+            <input type="text" class="form-control" id="isbn13Input" maxlength="13">
+          </div>
+          <div class="col-md-3">
+            <label class="form-label">Reading Level <span class="text-danger" id="levelRequiredStar">*</span></label>
+            <select class="form-select" id="levelInput" required>
+              <option value="">Select level...</option>
+              <option value="7A">7A</option>
+              <option value="6A">6A</option>
+              <option value="5A">5A</option>
+              <option value="4A">4A</option>
+              <option value="3A">3A</option>
+              <option value="2A">2A</option>
+              <option value="A">A</option>
+              <option value="B">B</option>
+              <option value="C">C</option>
+              <option value="D">D</option>
+              <option value="E">E</option>
+              <option value="F">F</option>
+              <option value="G">G</option>
+              <option value="H">H</option>
+              <option value="I">I</option>
+              <option value="J">J</option>
+              <option value="K">K</option>
+              <option value="L">L</option>
+            </select>
+          </div>
+          <div class="col-md-3">
+            <label class="form-label">Copies</label>
+            <input type="number" class="form-control" id="copiesInput" min="0" value="1">
+          </div>
+        </div>
+
+        <div class="mt-4 d-flex gap-2">
+          <button type="button" id="saveBtn" class="btn btn-success">
+            <i class="bi bi-save"></i> Save Book
+          </button>
+          <button type="button" id="updateBtn" class="btn btn-warning d-none">
+            <i class="bi bi-pencil"></i> Update Book (Add ISBN)
+          </button>
+          <button type="button" id="incrementBtn" class="btn btn-info d-none">
+            <i class="bi bi-plus-circle"></i> Increase Copies
+          </button>
+          <button type="button" id="resetBtn" class="btn btn-outline-secondary">Clear</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <div id="alertBox" class="alert d-none" role="alert"></div>
+</div>
+
+<script>
+(function() {
+  const isbnInput = document.getElementById('isbnInput');
+  const lookupBtn = document.getElementById('lookupBtn');
+  const statusEl = document.getElementById('lookupStatus');
+  const alertBox = document.getElementById('alertBox');
+  const saveBtn = document.getElementById('saveBtn');
+  const resetBtn = document.getElementById('resetBtn');
+
+  const editBookId = {{ edit_book_id if edit_book_id is not none else 'null' }};
+
+  const bookIdEl = document.getElementById('bookId');
+  const titleEl = document.getElementById('titleInput');
+  const authorEl = document.getElementById('authorInput');
+  const publisherEl = document.getElementById('publisherInput');
+  const isbn10El = document.getElementById('isbn10Input');
+  const isbn13El = document.getElementById('isbn13Input');
+  const levelEl = document.getElementById('levelInput');
+  const copiesEl = document.getElementById('copiesInput');
+  const updateBtn = document.getElementById('updateBtn');
+  const incrementBtn = document.getElementById('incrementBtn');
+
+  let currentState = {
+    isbnExistingBook: null,
+    titleExistingBook: null
+  };
+
+  // Autofocus for scanner-friendly input
+  isbnInput.focus();
+
+  lookupBtn.addEventListener('click', lookupIsbn);
+  isbnInput.addEventListener('keypress', e => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      lookupIsbn();
+    }
+  });
+
+  resetBtn.addEventListener('click', () => {
+    clearForm();
+  });
+
+  updateBtn.addEventListener('click', async () => {
+    const title = titleEl.value.trim();
+    if (!title) {
+      showAlert('Title is required.', 'danger');
+      return;
+    }
+
+    const payload = {
+      id: bookIdEl.value || null,
+      title: title,
+      author: authorEl.value.trim(),
+      publisher: publisherEl.value.trim(),
+      isbn: isbn10El.value.trim(),
+      isbn13: isbn13El.value.trim(),
+      reading_level: levelEl.value.trim(),
+      copies: parseInt(copiesEl.value || '1', 10),
+    };
+
+    try {
+      const resp = await fetch('/api/books/save', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      const data = await resp.json();
+      if (!resp.ok) throw new Error(data.error || 'Update failed');
+
+      showAlert('Book ISBN added/updated successfully.', 'success');
+      clearForm();
+    } catch (err) {
+      showAlert(err.message, 'danger');
+    }
+  });
+
+  incrementBtn.addEventListener('click', async () => {
+    if (!currentState.isbnExistingBook) return;
+    await increaseCopies(currentState.isbnExistingBook.id, 1);
+    clearForm();
+  });
+
+  // If opened in edit mode, preload data
+  if (editBookId) {
+    loadBookForEdit(editBookId);
+  }
+
+  saveBtn.addEventListener('click', async () => {
+    if (!titleEl.value.trim()) {
+      showAlert('Title is required.', 'danger');
+      titleEl.focus();
+      return;
+    }
+    if (!bookIdEl.value && !levelEl.value.trim()) {
+      showAlert('Reading level is required for new books.', 'danger');
+      levelEl.focus();
+      return;
+    }
+
+    const payload = {
+      id: bookIdEl.value || null,
+      title: titleEl.value.trim(),
+      author: authorEl.value.trim(),
+      publisher: publisherEl.value.trim(),
+      isbn: isbn10El.value.trim(),
+      isbn13: isbn13El.value.trim(),
+      reading_level: levelEl.value.trim(),
+      copies: parseInt(copiesEl.value || '1', 10),
+    };
+
+    try {
+      const resp = await fetch('/api/books/save', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      const data = await resp.json();
+      if (!resp.ok) throw new Error(data.error || 'Save failed');
+
+      showAlert(data.status === 'updated' ? 'Book updated.' : 'Book added.', 'success');
+      // After successful save, clear all fields for next scan
+      clearForm();
+    } catch (err) {
+      showAlert(err.message, 'danger');
+    }
+  });
+
+  async function lookupIsbn() {
+    const raw = isbnInput.value.trim();
+    if (!raw) {
+      showAlert('Please scan or enter an ISBN.', 'warning');
+      isbnInput.focus();
+      return;
+    }
+
+    statusEl.textContent = 'Searching local database...';
+    showAlert('', 'info', true);
+
+    try {
+      // STEP 1: Search local database first
+      const searchResp = await fetch(`/api/books/search?q=${encodeURIComponent(raw)}&level=`);
+      const searchData = await searchResp.json();
+      
+      // If book found locally by ISBN
+      if (searchData.books && searchData.books.length > 0) {
+        const localBook = searchData.books[0];
+        
+        // Book already in database
+        bookIdEl.value = localBook.id;
+        titleEl.value = localBook.title;
+        authorEl.value = localBook.author || '';
+        publisherEl.value = localBook.publisher || '';
+        isbn10El.value = localBook.isbn || '';
+        isbn13El.value = localBook.isbn13 || '';
+        levelEl.value = localBook.reading_level || '';
+        copiesEl.value = localBook.copies || 1;
+        
+        levelEl.disabled = true;
+        levelRequiredStar.classList.add('d-none');
+        
+        currentState.isbnExistingBook = localBook;
+        currentState.titleExistingBook = null;
+        
+        saveBtn.classList.add('d-none');
+        updateBtn.classList.add('d-none');
+        incrementBtn.classList.remove('d-none');
+        
+        showAlert(`Found in library: "${localBook.title}" (${localBook.copies} copies). Click "Increase Copies" to add more.`, 'info');
+        incrementBtn.focus();
+        statusEl.textContent = '';
+        return;
+      }
+
+      // STEP 2: Not found locally, lookup in Google Books API
+      statusEl.textContent = 'Looking up in Google Books...';
+      
+      const resp = await fetch(`/api/books/isbn_lookup?isbn=${encodeURIComponent(raw)}`);
+      const data = await resp.json();
+      if (!resp.ok) throw new Error(data.error || 'Lookup failed');
+
+      const book = data.book || {};
+      const titleExisting = data.existing_book || null;
+      const isbnExisting = data.isbn_existing_book || null;
+
+      // Store state for button handlers
+      currentState.isbnExistingBook = isbnExisting;
+      currentState.titleExistingBook = titleExisting;
+
+      // Populate with lookup data first
+      titleEl.value = book.title || '';
+      authorEl.value = book.author || '';
+      publisherEl.value = book.publisher || '';
+      isbn10El.value = book.isbn || '';
+      isbn13El.value = book.isbn13 || '';
+      copiesEl.value = 1;
+
+      // === SCENARIO 1: ISBN already exists in database ===
+      if (isbnExisting) {
+        bookIdEl.value = isbnExisting.id;
+        titleEl.value = isbnExisting.title;
+        authorEl.value = isbnExisting.author || '';
+        publisherEl.value = isbnExisting.publisher || '';
+        levelEl.value = isbnExisting.reading_level || '';
+        copiesEl.value = isbnExisting.copies || 1;
+        
+        levelEl.disabled = true;
+        levelRequiredStar.classList.add('d-none');
+        
+        saveBtn.classList.add('d-none');
+        updateBtn.classList.add('d-none');
+        incrementBtn.classList.remove('d-none');
+        
+        showAlert(`This ISBN already exists: "${isbnExisting.title}" (${isbnExisting.copies} copies). Click "Increase Copies" to add more.`, 'info');
+        incrementBtn.focus();
+      }
+      // === SCENARIO 2: Title exists but no ISBN ===
+      else if (titleExisting) {
+        bookIdEl.value = titleExisting.id;
+        titleEl.value = titleExisting.title;
+        authorEl.value = titleExisting.author || authorEl.value || '';
+        publisherEl.value = titleExisting.publisher || publisherEl.value || '';
+        levelEl.value = titleExisting.reading_level || '';
+        copiesEl.value = titleExisting.copies || 1;
+        
+        levelEl.disabled = true;
+        levelRequiredStar.classList.add('d-none');
+        
+        saveBtn.classList.add('d-none');
+        updateBtn.classList.remove('d-none');
+        incrementBtn.classList.add('d-none');
+        
+        showAlert(`Title "${titleExisting.title}" found in database but has no ISBN. Click "Update Book" to add the ISBN.`, 'info');
+        updateBtn.focus();
+      }
+      // === SCENARIO 3: New title, not in database ===
+      else {
+        bookIdEl.value = '';
+        levelEl.disabled = false;
+        levelRequiredStar.classList.remove('d-none');
+        levelEl.value = '';
+        
+        saveBtn.classList.remove('d-none');
+        updateBtn.classList.add('d-none');
+        incrementBtn.classList.add('d-none');
+        
+        showAlert('New title. Please set the reading level before saving.', 'info');
+        levelEl.focus();
+      }
+    } catch (err) {
+      showAlert(err.message + ' - You can still add the book manually below.', 'warning');
+      
+      // Enable manual entry mode when lookup fails
+      bookIdEl.value = '';
+      levelEl.disabled = false;
+      levelRequiredStar.classList.remove('d-none');
+      
+      saveBtn.classList.remove('d-none');
+      updateBtn.classList.add('d-none');
+      incrementBtn.classList.add('d-none');
+      
+      // Keep any ISBN that was entered in the lookup field
+      const raw = isbnInput.value.trim();
+      if (raw) {
+        // Try to determine if it's ISBN-10 or ISBN-13
+        const digits = raw.replace(/[^0-9Xx]/gi, '');
+        if (digits.length === 10) {
+          isbn10El.value = digits;
+        } else if (digits.length === 13) {
+          isbn13El.value = digits;
+        }
+      }
+      
+      titleEl.focus();
+    } finally {
+      statusEl.textContent = '';
+    }
+  }
+
+  async function loadBookForEdit(bookId) {
+    try {
+      statusEl.textContent = 'Loading book...';
+      const resp = await fetch(`/api/books/${bookId}`);
+      const data = await resp.json();
+      if (!resp.ok) throw new Error(data.error || 'Failed to load book');
+
+      const book = data.book || {};
+      bookIdEl.value = book.id;
+      titleEl.value = book.title || '';
+      authorEl.value = book.author || '';
+      publisherEl.value = book.publisher || '';
+      isbn10El.value = book.isbn || '';
+      isbn13El.value = book.isbn13 || '';
+      levelEl.value = book.reading_level || '';
+      copiesEl.value = book.copies || 1;
+
+      levelEl.disabled = false;
+      levelRequiredStar.classList.remove('d-none');
+      showAlert('Editing existing book. Update fields and click Save.', 'info');
+    } catch (err) {
+      showAlert(err.message, 'danger');
+    } finally {
+      statusEl.textContent = '';
+    }
+  }
+
+  async function increaseCopies(bookId, additionalCopies) {
+    try {
+      const resp = await fetch('/api/books/increase_copies', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          id: bookId,
+          additional_copies: additionalCopies
+        }),
+      });
+      const data = await resp.json();
+      if (!resp.ok) throw new Error(data.error || 'Failed to increase copies');
+
+      showAlert(`Copies increased successfully. New total: ${data.new_copies}`, 'success');
+    } catch (err) {
+      showAlert(err.message, 'danger');
+    }
+  }
+
+  function showAlert(msg, type = 'info', hide = false) {
+    if (hide || !msg) {
+      alertBox.classList.add('d-none');
+      alertBox.textContent = '';
+      return;
+    }
+    alertBox.className = 'alert alert-' + type;
+    alertBox.textContent = msg;
+    alertBox.classList.remove('d-none');
+  }
+
+  function clearForm() {
+    bookIdEl.value = '';
+    isbnInput.value = '';
+    titleEl.value = '';
+    authorEl.value = '';
+    publisherEl.value = '';
+    isbn10El.value = '';
+    isbn13El.value = '';
+    levelEl.value = '';
+    copiesEl.value = 1;
+    levelEl.disabled = false;
+    levelRequiredStar.classList.remove('d-none');
+    isbnInput.focus();
+  }
+})();
+</script>
+
+<style>
+#isbnInput {
+  letter-spacing: 0.05em;
+}
+</style>
+{% endblock %}

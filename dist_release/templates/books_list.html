@@ -1,0 +1,226 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="container-fluid mt-4">
+  <div class="row mb-4">
+    <div class="col-md-8">
+      <h2><i class="bi bi-journal-bookmark"></i> Books/Devices</h2>
+      <p class="text-muted">Total books: <strong>{{ total_books }}</strong></p>
+    </div>
+    <div class="col-md-4 text-end">
+      <a href="#" class="btn btn-primary btn-sm d-none" aria-disabled="true">
+        <i class="bi bi-plus-circle"></i> Add Book
+      </a>
+    </div>
+  </div>
+
+  <!-- Search and Filter -->
+  <div class="card mb-4">
+    <div class="card-body">
+      <div class="row g-3">
+        <div class="col-md-6">
+          <input type="text" id="searchInput" class="form-control" placeholder="Search by title, author, or publisher...">
+        </div>
+        <div class="col-md-3">
+          <select id="levelFilter" class="form-select">
+            <option value="">All Levels</option>
+            <option value="7A">7A</option>
+            <option value="6A">6A</option>
+            <option value="5A">5A</option>
+            <option value="4A">4A</option>
+            <option value="3A">3A</option>
+            <option value="2A">2A</option>
+            <option value="A">A</option>
+            <option value="B">B</option>
+            <option value="C">C</option>
+            <option value="D">D</option>
+            <option value="E">E</option>
+            <option value="F">F</option>
+            <option value="G">G</option>
+            <option value="H">H</option>
+            <option value="I">I</option>
+            <option value="J">J</option>
+            <option value="K">K</option>
+            <option value="L">L</option>
+          </select>
+        </div>
+        <div class="col-md-3">
+          <button id="searchBtn" class="btn btn-outline-primary w-100">
+            <i class="bi bi-search"></i> Search
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Books Table -->
+  <div class="card">
+    <div class="table-responsive">
+      <table class="table table-hover mb-0" id="booksTable">
+        <thead class="table-light">
+          <tr>
+            <th>Title</th>
+            <th>Author</th>
+            <th>Publisher</th>
+            <th class="text-center">Level</th>
+            <th class="text-center">Copies</th>
+            <th class="text-center">Available</th>
+            <th class="text-center">Borrower</th>
+            <th class="text-center">ISBN</th>
+            <th width="140" class="text-center">Actions</th>
+          </tr>
+        </thead>
+        <tbody id="booksTableBody">
+          {% if books %}
+            {% for book in books %}
+              <tr class="book-row" data-id="{{ book.id }}">
+                <td class="fw-500">{{ book.title or 'Untitled' }}</td>
+                <td>{{ book.author or 'Unknown' }}</td>
+                <td class="text-muted small">{{ (book.publisher or '')[:40] }}{% if (book.publisher or '')|length > 40 %}...{% endif %}</td>
+                <td class="text-center">
+                  <span class="badge bg-info">{{ book.reading_level or '-' }}</span>
+                </td>
+                <td class="text-center">{{ book.copies or 0 }}</td>
+                <td class="text-center">
+                  {% set has_isbn = (book.isbn13 or book.isbn) %}
+                  {% if book.available and has_isbn %}
+                    <span class="badge bg-success">Yes</span>
+                  {% else %}
+                    <span class="badge bg-danger">No</span>
+                  {% endif %}
+                </td>
+                <td class="text-center small">{{ book.borrower_name or '-' }}</td>
+                <td class="text-center small text-muted">{{ book.isbn13 or book.isbn or '-' }}</td>
+                <td class="text-center">
+                  <a href="{{ url_for('books_edit', book_id=book.id) }}" class="btn btn-outline-info btn-sm">Edit</a>
+                  {% if current_user and current_user.is_admin() %}
+                  <button type="button" class="btn btn-outline-danger btn-sm" onclick="submitDeleteBook({{ book.id }})">Del</button>
+                  {% endif %}
+                </td>
+              </tr>
+            {% endfor %}
+          {% else %}
+            <tr>
+              <td colspan="8" class="text-center text-muted py-4">No books found</td>
+            </tr>
+          {% endif %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<!-- Book Details Modal -->
+<div class="modal fade" id="bookDetailsModal" tabindex="-1">
+  <div class="modal-dialog modal-lg">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title">Book Details</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body" id="bookDetailsBody">
+        <!-- Populated by JS -->
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+  const csrfToken = document.querySelector('meta[name="csrf-token"]')?.getAttribute('content') || '';
+  const searchInput = document.getElementById('searchInput');
+  const levelFilter = document.getElementById('levelFilter');
+  const searchBtn = document.getElementById('searchBtn');
+  const booksTableBody = document.getElementById('booksTableBody');
+
+  window.submitDeleteBook = function(bookId) {
+    if (!confirm('Delete book?')) {
+      return;
+    }
+    const form = document.createElement('form');
+    form.method = 'POST';
+    form.action = `/books/delete/${bookId}`;
+    form.innerHTML = `<input type="hidden" name="csrf_token" value="${csrfToken}">`;
+    document.body.appendChild(form);
+    form.submit();
+  };
+  
+  // Search functionality
+  function performSearch() {
+    const query = searchInput.value.trim();
+    const level = levelFilter.value.trim();
+    
+    if (!query && !level) {
+      // Reset to all books
+      document.querySelectorAll('.book-row').forEach(row => {
+        row.style.display = '';
+      });
+      return;
+    }
+    
+    fetch(`/api/books/search?q=${encodeURIComponent(query)}&level=${encodeURIComponent(level)}`)
+      .then(response => response.json())
+      .then(data => {
+        booksTableBody.innerHTML = '';
+        
+        if (data.books && data.books.length > 0) {
+          data.books.forEach(book => {
+            const row = document.createElement('tr');
+            row.className = 'book-row';
+            row.dataset.id = book.id;
+            row.innerHTML = `
+              <td class="fw-500">${escapeHtml(book.title)}</td>
+              <td>${escapeHtml(book.author)}</td>
+              <td class="text-muted small">${escapeHtml((book.publisher || '').substring(0, 40))}</td>
+              <td class="text-center"><span class="badge bg-info">${escapeHtml(book.reading_level)}</span></td>
+              <td class="text-center">${book.copies}</td>
+              <td class="text-center">
+                <span class="badge ${(book.available && (book.isbn || book.isbn13)) ? 'bg-success' : 'bg-danger'}">
+                  ${(book.available && (book.isbn || book.isbn13)) ? 'Yes' : 'No'}
+                </span>
+              </td>
+              <td class="text-center small">${escapeHtml(book.borrower_name || '-')}</td>
+              <td class="text-center small text-muted">${escapeHtml(book.isbn13 || book.isbn || '-')}</td>
+              <td class="text-center">
+                <a href="/books/edit/${book.id}" class="btn btn-outline-info btn-sm">Edit</a>
+                {% if current_user and current_user.is_admin() %}
+                <button type="button" class="btn btn-outline-danger btn-sm" onclick="submitDeleteBook(${book.id})">Del</button>
+                {% endif %}
+              </td>
+            `;
+            booksTableBody.appendChild(row);
+          });
+          
+        } else {
+          const row = document.createElement('tr');
+          row.innerHTML = '<td colspan="8" class="text-center text-muted py-4">No books found</td>';
+          booksTableBody.appendChild(row);
+        }
+      })
+      .catch(error => {
+        console.error('Search error:', error);
+        alert('Search failed: ' + error);
+      });
+  }
+  
+  // Event listeners
+  searchBtn.addEventListener('click', performSearch);
+  searchInput.addEventListener('keypress', function(e) {
+    if (e.key === 'Enter') performSearch();
+  });
+  levelFilter.addEventListener('change', performSearch);
+  
+  // Utility
+  function escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text == null ? '' : text;
+    return div.innerHTML;
+  }
+
+});
+</script>
+{% endblock %}
+

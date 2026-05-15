@@ -1,0 +1,181 @@
+{% extends "base.html" %}
+
+{% block title %}{% if action == 'Edit' %}Edit{% else %}Create{% endif %} Instructor Profile{% endblock %}
+
+{% block content %}
+<div class="container mt-5">
+    <div class="row">
+        <div class="col-md-8 mx-auto">
+            <div class="card shadow-sm">
+                <div class="card-header brand-card-header">
+                    <h4 class="mb-0">
+                        <i class="bi bi-person-workspace"></i>
+                        {% if action == 'Edit' %}Edit{% else %}Create{% endif %} Instructor Profile
+                    </h4>
+                </div>
+
+                <div class="card-body">
+                    {% if setup_mode %}
+                    <div class="alert alert-info" role="alert">
+                        <i class="bi bi-info-circle"></i>
+                        First-time setup: add your instructor details and at least one day of center class hours to continue.
+                    </div>
+                    {% endif %}
+                    <form method="POST" action="{{ url_for('instructor_profile_edit') }}">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                        <input type="hidden" name="setup_mode" value="{{ '1' if setup_mode else '0' }}">
+                        <div class="mb-3">
+                            <label for="name" class="form-label">Instructor Name <span class="text-danger">*</span></label>
+                            <input 
+                                type="text" 
+                                class="form-control" 
+                                id="name" 
+                                name="name" 
+                                value="{{ profile.name if profile else '' }}"
+                                placeholder="Enter instructor name"
+                                required
+                            >
+                        </div>
+
+                        <div class="mb-3">
+                            <label for="email" class="form-label">Email</label>
+                            <input 
+                                type="email" 
+                                class="form-control" 
+                                id="email" 
+                                name="email" 
+                                value="{{ (profile.email if profile and profile.email else email_prefill) if email_prefill is defined else (profile.email if profile else '') }}"
+                                placeholder="Enter email address"
+                            >
+                        </div>
+
+                        <div class="mb-3">
+                            <label for="phone" class="form-label">Phone Number</label>
+                            <input 
+                                type="tel" 
+                                class="form-control" 
+                                id="phone" 
+                                name="phone" 
+                                value="{{ profile.phone if profile else '' }}"
+                                placeholder="Enter phone number"
+                            >
+                        </div>
+
+                        <div class="mb-3">
+                            <label for="center_location" class="form-label">Center Name</label>
+                            <input 
+                                type="text" 
+                                class="form-control" 
+                                id="center_location" 
+                                name="center_location" 
+                                value="{{ profile.center_location if profile else '' }}"
+                                placeholder="Enter center name (e.g., {{ branding_center_name if branding_center_name != 'Stdytime' else 'Your Center Name' }})"
+                            >
+                        </div>
+
+                        <div class="mb-3">
+                            <label for="center_address" class="form-label">Center Address</label>
+                            <input 
+                                type="text" 
+                                class="form-control" 
+                                id="center_address" 
+                                name="center_address" 
+                                value="{{ profile.center_address if profile else '' }}"
+                                placeholder="Enter center address"
+                            >
+                        </div>
+
+                        <div class="mb-3">
+                            <label for="center_time_zone" class="form-label">Center Time Zone</label>
+                            {% set selected_center_time_zone = profile.center_time_zone if profile else '' %}
+                            <select
+                                class="form-select"
+                                id="center_time_zone"
+                                name="center_time_zone"
+                            >
+                                <option value="">Select a time zone</option>
+                                {% for timezone_option in timezone_options %}
+                                <option
+                                    value="{{ timezone_option }}"
+                                    {% if selected_center_time_zone == timezone_option %}selected{% endif %}
+                                >
+                                    {{ timezone_option }}
+                                </option>
+                                {% endfor %}
+                                {% if selected_center_time_zone and selected_center_time_zone not in timezone_options %}
+                                <option value="{{ selected_center_time_zone }}" selected>
+                                    {{ selected_center_time_zone }} (Current value)
+                                </option>
+                                {% endif %}
+                            </select>
+                        </div>
+
+                        <hr class="my-4">
+
+                        <!-- Class Hours -->
+                        <h5 class="mb-3">Class Hours</h5>
+                        
+                        {% set days = [('Monday', 'monday'), ('Tuesday', 'tuesday'), ('Wednesday', 'wednesday'), ('Thursday', 'thursday'), ('Friday', 'friday'), ('Saturday', 'saturday'), ('Sunday', 'sunday')] %}
+                        
+                        {% for day, day_key in days %}
+                        <div class="row g-2 mb-2 align-items-center">
+                            <div class="col-md-2">
+                                <label class="form-label small mb-0">{{ day }}</label>
+                            </div>
+                            <div class="col-md-4">
+                                <div class="input-group input-group-sm">
+                                    <select class="form-select form-select-sm" name="{{ day_key }}_start_hour">
+                                        <option value="">--</option>
+                                        {% for h in range(1, 13) %}
+                                        {% set h24 = h + 12 if h != 12 else 12 %}
+                                        <option value="{{ '%02d'|format(h24) }}" {% if profile and profile[day_key + '_start'] and profile[day_key + '_start'][:2] == '%02d'|format(h24) %}selected{% endif %}>{{ h }}</option>
+                                        {% endfor %}
+                                    </select>
+                                    <span class="input-group-text">:</span>
+                                    <select class="form-select form-select-sm" name="{{ day_key }}_start_min">
+                                        <option value="">--</option>
+                                        <option value="00" {% if profile and profile[day_key + '_start'] and profile[day_key + '_start'][3:5] == '00' %}selected{% endif %}>00</option>
+                                        <option value="30" {% if profile and profile[day_key + '_start'] and profile[day_key + '_start'][3:5] == '30' %}selected{% endif %}>30</option>
+                                    </select>
+                                    <span class="input-group-text">PM</span>
+                                </div>
+                            </div>
+                            <div class="col-md-1 text-center">
+                                <span class="text-muted">to</span>
+                            </div>
+                            <div class="col-md-4">
+                                <div class="input-group input-group-sm">
+                                    <select class="form-select form-select-sm" name="{{ day_key }}_end_hour">
+                                        <option value="">--</option>
+                                        {% for h in range(1, 13) %}
+                                        {% set h24 = h + 12 if h != 12 else 12 %}
+                                        <option value="{{ '%02d'|format(h24) }}" {% if profile and profile[day_key + '_end'] and profile[day_key + '_end'][:2] == '%02d'|format(h24) %}selected{% endif %}>{{ h }}</option>
+                                        {% endfor %}
+                                    </select>
+                                    <span class="input-group-text">:</span>
+                                    <select class="form-select form-select-sm" name="{{ day_key }}_end_min">
+                                        <option value="">--</option>
+                                        <option value="00" {% if profile and profile[day_key + '_end'] and profile[day_key + '_end'][3:5] == '00' %}selected{% endif %}>00</option>
+                                        <option value="30" {% if profile and profile[day_key + '_end'] and profile[day_key + '_end'][3:5] == '30' %}selected{% endif %}>30</option>
+                                    </select>
+                                    <span class="input-group-text">PM</span>
+                                </div>
+                            </div>
+                        </div>
+                        {% endfor %}
+
+                        <div class="d-flex justify-content-between">
+                            <a href="{{ url_for('instructor_profile') }}" class="btn btn-secondary">
+                                <i class="bi bi-arrow-left"></i> Cancel
+                            </a>
+                            <button type="submit" class="btn btn-primary">
+                                <i class="bi bi-check-circle"></i> Save Profile
+                            </button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

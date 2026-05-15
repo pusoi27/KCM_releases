@@ -62,7 +62,6 @@ def register_setup_routes(app):
     @require_login
     def setup_storage():
         if request.method == 'POST':
-            db_path = (request.form.get('db_path') or '').strip()
             gdrive_sync_path = (request.form.get('gdrive_sync_path') or '').strip()
             sync_interval = (request.form.get('sync_interval_minutes') or '').strip()
 
@@ -72,7 +71,7 @@ def register_setup_routes(app):
                 sync_interval_value = None
 
             status = save_db_config_paths(
-                db_path=db_path,
+                db_path=None,
                 gdrive_sync_path=gdrive_sync_path,
                 sync_interval_minutes=sync_interval_value,
             )

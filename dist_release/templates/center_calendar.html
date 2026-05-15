@@ -1,0 +1,259 @@
+{% extends "base.html" %}
+{% block content %}
+<style>
+  .calendar-container {
+    padding: 20px;
+  }
+  .calendar-grid {
+    display: grid;
+    grid-template-columns: 100px repeat({{ schedule.active_days|length }}, 1fr);
+    gap: 1px;
+    background-color: #dee2e6;
+    border: 2px solid var(--brand-primary);
+  }
+  .calendar-header {
+    background-color: var(--brand-primary);
+    color: white;
+    padding: 12px 8px;
+    font-weight: 600;
+    text-align: center;
+    font-size: 0.95rem;
+  }
+  .time-slot {
+    background-color: #f8f9fa;
+    padding: 8px;
+    font-weight: 600;
+    font-size: 0.85rem;
+    text-align: center;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-right: 2px solid #adb5bd;
+  }
+  .calendar-cell {
+    background-color: white;
+    padding: 6px;
+    min-height: 60px;
+    font-size: 0.8rem;
+  }
+  .student-badge {
+    display: inline-block;
+    padding: 3px 6px;
+    margin: 2px;
+    border-radius: 4px;
+    font-size: 0.75rem;
+    white-space: nowrap;
+    cursor: pointer;
+  }
+  .student-badge.s1 {
+    background-color: #d1ecf1;
+    border: 1px solid #bee5eb;
+    color: #000;
+  }
+  .student-badge.s2 {
+    background-color: #fff3cd;
+    border: 1px solid #ffeaa7;
+    color: #000;
+  }
+  .student-badge.no-background {
+    background-color: transparent;
+    border: 1px solid #999;
+    color: #000;
+  }
+  .student-badge.has-el {
+    background-color: #fffacd;
+    border: 1px solid #f0e68c;
+    color: #000;
+  }
+  .student-badge.has-pi {
+    background-color: #add8e6;
+    border: 1px solid #87ceeb;
+    color: #000;
+  }
+  .student-badge:hover {
+    opacity: 0.8;
+    transform: scale(1.05);
+  }
+  .empty-slot {
+    color: #adb5bd;
+    font-style: italic;
+    text-align: center;
+  }
+  .legend {
+    margin-top: 20px;
+    padding: 15px;
+    background-color: #f8f9fa;
+    border-radius: 8px;
+  }
+  .legend-item {
+    display: inline-block;
+    margin-right: 20px;
+    margin-bottom: 10px;
+  }
+  .legend-badge {
+    display: inline-block;
+    padding: 4px 8px;
+    border-radius: 4px;
+    font-size: 0.8rem;
+    margin-right: 5px;
+  }
+  @media print {
+    @page {
+      size: letter landscape;
+      margin: 0.25in;
+    }
+    * {
+      margin: 0;
+      padding: 0;
+    }
+    body {
+      -webkit-print-color-adjust: exact;
+      print-color-adjust: exact;
+      margin: 0;
+      padding: 0;
+    }
+    html {
+      margin: 0;
+      padding: 0;
+    }
+    nav,
+    navbar,
+    .navbar,
+    .no-print,
+    .print-hide {
+      display: none !important;
+    }
+    .calendar-container {
+      padding: 0;
+      margin: 0;
+      width: 100%;
+      height: 100%;
+    }
+    .calendar-grid {
+      border: 1px solid #000;
+      width: 100%;
+      height: auto;
+      transform: none;
+      font-size: 0.7rem;
+    }
+    .calendar-header {
+      color: #000 !important;
+      background-color: #e9ecef !important;
+      padding: 6px 4px !important;
+      font-size: 0.7rem;
+    }
+    .time-slot {
+      font-size: 0.65rem;
+      padding: 4px !important;
+    }
+    .calendar-cell {
+      padding: 3px !important;
+      min-height: 40px;
+    }
+    .student-badge {
+      page-break-inside: avoid;
+      padding: 2px 4px;
+      font-size: 0.65rem;
+      margin: 1px;
+    }
+  }
+</style>
+
+<div class="calendar-container">
+  <div class="d-flex justify-content-between align-items-center mb-3 print-hide">
+    <h4 class="text-primary mb-0">
+      <i class="bi bi-calendar-week"></i> Center Calendar
+    </h4>
+    <div class="no-print">
+      <span class="badge bg-secondary">Total Students: {{ total_students }}</span>
+      <a href="{{ url_for('students_list') }}" class="btn btn-sm btn-outline-primary ms-2">
+        <i class="bi bi-people"></i> View All Students
+      </a>
+      <button type="button" class="btn btn-sm btn-outline-secondary ms-2" onclick="window.print()">
+        <i class="bi bi-printer"></i> Print / Save PDF
+      </button>
+    </div>
+  </div>
+
+  {% if not schedule or not schedule.time_slots %}
+    <div class="alert alert-info">
+      <i class="bi bi-info-circle"></i> No class schedule found. Please configure your class hours in the 
+      <a href="{{ url_for('instructor_profile') }}">Instructor Profile</a>.
+    </div>
+  {% else %}
+    <div class="calendar-grid">
+      <!-- Header Row -->
+      <div class="calendar-header">Time</div>
+      {% for day in schedule.active_days %}
+        <div class="calendar-header">{{ day }}</div>
+      {% endfor %}
+
+      <!-- Time Slots -->
+      {% for time_slot in schedule.time_slots %}
+        <div class="time-slot">{{ time_slot }}</div>
+        {% for day in schedule.active_days %}
+          <div class="calendar-cell">
+            {% if schedule.calendar[day] and schedule.calendar[day][time_slot] %}
+              {% for student in schedule.calendar[day][time_slot] %}
+                <a href="{{ url_for('students_edit', sid=student.id, from_calendar=1) }}" class="student-badge {{ student.subject|lower }}{% if not student.el and not student.pi %} no-background{% elif student.el %} has-el{% elif student.pi %} has-pi{% endif %}" title="{{ student.name }} - {{ student.subject }} - {{ student.email }}" style="text-decoration: none; color: inherit;">
+                  {{ student.name }}
+                  {% if student.el %}<span class="badge bg-warning text-dark" style="font-size:0.65rem;padding:1px 3px;">EL</span>{% endif %}
+                  {% if student.pi %}<span class="badge bg-info" style="font-size:0.65rem;padding:1px 3px;">PI</span>{% endif %}
+                  {% if student.v %}<span class="badge bg-success" style="font-size:0.65rem;padding:1px 3px;">V</span>{% endif %}
+                </a>
+              {% endfor %}
+            {% else %}
+              <span class="empty-slot">-</span>
+            {% endif %}
+          </div>
+        {% endfor %}
+      {% endfor %}
+    </div>
+
+    <!-- Legend -->
+    <div class="legend print-hide">
+      <h6 class="mb-3"><i class="bi bi-info-circle"></i> Legend</h6>
+      <div class="legend-item">
+        <span class="legend-badge s1">S1</span>
+        <span>One Subject</span>
+      </div>
+      <div class="legend-item">
+        <span class="legend-badge s2">S2</span>
+        <span>Two Subjects</span>
+      </div>
+      <div class="legend-item">
+        <span class="badge bg-warning text-dark">EL</span>
+        <span>Early Learner</span>
+      </div>
+      <div class="legend-item">
+        <span class="badge bg-info">PI</span>
+        <span>Primary Instruction</span>
+      </div>
+      <div class="legend-item">
+        <span class="badge bg-success">V</span>
+        <span>Virtual</span>
+      </div>
+    </div>
+
+    <!-- Virtual Students Section -->
+    {% if schedule.virtual_students %}
+      <div style="margin-top: 30px;" class="print-hide">
+        <h5 class="mb-3"><i class="bi bi-wifi"></i> Virtual Students</h5>
+        <div style="display: flex; flex-wrap: wrap; gap: 10px;">
+          {% for student in schedule.virtual_students %}
+            <a href="{{ url_for('students_edit', sid=student.id, from_calendar=1) }}" class="student-badge {{ student.subject|lower }}{% if not student.el and not student.pi %} no-background{% elif student.el %} has-el{% elif student.pi %} has-pi{% endif %}" title="{{ student.name }} - {{ student.subject }} - {{ student.email }}" style="text-decoration: none; color: inherit;">
+              {{ student.name }}
+              {% if student.el %}<span class="badge bg-warning text-dark" style="font-size:0.65rem;padding:1px 3px;">EL</span>{% endif %}
+              {% if student.pi %}<span class="badge bg-info" style="font-size:0.65rem;padding:1px 3px;">PI</span>{% endif %}
+              <span class="badge bg-success" style="font-size:0.65rem;padding:1px 3px;">V</span>
+            </a>
+          {% endfor %}
+        </div>
+      </div>
+    {% endif %}
+  {% endif %}
+</div>
+
+
+
+{% endblock %}

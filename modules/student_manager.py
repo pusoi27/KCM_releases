@@ -341,7 +341,7 @@ def add_student(name, subject, email, phone, book_loaned=0, paper_ws=0, el=0, pi
         c = conn.cursor()
         c.execute("""INSERT INTO students
             (name,subject,subjects_json,subject_minutes_json,total_study_minutes,email,phone,active,book_loaned,paper_ws,el,pi,v,day1,day2,day1_time,day2_time,schedule_json)
-            VALUES (?,?,?,?,?,?,?,1,?,?,?,?,?,?,?,?,?,?,?)""",
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             (
                 name,
                 primary_subject,
@@ -350,6 +350,7 @@ def add_student(name, subject, email, phone, book_loaned=0, paper_ws=0, el=0, pi
                 total_minutes,
                 email,
                 phone,
+                1,
                 int(bool(book_loaned)),
                 int(bool(paper_ws)),
                 int(bool(el)),

@@ -1,0 +1,557 @@
+{% extends "base.html" %}
+{% block content %}
+<link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css" rel="stylesheet">
+
+<div class="container mt-5">
+  <div class="row justify-content-center">
+    <div class="col-md-8">
+      <div class="card shadow-lg">
+        <div class="card-header bg-primary text-white">
+          <h5 class="mb-0"><i class="bi bi-upc-scan"></i> QR Code Scanner Input</h5>
+        </div>
+        <div class="card-body">
+          <!-- Instructions -->
+          <div class="alert alert-info mb-4">
+            <strong>Instructions:</strong> Focus on this field and scan a QR code using your barcode scanner.
+            The scanner will automatically process student check-in/out.
+          </div>
+
+          <!-- Scanner Input Field (focused). Kept visible for reliability. -->
+          <input 
+            type="text" 
+            id="scannerInput" 
+            class="form-control form-control-lg" 
+            placeholder="Scanning... (no Enter needed)" 
+            autofocus
+            style="font-size:1.2em; padding:15px; text-align:center;"
+          >
+
+          <!-- Debug: Show raw scanned data -->
+          <div id="debugRaw" class="mt-2 text-muted small" style="display:none; padding:8px; background:#f5f5f5; border:1px solid #ddd; border-radius:4px;">
+            Raw: <code id="debugRawText"></code>
+          </div>
+
+          <!-- Status Display -->
+          <div class="mt-4">
+            <div id="statusContainer" style="display:none;">
+              <div id="statusAlert" class="alert mb-0"></div>
+            </div>
+          </div>
+
+          <!-- Last Scan Result -->
+          <div class="mt-4 p-3 bg-light border rounded">
+            <h6 class="text-muted">Last Scan:</h6>
+            <div id="lastScanInfo" class="text-center" style="min-height:80px; display:flex; align-items:center; justify-content:center;">
+              <small class="text-muted">Waiting for scan...</small>
+            </div>
+            <!-- Progress Bar (hidden by default) -->
+            <div id="progressContainer" style="display:none; margin-top:15px;">
+              <div class="progress" style="height:25px;">
+                <div id="progressBar" class="progress-bar progress-bar-striped progress-bar-animated bg-success" role="progressbar" style="width:100%; font-size:0.9em; line-height:25px;">Processing...</div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Recent Scans Log -->
+          <div class="mt-4">
+            <h6 class="text-muted">Recent Scans:</h6>
+            <ul id="scanLog" class="list-group" style="max-height:200px; overflow-y:auto;">
+              <li class="list-group-item text-muted text-center small">No scans yet</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Debug Panel -->
+<div id="scannerDebugPanel" style="position:fixed; bottom:12px; right:12px; width:320px; max-height:240px; z-index:2100; background:#fff; border:1px solid #ced4da; box-shadow:0 4px 12px rgba(0,0,0,0.15); border-radius:6px;">
+  <div style="display:flex; align-items:center; justify-content:space-between; padding:6px 8px; background:var(--brand-primary); color:#fff; border-radius:6px 6px 0 0;">
+    <strong style="font-size:0.95em;">Scanner Debug Log</strong>
+    <div>
+      <button id="scannerDebugCopy" class="btn btn-sm btn-light py-0 px-1">Copy</button>
+      <button id="scannerDebugClear" class="btn btn-sm btn-outline-light py-0 px-1">Clear</button>
+    </div>
+  </div>
+  <textarea id="scannerDebugArea" readonly tabindex="-1" style="width:100%; height:180px; font-size:12px; font-family:monospace; border:0; padding:6px; resize:none; outline:none; user-select:text;"></textarea>
+</div>
+
+<script>
+// Debug logging utility
+function scannerLogDebug(msg){
+  const ta = document.getElementById('scannerDebugArea');
+  const ts = new Date().toLocaleTimeString();
+  ta.value += `[${ts}] ${msg}\n`;
+  ta.scrollTop = ta.scrollHeight;
+  console.debug('[scanner]', msg);
+}
+
+// Debug panel buttons
+document.getElementById('scannerDebugCopy').addEventListener('click', () => {
+  const ta = document.getElementById('scannerDebugArea');
+  ta.select();
+  document.execCommand('copy');
+});
+document.getElementById('scannerDebugClear').addEventListener('click', () => {
+  document.getElementById('scannerDebugArea').value = '';
+});
+
+scannerLogDebug('Scanner page loaded');
+
+const scannerInput = document.getElementById('scannerInput');
+const statusContainer = document.getElementById('statusContainer');
+const statusAlert = document.getElementById('statusAlert');
+const lastScanInfo = document.getElementById('lastScanInfo');
+const progressContainer = document.getElementById('progressContainer');
+const progressBar = document.getElementById('progressBar');
+const scanLog = document.getElementById('scanLog');
+
+const recentScans = [];
+let scanBuffer = '';
+let finalizeTimer = null;
+let displayTimer = null;
+let resetTimer = null;
+let isProcessing = false; // Guard to prevent duplicate finalizeScan calls
+const isActiveClassWindow = false; // Scanner page is for testing only, not actual check-in
+
+const IDLE_MS = 180; // idle gap that indicates scan end
+
+function pageIsReadyForScan(){
+  return document.visibilityState === 'visible' && document.hasFocus();
+}
+
+function clearAllBuffers(){
+  scanBuffer = '';
+  scannerInput.value = '';
+  if (finalizeTimer) clearTimeout(finalizeTimer);
+  if (displayTimer) clearTimeout(displayTimer);
+  if (resetTimer) clearTimeout(resetTimer);
+}
+
+function resetUI(){
+  clearAllBuffers();
+  statusContainer.style.display = 'none';
+  progressContainer.style.display = 'none';
+  lastScanInfo.innerHTML = '<small class="text-muted">Waiting for scan...</small>';
+  document.getElementById('debugRaw').style.display = 'none';
+  if (scanLog.children.length === 0 || scanLog.children[0].classList.contains('text-muted')){
+    const li = document.createElement('li');
+    li.className = 'list-group-item text-muted text-center small';
+    li.textContent = 'No scans yet';
+    scanLog.innerHTML = '';
+    scanLog.appendChild(li);
+  }
+  // Re-focus input and ensure it's ready
+  scannerInput.focus();
+  scannerInput.value = '';
+}
+
+function scheduleFinalize(){
+  if (!isActiveClassWindow || !pageIsReadyForScan()) return;
+  if (finalizeTimer) clearTimeout(finalizeTimer);
+  finalizeTimer = setTimeout(() => {
+    // Only finalize if buffer is not empty
+    if (scanBuffer.length > 2){
+      finalizeScan();
+    }
+  }, IDLE_MS);
+}
+
+function startProgressCountdown(seconds){
+  progressContainer.style.display = 'block';
+  let remaining = seconds;
+  progressBar.style.width = '100%';
+  progressBar.textContent = `${remaining}s`;
+  
+  const interval = setInterval(() => {
+    remaining--;
+    const pct = (remaining / seconds) * 100;
+    progressBar.style.width = pct + '%';
+    progressBar.textContent = `${remaining}s`;
+    if (remaining <= 0){
+      clearInterval(interval);
+      progressContainer.style.display = 'none';
+    }
+  }, 1000);
+  
+  if (resetTimer) clearTimeout(resetTimer);
+  resetTimer = setTimeout(() => resetUI(), seconds * 1000);
+}
+
+function deduplicateCharacters(str){
+  // Scanner sends each character 4x for error correction: IIIIDDDD -> ID
+  // Apply pattern-based deduplication across the entire string
+  if(!str || str.length < 2) return str;
+  
+  // Try different repeat factors (4x, 3x, 2x) and pick the best match
+  for(let n of [4, 3, 2]){
+    if(str.length % n !== 0) continue;
+    let candidate = '';
+    let matches = true;
+    for(let i=0; i<str.length; i+=n){
+      const chunk = str.substring(i, i+n);
+      const firstChar = chunk[0];
+      // Check if all chars in chunk are identical
+      if(chunk.split('').every(c => c === firstChar)){
+        candidate += firstChar;
+      } else {
+        matches = false;
+        break;
+      }
+    }
+    if(matches && candidate.length > 0){
+      console.log(`CHAR DEDUP: "${str.substring(0,40)}..." -> "${candidate.substring(0,20)}..." (${n}x repetition)`);
+      return candidate;
+    }
+  }
+  return str;
+}
+
+function normalizePayload(str){
+  return str
+    .replace(/\r\n/g, "\n")
+    .replace(/\r/g, "\n")
+    .replace(/[\u202F\u2009\u00A0]/g, ' ')
+    .replace(/[^\S\n]+/g, ' ')
+    .trim();
+}
+
+function deduplicateRepeatingDigits(numStr){
+  if(!numStr || numStr.length < 2) return numStr;
+  const uniqCount = new Set(numStr.split('')).size;
+
+  // Case A: all digits identical
+  if(uniqCount === 1){
+    if(numStr.length <= 2) return numStr;     // e.g., 44 stays 44
+    return numStr.slice(0, 2);                // e.g., 333333 -> 33
+  }
+
+  // Case B: digit-repeat-based (e.g., 5577 -> 57)
+  if(numStr.length % 2 === 0){
+    for(let n=2; n<=numStr.length/2; n++){
+      if(numStr.length % n === 0){
+        let result = '';
+        for(let i=0;i<numStr.length;i+=n) result += numStr[i];
+        let reconstructed = '';
+        for(const d of result){ for(let j=0;j<n;j++) reconstructed += d; }
+        if(reconstructed === numStr){
+          console.log(`DEDUP: "${numStr}" -> "${result}" (each digit repeated ${n}x)`);
+          return result;
+        }
+      }
+    }
+  }
+
+  // Case C: pattern-based, avoid collapsing to single digit
+  for(let patternLen=2; patternLen<=Math.floor(numStr.length/2); patternLen++){
+    const pattern = numStr.substring(0, patternLen);
+    let repeated = '';
+    for(let i=0;i<Math.ceil(numStr.length/patternLen);i++) repeated += pattern;
+    if(repeated.substring(0, numStr.length) === numStr){
+      console.log(`DEDUP: "${numStr}" -> pattern "${pattern}"`);
+      return pattern;
+    }
+  }
+
+  return numStr;
+}
+
+async function finalizeScan(){
+  try {
+    // Guard against duplicate processing
+    if (isProcessing || !isActiveClassWindow || !pageIsReadyForScan()) {
+      scannerLogDebug('finalizeScan already processing, skipping duplicate call');
+      return;
+    }
+    isProcessing = true;
+    
+    scannerLogDebug('finalizeScan called');
+    let raw = scanBuffer;
+    // Deduplicate character-level repetition first (scanner sends 4x chars)
+    raw = deduplicateCharacters(raw);
+    const data = normalizePayload(raw);
+    
+    // Only process if buffer has meaningful content (at least 3 chars for "ID:X")
+    if (!data || data.length < 3){
+      scannerLogDebug(`SKIP finalize: buffer too short or empty (${data.length} chars)`);
+      return;
+    }
+    
+    scannerLogDebug(`RAW=${JSON.stringify(raw)}`);
+  
+  // Debug: show raw data
+  if (raw){
+    document.getElementById('debugRaw').style.display = 'block';
+    document.getElementById('debugRawText').textContent = JSON.stringify(raw);
+  }
+  
+  if (!data){
+    scannerLogDebug('Empty payload');
+    showStatus('Empty scan', 'warning');
+    scheduleReset();
+    return;
+  }
+
+  // Simple direct extraction for "ID:43" format (most common)
+  let type = null;
+  let id = null;
+  
+  // Try HID format first: "ID.{n} Name.{name} {initial}."
+  // This is the format from DS9208 in HID mode with separators between fields
+  const hidMatch = raw.match(/ID\.\s*(\d+)/i);
+  if (hidMatch){
+    console.log('HID MATCH:', hidMatch);
+    type = 'ID';
+    id = parseInt(hidMatch[1], 10);
+    scannerLogDebug(`HID match -> type=${type} id=${id} (from "ID.${hidMatch[1]}")`);
+  }
+  
+  // Try direct match: ID:43, ASST:3, BOOK:12, etc.
+  if (!type){
+    const directMatch = raw.match(/^(ID|ASST|ASSISTANT|BOOK)\s*:?\s*(\d+)$/i);
+    if (directMatch){
+      console.log('DIRECT MATCH:', directMatch);
+      type = (directMatch[1].toUpperCase() === 'ASSISTANT') ? 'ASST' : directMatch[1].toUpperCase();
+      id = parseInt(directMatch[2], 10);
+      scannerLogDebug(`DIRECT match -> type=${type} id=${id}`);
+    }
+  }
+  
+  // Try flexible match for malformed input like "IID0:+333333"
+  if (!type){
+    const flexMatch = raw.match(/(ID|ASST|ASSISTANT|BOOK)[\D]*[:+;=]*(\d+)/i);
+    if (flexMatch){
+      console.log('FLEX MATCH:', flexMatch);
+      type = (flexMatch[1].toUpperCase() === 'ASSISTANT') ? 'ASST' : flexMatch[1].toUpperCase();
+      let idStr = flexMatch[2];
+      idStr = deduplicateRepeatingDigits(idStr);
+      id = parseInt(idStr, 10);
+      scannerLogDebug(`FLEX match -> type=${type} id=${id} (from ${flexMatch[2]})`);
+    }
+  }
+  
+  // Fallback: parse line-by-line with flexible separators
+  if (!type){
+    const fields = {};
+    data.split('\n').map(l=>l.trim()).filter(Boolean).forEach(line => {
+      const m = line.match(/^([^:;=]+)[:;=](.*)$/);
+      if (m){
+        const k = m[1].trim().toUpperCase();
+        const v = m[2].trim();
+        fields[k] = v;
+      }
+    });
+    console.log('FIELDS:', fields);
+
+    if (fields.ID){ type = 'ID'; id = parseInt(fields.ID, 10); }
+    else if (fields.ASST || fields.ASSISTANT){ type = 'ASST'; id = parseInt((fields.ASST||fields.ASSISTANT), 10); }
+    else if (fields.BOOK){ type = 'BOOK'; id = parseInt(fields.BOOK, 10); }
+  }
+
+  // Final fallback: search anywhere in payload
+  if (!type){
+    const m2 = raw.match(/(ID|ASST|ASSISTANT|BOOK)\s*[:;=]?\s*(\d+)/i);
+    if (m2){
+      console.log('SEARCH MATCH:', m2);
+      type = (m2[1].toUpperCase()==='ASSISTANT')?'ASST':m2[1].toUpperCase();
+      id = parseInt(m2[2], 10);
+      scannerLogDebug(`SEARCH match -> type=${type} id=${id}`);
+    }
+  }
+
+  if (!type || !Number.isFinite(id)){
+    // Last attempt: extract the first number that appears after ID/ASST/BOOK keyword
+    const lastAttempt = raw.match(/(ID|ASST|ASSISTANT|BOOK)[^\d]*(\d+)/i);
+    if (lastAttempt){
+      console.log('LAST ATTEMPT:', lastAttempt);
+      type = (lastAttempt[1].toUpperCase() === 'ASSISTANT') ? 'ASST' : lastAttempt[1].toUpperCase();
+      let idStr = lastAttempt[2];
+      idStr = deduplicateRepeatingDigits(idStr);
+      id = parseInt(idStr, 10);
+      scannerLogDebug(`LAST ATTEMPT -> type=${type} id=${id}`);
+    }
+  }
+
+  console.log('FINAL TYPE:', type, 'ID:', id);
+
+  if (!type || !Number.isFinite(id)){
+    scannerLogDebug(`UNRECOGNIZED id=${id} type=${type}`);
+    showStatus('Unrecognized QR', 'warning');
+    scheduleReset();
+    return;
+  }
+
+  // Get name/title
+  const fields = {};
+  data.split('\n').map(l=>l.trim()).filter(Boolean).forEach(line => {
+    const m = line.match(/^([^:;=]+)[:;=](.*)$/);
+    if (m){
+      const k = m[1].trim().toUpperCase();
+      const v = m[2].trim();
+      fields[k] = v;
+    }
+  });
+  
+  const nameMatch = fields.NAME || null;
+  const titleMatch = fields.TITLE || null;
+  let displayName = nameMatch ? nameMatch : null;
+  
+  if (!displayName){
+    try{
+      if (type === 'ID'){
+        const res = await fetch('/api/students/list', { cache:'no-store', headers:{'Cache-Control':'no-store'} });
+        const list = await res.json();
+        const s = list.find(x => x.id === id);
+        displayName = s ? s.name : `Student ${id}`;
+      } else if (type === 'ASST'){
+        const res = await fetch('/api/assistants/list', { cache:'no-store', headers:{'Cache-Control':'no-store'} });
+        const list = await res.json();
+        const a = list.find(x => x.id === id);
+        displayName = a ? a.name : `Staff ${id}`;
+      } else if (type === 'BOOK'){
+        displayName = titleMatch ? titleMatch : `Book ${id}`;
+      }
+    }catch(err){
+      console.error('fetch error:', err);
+      displayName = displayName || (type === 'BOOK' ? `Book ${id}` : (type === 'ASST' ? `Staff ${id}` : `Student ${id}`));
+    }
+  }
+
+  // Display ID and name for 3 seconds with progress bar
+  // For students: toggle session (start/checkout)
+  if (type === 'ID'){
+    try {
+      const toggleRes = await fetch('/api/sessions/toggle', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ student_id: id })
+      });
+      const toggleData = await toggleRes.json();
+      if (toggleRes.ok && toggleData.action){
+        const action = toggleData.action === 'started' ? '✓ Started' : '✓ Checked Out';
+        scannerLogDebug(`TOGGLE OK id=${id} action=${action} name=${toggleData.name}`);
+        showScanResult(id, displayName, action);
+      } else {
+        scannerLogDebug(`TOGGLE FAIL id=${id} status=${toggleRes.status} body=${JSON.stringify(toggleData)}`);
+        showScanResult(id, displayName, '');
+      }
+    } catch (err) {
+      console.error('toggle error:', err);
+      scannerLogDebug(`ERROR id=${id} msg=${err.message}`);
+      showScanResult(id, displayName, '');
+    }
+  } else {
+    scannerLogDebug(`Non-student scan type=${type} id=${id}`);
+    showScanResult(id, displayName, '');
+  }
+  addScanToLog(displayName);
+  startProgressCountdown(3);
+  
+  // Clear buffer immediately after finalize to prevent duplicate processing
+  scanBuffer = '';
+  isProcessing = false; // Mark as done processing
+  scannerLogDebug('finalizeScan complete - buffer cleared');
+  
+  } catch(err) {
+    scannerLogDebug(`finalizeScan ERROR: ${err.message} | stack: ${err.stack}`);
+    console.error('finalizeScan error:', err);
+    scanBuffer = '';
+    isProcessing = false; // Ensure flag is reset on error
+  }
+}
+
+function showScanResult(id, name, action){
+  let actionHTML = '';
+  if (action) {
+    actionHTML = `<div style="font-size:1em; color:#28a745; margin-top:8px; font-weight:600;">${action}</div>`;
+  }
+  lastScanInfo.innerHTML = `
+    <div>
+      <div style="font-size:1.1em; color:#666;">ID: <strong style="color:var(--brand-primary);">${id}</strong></div>
+      <div class="fw-bold" style="font-size:1.3em; margin-top:8px;">${name}</div>
+      ${actionHTML}
+      <small class="text-muted">Scanned at ${new Date().toLocaleTimeString()}</small>
+    </div>
+  `;
+}
+
+function showStatus(message, type) {
+  statusAlert.className = `alert alert-${type} mb-0`;
+  statusAlert.textContent = message;
+  statusContainer.style.display = 'block';
+}
+
+function addScanToLog(name) {
+  const now = new Date();
+  const time = now.toLocaleTimeString();
+  
+  if (scanLog.children.length === 1 && scanLog.children[0].classList.contains('text-muted')){
+    scanLog.innerHTML = '';
+  }
+  
+  const li = document.createElement('li');
+  li.className = 'list-group-item';
+  li.innerHTML = `
+    <div class="d-flex justify-content-between align-items-center">
+      <span><strong>${name}</strong></span>
+      <span class="badge bg-info text-dark">scanned</span>
+    </div>
+    <small class="text-muted">${time}</small>
+  `;
+  scanLog.insertBefore(li, scanLog.firstChild);
+  
+  while (scanLog.children.length > 10) {
+    scanLog.removeChild(scanLog.lastChild);
+  }
+  
+  recentScans.unshift({ name, time });
+  if (recentScans.length > 10) recentScans.pop();
+}
+
+// Keyboard handler: capture keystrokes, no Enter needed
+function onKeyDown(e){
+  try {
+    if (!isActiveClassWindow || !pageIsReadyForScan()) return;
+    const k = e.key;
+    scannerLogDebug(`KEY '${k}' bufLen=${scanBuffer.length}`);
+    
+    if (document.activeElement !== scannerInput) scannerInput.focus();
+    
+    // Block disruptive browser shortcuts commonly sent by some scanners as terminators
+    if (e.ctrlKey) {
+      const kk = (e.key || '').toLowerCase();
+      if (["j","p","o","s","w"].includes(kk)) {
+        e.preventDefault();
+        e.stopPropagation();
+        scannerLogDebug(`Blocked Ctrl+${kk.toUpperCase()}`);
+        return;
+      }
+    }
+    
+    if (k === 'Enter'){ 
+      e.preventDefault(); 
+      scannerLogDebug('ENTER pressed - finalizing');
+      finalizeScan(); 
+      return; 
+    }
+    
+    if (k.length === 1){
+      scanBuffer += k;
+      scheduleFinalize();
+    }
+  } catch(err) {
+    scannerLogDebug(`onKeyDown ERROR: ${err.message}`);
+    console.error('onKeyDown error:', err);
+  }
+}
+
+// Initialize
+clearAllBuffers();
+resetUI();
+// Use capture phase to intercept keystrokes even when input has focus
+document.addEventListener('keydown', onKeyDown, {capture: true});
+scannerLogDebug('Keydown listener attached (capture=true)');
+scannerInput.focus();
+</script>
+{% endblock %}

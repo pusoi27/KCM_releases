@@ -1,0 +1,131 @@
+{% extends "base.html" %}
+
+{% block topbar %}
+<link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css" rel="stylesheet">
+<link href="{{ url_for('static', filename='css/style.css') }}" rel="stylesheet">
+
+<!-- Dashboard Top Bar -->
+<header class="dash-topbar d-flex justify-content-between align-items-center">
+  <div class="dash-brand-left-wrap d-flex align-items-center">
+    <a class="app-home-btn" href="{{ url_for(subscription_access.default_home_endpoint) }}" title="Dashboard Home" aria-label="Dashboard Home">
+      <i class="bi bi-house-fill"></i>
+    </a>
+    <a class="dash-brand" href="{{ url_for(subscription_access.default_home_endpoint) }}">
+      <img src="{{ url_for('static', filename='img/logo.png') }}" alt="Stdytime" height="38" style="border-radius:50%; object-fit:cover; flex-shrink:0;" onerror="this.style.display='none'">
+      <span class="dash-brand-name">StdyTime</span>
+      <span class="dash-version">v{{ app_version }}</span>
+    </a>
+  </div>
+  {% if branding_center_name and branding_center_name != 'Stdytime' %}
+  <span class="dash-center-name dash-center-name-floating">{{ branding_center_name }}</span>
+  {% endif %}
+
+  <div class="dash-topbar-right d-flex align-items-center ms-auto">
+    {% if ls_nav_badge and ls_nav_badge.visible %}
+    <span
+      class="badge rounded-pill text-bg-{{ ls_nav_badge.tone }}"
+      title="{{ ls_nav_badge.tooltip }}"
+      style="margin-right:.5rem;"
+    >
+      {{ ls_nav_badge.label }} · {{ ls_nav_badge.age_text }} · {{ ls_nav_badge.cache_remaining_text }} · {{ 'grace' if ls_nav_badge.grace_mode else 'live' }}
+    </span>
+    {% endif %}
+    {% if license_status and license_status.activation_limit %}
+    <span
+      class="badge rounded-pill bg-info"
+      title="Activation Limit: {{ license_status.activation_usage }}/{{ license_status.activation_limit }} machines active"
+      style="margin-right:.5rem;"
+    >
+      <i class="bi bi-pc-display"></i> {{ license_status.activation_usage }}/{{ license_status.activation_limit }}
+    </span>
+    {% endif %}
+    <button class="dash-icon-btn" data-bs-toggle="offcanvas" data-bs-target="#dashNav" title="Menu">
+      <i class="bi bi-list" style="font-size:1.6rem; line-height:1;"></i>
+    </button>
+  </div>
+</header>
+
+<!-- Offcanvas full navigation -->
+<div class="offcanvas offcanvas-end" tabindex="-1" id="dashNav" aria-labelledby="dashNavLabel">
+  <div class="offcanvas-header" style="background:var(--brand-primary); color:white;">
+    <h5 class="offcanvas-title" id="dashNavLabel"><i class="bi bi-clock-history me-1"></i> StdyTime Menu</h5>
+    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="offcanvas"></button>
+  </div>
+  <div class="offcanvas-body p-0">
+    <ul class="list-group list-group-flush">
+      <li class="list-group-item offcanvas-section-header">Students</li>
+      <li class="list-group-item"><a href="{{ url_for('students_add') }}" class="offcanvas-link"><i class="bi bi-person-plus me-2"></i>Add Student</a></li>
+      <li class="list-group-item"><a href="{{ url_for('students_list') }}" class="offcanvas-link"><i class="bi bi-people me-2"></i>View / Edit / Delete</a></li>
+      {% if subscription_access.can_access_books %}
+      <li class="list-group-item offcanvas-section-header">Books/Devices</li>
+      <li class="list-group-item"><a href="{{ url_for('books_add') }}" class="offcanvas-link"><i class="bi bi-plus-square me-2"></i>Add Book</a></li>
+      <li class="list-group-item"><a href="{{ url_for('books_list') }}" class="offcanvas-link"><i class="bi bi-journal-bookmark me-2"></i>Books View / Edit / Delete</a></li>
+      <li class="list-group-item"><a href="{{ url_for('books_loan_page') }}" class="offcanvas-link"><i class="bi bi-arrow-left-right me-2"></i>Book Loan</a></li>
+      {% endif %}
+      {% if subscription_access.can_access_instructor_reports %}
+      <li class="list-group-item offcanvas-section-header">Reports</li>
+      <li class="list-group-item"><a href="{{ url_for('reports_assistants') }}" class="offcanvas-link"><i class="bi bi-clock-history me-2"></i>Payroll Staff Hours</a></li>
+      <li class="list-group-item"><a href="{{ url_for('class_attendance_page') }}" class="offcanvas-link"><i class="bi bi-calendar-check me-2"></i>Class Attendance</a></li>
+      <li class="list-group-item"><a href="{{ url_for('student_attendance_page') }}" class="offcanvas-link"><i class="bi bi-person-check me-2"></i>Student Attendance</a></li>
+      {% endif %}
+      {% if subscription_access.can_access_instructor_profile %}
+      <li class="list-group-item offcanvas-section-header">Utilities</li>
+      <li class="list-group-item"><a href="{{ url_for('instructor_profile') }}" class="offcanvas-link"><i class="bi bi-building me-2"></i>Center Profile</a></li>
+      <li class="list-group-item"><a href="{{ url_for('center_calendar') }}" class="offcanvas-link"><i class="bi bi-calendar-week me-2"></i>Students Calendar</a></li>
+      {% if subscription_access.can_access_assistants %}
+      <li class="list-group-item"><a href="{{ url_for('assistants_list') }}" class="offcanvas-link"><i class="bi bi-person-badge me-2"></i>Manage Staff</a></li>
+      <li class="list-group-item"><a href="{{ url_for('schedule_assistants') }}" class="offcanvas-link"><i class="bi bi-calendar3 me-2"></i>Staff Calendar</a></li>
+      {% endif %}
+      {% if subscription_access.can_access_instructor_settings %}
+      <li class="list-group-item"><a href="{{ url_for('qr_scanner') }}" class="offcanvas-link"><i class="bi bi-qr-code-scan me-2"></i>Scanner</a></li>
+      {% endif %}
+      {% endif %}
+      <li class="list-group-item offcanvas-section-header">License</li>
+      <li class="list-group-item"><a href="{{ url_for('license_page') }}" class="offcanvas-link"><i class="bi bi-key me-2"></i>Manage License</a></li>
+      <li class="list-group-item"><span class="text-muted small">Expires {{ license_status.expires_at or 'Not set' }}</span></li>
+    </ul>
+  </div>
+</div>
+{% endblock %}
+
+{% block content %}
+<div class="dash-layout">
+
+  <!-- Left: icon sidebar menu bar -->
+  <nav class="dash-sidebar">
+    <a href="{{ url_for('students_list') }}" class="dash-sidebar-item" title="Students">
+      <i class="bi bi-people-fill"></i>
+    </a>
+    {% if subscription_access.can_access_books %}
+    <a href="{{ url_for('books_list') }}" class="dash-sidebar-item" title="Books/Devices">
+      <i class="bi bi-journal-bookmark-fill"></i>
+    </a>
+    {% endif %}
+    {% if subscription_access.can_access_instructor_reports %}
+    <a href="{{ url_for('reports_assistants') }}" class="dash-sidebar-item" title="Reports">
+      <i class="bi bi-bar-chart-fill"></i>
+    </a>
+    {% endif %}
+    {% if subscription_access.can_access_instructor_profile %}
+    <a href="{{ url_for('center_calendar') }}" class="dash-sidebar-item" title="Utilities">
+      <i class="bi bi-tools"></i>
+    </a>
+    {% endif %}
+    <div class="dash-sidebar-spacer"></div>
+    {% if current_user %}
+    <span class="dash-sidebar-item dash-sidebar-user" title="{{ user_session.get('email') or current_user.email }}">
+      <i class="bi bi-person-circle"></i>
+    </span>
+    {% endif %}
+  </nav>
+
+  <!-- Student Roster -->
+  {% include "dashboard/_column1_students.html" %}
+
+  <!-- Active Students in Class -->
+  {% include "dashboard/_column2_active.html" %}
+
+</div>
+
+{% include "dashboard/_scripts.html" %}
+{% endblock %}

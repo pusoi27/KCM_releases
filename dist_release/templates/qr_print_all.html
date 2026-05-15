@@ -1,0 +1,83 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="container mt-4">
+  <h4 class="mb-4">Print QR Code</h4>
+
+  <!-- Students Section -->
+  <div class="card mb-3">
+    <div class="card-body">
+      <label class="form-label fw-semibold">Select Student:</label>
+      <select id="studentSelect" class="form-select mb-3">
+        <option value="">-- Choose a student --</option>
+        {% for s in students %}
+          <option value="{{ s[0] }}">{{ s[1] }}</option>
+        {% endfor %}
+      </select>
+      <button type="button" class="btn btn-primary" onclick="printStudentQR()">Print QR Code</button>
+      <button type="button" class="btn btn-warning" onclick="printAllStudentsQR()">Print All Students</button>
+    </div>
+  </div>
+
+  <!-- Staff Section -->
+  <div class="card mb-3">
+    <div class="card-body">
+      <label class="form-label fw-semibold">Select a staff member:</label>
+      <select id="assistantSelect" class="form-select mb-3">
+        <option value="">-- Choose</option>
+        {% for a in assistants %}
+          <option value="{{ a[0] }}">{{ a[1] }}</option>
+        {% endfor %}
+      </select>
+      <button type="button" class="btn btn-primary" onclick="printAssistantQR()">Print QR Code</button>
+      <button type="button" class="btn btn-warning" onclick="printAllAssistantsQR()">Print All Staff</button>
+    </div>
+  </div>
+
+  <!-- Books Section -->
+  <div class="card mb-3">
+    <div class="card-body">
+      <label class="form-label fw-semibold">Select a book:</label>
+      <select id="bookSelect" class="form-select mb-3">
+        <option value="">-- Choose</option>
+        {% for b in books %}
+          <option value="{{ b[0] }}">{{ b[1] }}</option>
+        {% endfor %}
+      </select>
+      <button type="button" class="btn btn-primary" onclick="printBookISBN()">Print ISBN</button>
+      <button type="button" class="btn btn-warning" onclick="printAllBooksISBN()">Print All Books</button>
+    </div>
+  </div>
+</div>
+
+<script>
+function printStudentQR() {
+  const sid = document.getElementById('studentSelect').value;
+  if (!sid) { alert('Please select a student'); return; }
+  window.open(`/qr/pdf/individual/${sid}`, '_blank');
+}
+
+function printAllStudentsQR() {
+  window.open('/qr/pdf/all', '_blank');
+}
+
+function printAssistantQR() {
+  const aid = document.getElementById('assistantSelect').value;
+  if (!aid) { alert('Please select a staff member'); return; }
+  window.open(`/qr/assistants/pdf/individual/${aid}`, '_blank');
+}
+
+function printAllAssistantsQR() {
+  window.open('/qr/assistants/pdf', '_blank');
+}
+
+function printBookISBN() {
+  const bid = document.getElementById('bookSelect').value;
+  if (!bid) { alert('Please select a book'); return; }
+  window.open(`/isbn/pdf/individual/${bid}`, '_blank');
+}
+
+function printAllBooksISBN() {
+  window.open('/isbn/pdf/all', '_blank');
+}
+</script>
+{% endblock %}

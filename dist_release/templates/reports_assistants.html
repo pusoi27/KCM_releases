@@ -1,0 +1,124 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="container py-3">
+  <h4>Payroll Staff Hours Report</h4>
+  
+  <form method="get" action="{{ url_for('reports_assistants') }}" class="mb-3" id="reportForm">
+    <div class="row g-3 align-items-end">
+      <div class="col-md-3">
+        <label for="start" class="form-label">Start Date</label>
+        <input type="date" id="start" name="start" class="form-control" value="{{ start }}">
+      </div>
+      <div class="col-md-3">
+        <label for="end" class="form-label">End Date</label>
+        <input type="date" id="end" name="end" class="form-control" value="{{ end }}">
+      </div>
+      <div class="col-md-auto">
+        <button type="submit" class="btn btn-primary">Update Report</button>
+      </div>
+      <div class="col-md-auto ms-auto">
+        <button type="button" class="btn btn-success" onclick="exportCSV()" {% if not show_data or not staff_hours %}disabled{% endif %}>
+          <i class="bi bi-file-earmark-spreadsheet"></i> Export to CSV
+        </button>
+        <button type="button" class="btn btn-outline-secondary" onclick="printPDF()" {% if not show_data or not staff_hours %}disabled{% endif %}>
+          <i class="bi bi-printer"></i> Print to PDF
+        </button>
+      </div>
+    </div>
+  </form>
+
+  {% if error %}
+    <div class="alert alert-warning mt-3 mb-0">{{ error }}</div>
+  {% endif %}
+
+  {% if show_data %}
+  <div class="card mt-3">
+    <div class="card-body">
+      <div class="mb-3">
+        <div class="text-muted small">Date Range: {{ start }} to {{ end }}</div>
+      </div>
+      <div class="table-responsive">
+        <table class="table table-sm table-striped align-middle">
+          <thead class="table-primary">
+            <tr>
+              <th>Staff Name</th>
+              <th class="text-center">Sessions</th>
+              <th class="text-end">Total Hours (HH:MM)</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% if staff_hours and staff_hours|length > 0 %}
+              {% for staff in staff_hours %}
+              <tr>
+                <td>{{ staff.name }}</td>
+                <td class="text-center">{{ staff.sessions }}</td>
+                <td class="text-end"><strong>{{ staff.total_time }}</strong></td>
+              </tr>
+              {% endfor %}
+              <tr class="table-secondary fw-bold">
+                <td>TOTAL</td>
+                <td class="text-center">{{ staff_hours|sum(attribute='sessions') }}</td>
+                <td class="text-end">
+                  {% set total_seconds = staff_hours|sum(attribute='total_seconds') %}
+                  {% set total_hours = (total_seconds // 3600)|int %}
+                  {% set total_minutes = ((total_seconds % 3600) // 60)|int %}
+                  {{ "%02d"|format(total_hours) }}:{{ "%02d"|format(total_minutes) }}
+                </td>
+              </tr>
+            {% else %}
+              <tr><td colspan="3" class="text-muted text-center py-4">No staff hours found for selected date range.</td></tr>
+            {% endif %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+  {% else %}
+  <div class="alert alert-info mt-3">
+    <i class="bi bi-info-circle"></i> Please select a start date and end date, then click <strong>Update Report</strong> to view payroll staff hours.
+  </div>
+  {% endif %}
+</div>
+
+<script>
+// Form validation before submission
+document.getElementById('reportForm').addEventListener('submit', function(e) {
+  const start = document.getElementById('start').value;
+  const end = document.getElementById('end').value;
+  
+  if (!start || !end) {
+    e.preventDefault();
+    alert('Please select both start and end dates.');
+    return false;
+  }
+  
+  return true;
+});
+
+function exportCSV() {
+  const start = document.getElementById('start').value;
+  const end = document.getElementById('end').value;
+  if (!start || !end) {
+    alert('Please select both start and end dates.');
+    return;
+  }
+  window.location.href = `/reports/assistants/csv?start=${start}&end=${end}`;
+}
+
+function printPDF() {
+  const start = document.getElementById('start').value;
+  const end = document.getElementById('end').value;
+  if (!start || !end) {
+    alert('Please select both start and end dates.');
+    return;
+  }
+  window.open(`/reports/assistants/pdf?start=${start}&end=${end}`, '_blank');
+}
+</script>
+
+<style>
+.table tbody tr:last-child {
+  border-top: 2px solid #333;
+}
+</style>
+{% endblock %}

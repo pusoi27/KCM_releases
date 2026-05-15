@@ -1,0 +1,30 @@
+{
+  "id_field": "StudentID",
+  "name_field": "Name",
+  "awards": [
+    {
+      "name": "Perfect Attendance",
+      "conditions": [
+        {"field": "attendance_rate", "op": "==", "value": 100}
+      ]
+    },
+    {
+      "name": "High Attendance",
+      "conditions": [
+        {"field": "attendance_rate", "op": ">=", "value": 95}
+      ]
+    },
+    {
+      "name": "Regular Participant",
+      "conditions": [
+        {"field": "days_attended", "op": ">=", "value": 10}
+      ]
+    },
+    {
+      "name": "Dedicated Student",
+      "conditions": [
+        {"field": "total_sessions", "op": ">=", "value": 20}
+      ]
+    }
+  ]
+}

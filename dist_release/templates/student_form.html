@@ -1,0 +1,1165 @@
+{% extends "base.html" %}
+{% block content %}
+<style>
+  .student-form-shell {
+    max-width: 1024px;
+    margin: 1rem auto 2rem;
+    padding: 0 0.75rem;
+  }
+
+  .student-form-hero {
+    background: linear-gradient(135deg, #1f3c88 0%, #3e7bfa 60%, #6fa8ff 100%);
+    color: #fff;
+    border-radius: 16px;
+    padding: 0.55rem 0.85rem;
+    box-shadow: 0 10px 24px rgba(28, 57, 122, 0.2);
+    margin-bottom: 1rem;
+    max-width: 280px;
+  }
+
+  .student-form-hero h4 {
+    margin: 0;
+    font-weight: 700;
+    font-size: 1.05rem;
+  }
+
+  .form-card {
+    background: #ffffff;
+    border: 1px solid #e8edf7;
+    border-radius: 14px;
+      padding: 0.55rem 0.7rem;
+    box-shadow: 0 6px 18px rgba(16, 39, 82, 0.06);
+      margin-bottom: 0.65rem;
+  }
+
+  .form-card-title {
+    font-weight: 700;
+    font-size: 0.98rem;
+    color: #21335b;
+      margin-bottom: 0.35rem;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+
+  .dot {
+    width: 9px;
+    height: 9px;
+    border-radius: 999px;
+    background: #3e7bfa;
+    display: inline-block;
+  }
+
+  .program-pill {
+    border: 1px solid #d7e4ff;
+    background: #f7faff;
+    border-radius: 12px;
+    padding: 0.55rem 0.65rem;
+    height: 100%;
+  }
+
+  .program-pill .form-check-label {
+    font-weight: 600;
+    color: #1d366b;
+  }
+
+  .program-pill small {
+    color: #5d6f96;
+  }
+
+  .sticky-actions {
+    position: sticky;
+    bottom: 0.5rem;
+    z-index: 5;
+    background: rgba(255, 255, 255, 0.92);
+    backdrop-filter: blur(6px);
+    border: 1px solid #e8edf7;
+    border-radius: 12px;
+    padding: 0.75rem;
+    box-shadow: 0 6px 18px rgba(16, 39, 82, 0.08);
+  }
+
+  .required-star {
+    color: #dc3545;
+    font-weight: 700;
+  }
+
+  /* ── Photo avatar widget ── */
+  .photo-avatar-wrap {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.35rem;
+    cursor: pointer;
+    width: 150px;
+    flex-shrink: 0;
+  }
+
+  .photo-avatar {
+    width: 136px;
+    height: 136px;
+    border-radius: 50%;
+    border: 2px solid #d1d9ee;
+    background: #f0f4ff;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+    position: relative;
+    transition: border-color 0.15s;
+  }
+
+  .photo-avatar:hover { border-color: #7c3aed; }
+
+  .photo-avatar img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    border-radius: 50%;
+  }
+
+  .photo-avatar-icon {
+    color: #94a3b8;
+    font-size: 3.2rem;
+    line-height: 1;
+    pointer-events: none;
+  }
+
+  .photo-avatar-overlay {
+    position: absolute;
+    inset: 0;
+    background: rgba(124,58,237,0.55);
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    opacity: 0;
+    transition: opacity 0.15s;
+  }
+
+  .photo-avatar:hover .photo-avatar-overlay { opacity: 1; }
+
+  .photo-avatar-overlay svg { color: #fff; width: 40px; height: 40px; }
+
+  .photo-avatar-hint {
+    font-size: 0.7rem;
+    color: #6b7280;
+    text-align: center;
+    line-height: 1.2;
+  }
+
+  .classification-card {
+    border: 1px solid #d9e1f2;
+    background: #ffffff;
+    border-radius: 12px;
+    padding: 0.4rem 0.65rem;
+    height: 100%;
+    transition: all 0.18s ease;
+    box-shadow: 0 2px 8px rgba(42, 61, 110, 0.04);
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+
+  .classification-card:hover {
+    border-color: #c3cff1;
+    box-shadow: 0 6px 16px rgba(72, 92, 154, 0.08);
+  }
+
+  .classification-option {
+    position: absolute;
+    opacity: 0;
+    pointer-events: none;
+  }
+
+  .classification-label {
+    display: block;
+    cursor: pointer;
+    margin: 0;
+    text-align: left;
+  }
+
+  .classification-radio {
+    width: 13px;
+    height: 13px;
+    border-radius: 50%;
+    border: 2px solid #cad6ee;
+    margin: 0;
+    flex-shrink: 0;
+    position: relative;
+    transition: all 0.18s ease;
+  }
+
+  /* Per-classification card base colors */
+  .card-assisted  { background: #fefce8; border-color: #fde68a; }
+  .card-monitored { background: #eff6ff; border-color: #bfdbfe; }
+  .card-independent { background: #f0fdf4; border-color: #bbf7d0; }
+  .card-virtual   { background: #faf5ff; border-color: #e9d5ff; }
+
+  /* Per-classification checked state */
+  .classification-option:checked + .classification-label .card-assisted {
+    border-color: #f59e0b; background: #fef3c7;
+    box-shadow: 0 0 0 1px rgba(245,158,11,0.25), 0 8px 18px rgba(245,158,11,0.18);
+  }
+  .classification-option:checked + .classification-label .card-monitored {
+    border-color: #3b82f6; background: #dbeafe;
+    box-shadow: 0 0 0 1px rgba(59,130,246,0.25), 0 8px 18px rgba(59,130,246,0.18);
+  }
+  .classification-option:checked + .classification-label .card-independent {
+    border-color: #22c55e; background: #dcfce7;
+    box-shadow: 0 0 0 1px rgba(34,197,94,0.25), 0 8px 18px rgba(34,197,94,0.18);
+  }
+  .classification-option:checked + .classification-label .card-virtual {
+    border-color: #a855f7; background: #f3e8ff;
+    box-shadow: 0 0 0 1px rgba(168,85,247,0.2), 0 8px 18px rgba(168,85,247,0.15);
+  }
+
+  .classification-option:checked + .classification-label .classification-radio {
+    border-color: #a855f7;
+  }
+
+  .classification-option:checked + .classification-label .classification-radio::after {
+    content: '';
+    position: absolute;
+    inset: 2px;
+    border-radius: 50%;
+    background: #a855f7;
+  }
+
+  .classification-title-wrap {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.55rem;
+    padding: 0.35rem 0.7rem 0.35rem 0.35rem;
+    border-radius: 999px;
+    background: linear-gradient(180deg, #f5efff 0%, #efe7ff 100%);
+    color: #47306b;
+    font-weight: 700;
+    margin-bottom: 0.7rem;
+  }
+
+  .classification-icon {
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    background: radial-gradient(circle at 30% 30%, #c084fc, #8b5cf6);
+    color: #fff;
+    box-shadow: 0 4px 10px rgba(139, 92, 246, 0.28);
+    font-size: 0.8rem;
+  }
+
+  .classification-name {
+    font-size: 0.85rem;
+    font-weight: 700;
+    color: #1f2a44;
+    margin: 0;
+    line-height: 1.2;
+  }
+
+  .classification-copy {
+    display: none;
+  }
+
+  .classification-grid {
+    --bs-gutter-x: 0.5rem;
+    --bs-gutter-y: 0.5rem;
+  }
+
+  .classification-grid > div {
+    flex: 0 0 auto;
+    max-width: none;
+    width: auto;
+  }
+
+  .study-summary {
+    font-size: 0.86rem;
+    color: #395b95;
+    font-weight: 600;
+    margin-top: 0;
+  }
+
+  /* ── Subject card grid (mirrors classification-grid) ── */
+  .subject-options-wrap {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-start;
+    gap: 0.65rem;
+    padding: 0.4rem 0;
+  }
+
+  .subject-card-wrap {
+    position: relative;
+    flex: 0 0 auto;
+    width: max-content;
+  }
+
+  .subject-option-input {
+    position: absolute;
+    opacity: 0;
+    pointer-events: none;
+  }
+
+  .subject-card-label {
+    display: block;
+    cursor: pointer;
+    margin: 0;
+    max-width: 100%;
+  }
+
+  .subject-card {
+    border: 1px solid #d9e1f2;
+    background: #fff;
+    border-radius: 12px;
+    padding: 0.5rem 2rem 0.5rem 0.75rem;
+    transition: border-color 0.18s ease, box-shadow 0.18s ease;
+    box-shadow: 0 2px 8px rgba(42,61,110,0.04);
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    white-space: nowrap;
+    min-height: 40px;
+    width: max-content;
+    max-width: 100%;
+  }
+
+  .subject-card:hover { box-shadow: 0 6px 16px rgba(72,92,154,0.1); }
+
+  .subject-card-radio {
+    width: 13px;
+    height: 13px;
+    border-radius: 50%;
+    border: 2px solid #cad6ee;
+    margin: 0;
+    flex-shrink: 0;
+    position: relative;
+    transition: all 0.18s ease;
+  }
+
+  .subject-card-name {
+    font-size: 0.84rem;
+    font-weight: 700;
+    color: #1f2a44;
+    line-height: 1.2;
+    padding-right: 0.1rem;
+  }
+
+  /* Per-subject base colors (constant — don't change on selection) */
+  .subject-card.color-math    { background: #dbeafe; border-color: #93c5fd; }
+  .subject-card.color-reading { background: #fee2e2; border-color: #fca5a5; }
+  .subject-card.color-writing { background: #fef9c3; border-color: #fde047; }
+  .subject-card.color-custom  { background: #f5f3ff; border-color: #ddd6fe; }
+
+  .subject-card.color-math:hover    { border-color: #60a5fa; }
+  .subject-card.color-reading:hover { border-color: #f87171; }
+  .subject-card.color-writing:hover { border-color: #facc15; }
+  .subject-card.color-custom:hover  { border-color: #c4b5fd; }
+
+  /* Checked — background stays, radio dot fills, border deepens */
+  .subject-option-input:checked + .subject-card-label .color-math {
+    border-color: #3b82f6;
+    box-shadow: 0 0 0 1px rgba(59,130,246,0.2), 0 8px 18px rgba(59,130,246,0.12);
+  }
+  .subject-option-input:checked + .subject-card-label .color-math .subject-card-radio {
+    border-color: #3b82f6;
+  }
+  .subject-option-input:checked + .subject-card-label .color-math .subject-card-radio::after {
+    content: ''; position: absolute; inset: 2px; border-radius: 50%; background: #3b82f6;
+  }
+
+  .subject-option-input:checked + .subject-card-label .color-reading {
+    border-color: #ef4444;
+    box-shadow: 0 0 0 1px rgba(239,68,68,0.2), 0 8px 18px rgba(239,68,68,0.12);
+  }
+  .subject-option-input:checked + .subject-card-label .color-reading .subject-card-radio {
+    border-color: #ef4444;
+  }
+  .subject-option-input:checked + .subject-card-label .color-reading .subject-card-radio::after {
+    content: ''; position: absolute; inset: 2px; border-radius: 50%; background: #ef4444;
+  }
+
+  .subject-option-input:checked + .subject-card-label .color-writing {
+    border-color: #eab308;
+    box-shadow: 0 0 0 1px rgba(234,179,8,0.2), 0 8px 18px rgba(234,179,8,0.12);
+  }
+  .subject-option-input:checked + .subject-card-label .color-writing .subject-card-radio {
+    border-color: #eab308;
+  }
+  .subject-option-input:checked + .subject-card-label .color-writing .subject-card-radio::after {
+    content: ''; position: absolute; inset: 2px; border-radius: 50%; background: #eab308;
+  }
+
+  .subject-option-input:checked + .subject-card-label .color-custom {
+    border-color: #7c3aed;
+    box-shadow: 0 0 0 1px rgba(124,58,237,0.2), 0 8px 18px rgba(124,58,237,0.12);
+  }
+  .subject-option-input:checked + .subject-card-label .color-custom .subject-card-radio {
+    border-color: #7c3aed;
+  }
+  .subject-option-input:checked + .subject-card-label .color-custom .subject-card-radio::after {
+    content: ''; position: absolute; inset: 2px; border-radius: 50%; background: #7c3aed;
+  }
+
+  /* × remove button — positioned top-right of card wrap, outside the label */
+  .subject-card-remove {
+    position: absolute;
+    top: 50%;
+    right: 0.55rem;
+    transform: translateY(-50%);
+    background: none;
+    border: none;
+    color: rgba(0,0,0,0.28);
+    font-size: 1rem;
+    line-height: 1;
+    padding: 0;
+    width: 1rem;
+    height: 1rem;
+    cursor: pointer;
+    z-index: 2;
+    transition: color 0.15s;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 999px;
+  }
+  .subject-card-remove:hover { color: rgba(0,0,0,0.7); }
+
+  /* Add Subject — dashed card matching subject card dimensions */
+  .btn-add-subject-card {
+    flex: 0 0 auto;
+    border: 1.5px dashed #a78bfa;
+    background: #faf5ff;
+    color: #7c3aed;
+    border-radius: 12px;
+    padding: 0.5rem 0.85rem;
+    font-size: 0.84rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.15s;
+    display: flex;
+    align-items: center;
+    gap: 0.35rem;
+    min-height: 40px;
+  }
+  .btn-add-subject-card:hover { background: #f3e8ff; border-color: #7c3aed; }
+  .btn-add-subject-card-plus { font-size: 1rem; line-height: 1; }
+
+  .subject-modal-backdrop {
+    position: fixed; inset: 0;
+    background: rgba(17,24,39,0.45);
+    display: none; align-items: center; justify-content: center;
+    z-index: 1060; padding: 1rem;
+  }
+  .subject-modal-backdrop.show { display: flex; }
+  .subject-modal {
+    width: min(420px, 100%); background: #fff;
+    border: 1px solid #e2e8f6; border-radius: 14px;
+    box-shadow: 0 14px 34px rgba(16,39,82,0.22); overflow: hidden;
+  }
+  .subject-modal-header { padding: 0.75rem 0.95rem; border-bottom: 1px solid #edf2fb; font-weight: 700; color: #233a70; }
+  .subject-modal-body   { padding: 0.9rem 0.95rem; }
+  .subject-modal-footer { padding: 0.75rem 0.95rem; border-top: 1px solid #edf2fb; display: flex; justify-content: flex-end; gap: 0.5rem; }
+
+  .subject-time-shared {
+    width: 80px;
+    text-align: center;
+  }
+
+  /* Day picker card styles */
+  .day-picker-wrap {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    padding: 0.4rem 0;
+  }
+
+  .day-card {
+    border: 1px solid #d9e1f2;
+    background: #f7faff;
+    border-radius: 12px;
+    padding: 0.4rem 0.65rem;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    cursor: pointer;
+    transition: all 0.18s ease;
+    box-shadow: 0 2px 8px rgba(42,61,110,0.04);
+    white-space: nowrap;
+    user-select: none;
+  }
+
+  .day-card:hover {
+    border-color: #93c5fd;
+    box-shadow: 0 4px 12px rgba(59,130,246,0.1);
+  }
+
+  .day-card-radio {
+    width: 13px;
+    height: 13px;
+    border-radius: 50%;
+    border: 2px solid #cad6ee;
+    flex-shrink: 0;
+    position: relative;
+    transition: all 0.18s ease;
+  }
+
+  .day-card-name {
+    font-size: 0.85rem;
+    font-weight: 700;
+    color: #1f2a44;
+    line-height: 1.2;
+  }
+
+  .day-card-slot {
+    font-size: 0.7rem;
+    color: #5b7ab0;
+    font-weight: 500;
+  }
+
+  .day-card.day-selected {
+    background: #dbeafe;
+    border-color: #3b82f6;
+    box-shadow: 0 0 0 1px rgba(59,130,246,0.2), 0 4px 12px rgba(59,130,246,0.12);
+  }
+  .day-card.day-selected .day-card-radio {
+    border-color: #3b82f6;
+  }
+  .day-card.day-selected .day-card-radio::after {
+    content: '';
+    position: absolute;
+    inset: 2px;
+    border-radius: 50%;
+    background: #3b82f6;
+  }
+  .day-card-time {
+    font-size: 0.76rem;
+    padding: 0.15rem 0.3rem !important;
+    min-width: 85px;
+    border-radius: 8px !important;
+    border: 1px solid #93c5fd !important;
+    background: #fff;
+    cursor: pointer;
+    margin-top: 0.3rem;
+  }
+</style>
+
+<div class="student-form-shell">
+  <div class="student-form-hero">
+    <h4>{{ action }} Student</h4>
+  </div>
+
+  <form method="post" id="studentForm" enctype="multipart/form-data">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
+    <!-- Basic Information + Contact (combined) -->
+    <div class="form-card">
+      <div class="form-card-title"><span class="dot"></span>Basic Information</div>
+      <div class="d-flex gap-3 align-items-start">
+        <!-- Photo on left -->
+        <input id="photoFileInput" name="photo" type="file" accept="image/jpeg,image/png,image/gif,image/webp" style="display:none;">
+        <div class="photo-avatar-wrap" id="photoAvatarWrap" title="Click to upload photo">
+          <div class="photo-avatar" id="photoAvatar">
+            {% if student_photo_url %}
+              <img id="photoPreviewImg" src="{{ student_photo_url }}" alt="Student photo">
+            {% else %}
+              <span class="photo-avatar-icon">&#128100;</span>
+              <img id="photoPreviewImg" src="" alt="" style="display:none;">
+            {% endif %}
+            <div class="photo-avatar-overlay">
+              <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M3 9a2 2 0 012-2h.172a2 2 0 001.664-.89l.812-1.22A2 2 0 019.311 4h5.378a2 2 0 011.664.89l.812 1.22A2 2 0 0018.828 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z"/>
+                <path stroke-linecap="round" stroke-linejoin="round" d="M15 13a3 3 0 11-6 0 3 3 0 016 0z"/>
+              </svg>
+            </div>
+          </div>
+          <span class="photo-avatar-hint">Photo</span>
+        </div>
+        <!-- Name + Contact fields on right -->
+        <div class="flex-grow-1">
+          <div class="mb-2">
+            <label for="name" class="form-label fw-semibold mb-1">Student Name <span class="required-star">*</span></label>
+            <input id="name" name="name" class="form-control" value="{{ student[1] if student else '' }}" required placeholder="Full name">
+          </div>
+          <div class="row g-2">
+            <div class="col-md-6">
+              <label for="email" class="form-label fw-semibold mb-1">Email</label>
+              <input id="email" name="email" type="email" class="form-control" value="{{ student[3] if student else '' }}">
+            </div>
+            <div class="col-md-6">
+              <label for="phone" class="form-label fw-semibold mb-1">Phone</label>
+              <input id="phone" name="phone" class="form-control" value="{{ student[4] if student else '' }}">
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="mt-2 pt-2" style="border-top: 1px solid #f0f4ff;">
+        <label class="form-label fw-semibold mb-1">Subjects <span class="required-star">*</span></label>
+        <div id="subjectOptionsContainer" class="subject-options-wrap">
+          <button type="button" id="addSubjectBtn" class="btn-add-subject-card"><span class="btn-add-subject-card-plus">+</span><span>Add Subject</span></button>
+        </div>
+        <div class="d-flex align-items-center flex-wrap gap-2 mt-2">
+          <span class="small text-secondary">Study time:</span>
+          <input type="number" id="sharedMinutesInput" class="form-control subject-time-shared" min="5" step="5" value="{{ (subject_rows[0].minutes if subject_rows and subject_rows[0].minutes else 30) }}">
+          <span class="small text-muted">min per subject</span>
+          <span class="study-summary" id="studySummary">Total study duration: 30 min</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Classification -->
+    <div class="form-card">
+      <div class="classification-title-wrap">
+        <span class="classification-icon">&#8803;</span>
+        <span>Classification</span>
+      </div>
+      <div class="row classification-grid">
+        <div>
+          <input class="classification-option" type="checkbox" name="el" id="assistedCheck" {% if student and student[9] %}checked{% endif %}>
+          <label class="classification-label" for="assistedCheck">
+            <div class="classification-card card-assisted" title="Student needs one-on-one assistance; dedicated staff must be available to work with the student." aria-label="Student needs one-on-one assistance; dedicated staff must be available to work with the student.">
+              <div class="classification-radio"></div>
+              <div class="classification-name">Assisted</div>
+              <div class="classification-copy">Requires direct support</div>
+            </div>
+          </label>
+        </div>
+        <div>
+          <input class="classification-option" type="checkbox" name="pi" id="monitoredCheck" {% if (student and student[10]) or (not student) or (student and not student[8] and not student[9] and not student[10] and not student[11]) %}checked{% endif %}>
+          <label class="classification-label" for="monitoredCheck">
+            <div class="classification-card card-monitored" title="Student is semi-independent, needs guidance from staff, staff can service 2 to 4 students." aria-label="Student is semi-independent, needs guidance from staff, staff can service 2 to 4 students.">
+              <div class="classification-radio"></div>
+              <div class="classification-name">Monitored</div>
+              <div class="classification-copy">Periodic check-ins</div>
+            </div>
+          </label>
+        </div>
+        <div>
+          <input class="classification-option" type="checkbox" name="paper_ws" id="independentCheck" {% if student and student[8] %}checked{% endif %}>
+          <label class="classification-label" for="independentCheck">
+            <div class="classification-card card-independent" title="Student is capable of working independently; staff planning per center guidelines." aria-label="Student is capable of working independently; staff planning per center guidelines.">
+              <div class="classification-radio"></div>
+              <div class="classification-name">Independent</div>
+              <div class="classification-copy">Self-guided pace</div>
+            </div>
+          </label>
+        </div>
+        <div>
+          <input class="classification-option" type="checkbox" name="v" id="virtualCheck" {% if student and student[11] %}checked{% endif %}>
+          <label class="classification-label" for="virtualCheck">
+            <div class="classification-card card-virtual" title="Student joins the afterschool activity online, staff can service 2 to 4 students." aria-label="Student joins the afterschool activity online, staff can service 2 to 4 students.">
+              <div class="classification-radio"></div>
+              <div class="classification-name">Virtual</div>
+              <div class="classification-copy">100% remote learning</div>
+            </div>
+          </label>
+        </div>
+      </div>
+    </div>
+
+    <!-- Weekly Schedule -->
+    <div class="form-card">
+      <div class="form-card-title"><span class="dot"></span>Weekly Schedule</div>
+      <input type="hidden" id="scheduleJsonInput" name="schedule_json" value="">
+      {% set days = [('Monday', 'monday'), ('Tuesday', 'tuesday'), ('Wednesday', 'wednesday'), ('Thursday', 'thursday'), ('Friday', 'friday'), ('Saturday', 'saturday'), ('Sunday', 'sunday')] %}
+      {% set has_profile_hours = namespace(value=false) %}
+      <div class="day-picker-wrap" id="dayPickerWrap">
+        {% for day_name, day_key in days %}
+          {% set start = profile[day_key + '_start'] if profile else '' %}
+          {% set end = profile[day_key + '_end'] if profile else '' %}
+          {% if start and end %}
+            {% set has_profile_hours.value = true %}
+          {% endif %}
+          <div class="day-card" data-day="{{ day_name }}" data-has-hours="{{ '1' if start and end else '0' }}">
+            <div class="day-card-radio"></div>
+            <span class="day-card-name">{{ day_name[:3] }}</span>
+            <span class="day-card-slot">{{ (start ~ ' - ' ~ end) if (start and end) else 'Any time' }}</span>
+          </div>
+        {% endfor %}
+      </div>
+      {% if not has_profile_hours.value %}
+        <div class="form-text mt-2">
+          Center hours are not configured yet. You can still set schedule days and times here, or configure weekly class hours in Instructor Profile for guided slot options.
+        </div>
+      {% endif %}
+    </div>
+
+    <div class="sticky-actions d-flex flex-wrap gap-2 justify-content-end">
+      <a href="{{ url_for('students_list') }}" class="btn btn-outline-secondary">Cancel</a>
+      {% if from_calendar %}
+        <a href="{{ url_for('center_calendar') }}" class="btn btn-outline-info">Back to Calendar</a>
+      {% endif %}
+      <button type="submit" class="btn btn-primary">{{ action }} Student</button>
+    </div>
+  </form>
+</div>
+
+<div id="subjectModalBackdrop" class="subject-modal-backdrop" aria-hidden="true">
+  <div class="subject-modal" role="dialog" aria-modal="true" aria-labelledby="subjectModalTitle">
+    <div class="subject-modal-header" id="subjectModalTitle">Add Subject</div>
+    <div class="subject-modal-body">
+      <label for="subjectModalInput" class="form-label">Subject name</label>
+      <input id="subjectModalInput" type="text" class="form-control" placeholder="Enter subject name">
+      <div class="form-text">Example: Science, Art, Coding</div>
+    </div>
+    <div class="subject-modal-footer">
+      <button type="button" id="subjectModalCancel" class="btn btn-outline-secondary btn-sm">Cancel</button>
+      <button type="button" id="subjectModalSave" class="btn btn-primary btn-sm">Save</button>
+    </div>
+  </div>
+</div>
+
+<script>
+  const initialSubjectRows = {{ subject_rows | tojson }};
+  const defaultSubjectOptions = ['Math', 'Reading', 'Writing'];
+  const MAX_SUBJECTS = 3;
+  const MAX_SCHEDULE_DAYS = 7;
+
+  const classHours = {
+    {% if profile %}
+      {% set days = [('Monday', 'monday'), ('Tuesday', 'tuesday'), ('Wednesday', 'wednesday'), ('Thursday', 'thursday'), ('Friday', 'friday'), ('Saturday', 'saturday'), ('Sunday', 'sunday')] %}
+      {% for day_name, day_key in days %}
+        {% if profile[day_key + '_start'] and profile[day_key + '_end'] %}
+          '{{ day_name }}': { start: '{{ profile[day_key + "_start"] }}', end: '{{ profile[day_key + "_end"] }}' },
+        {% endif %}
+      {% endfor %}
+    {% endif %}
+  };
+
+  const savedSchedule = {{ student_schedule | default([]) | tojson }};
+
+  let availableSubjects = [];
+
+  function normalizeKey(value) {
+    return String(value || '').trim().toLowerCase();
+  }
+
+  function escapeHtml(str) {
+    return String(str)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;');
+  }
+
+  function getSharedMinutes() {
+    const input = document.getElementById('sharedMinutesInput');
+    return Math.max(5, Number(input ? input.value : 30) || 30);
+  }
+
+  function getSelectedSubjects() {
+    return Array.from(document.querySelectorAll('input[name="subject_name[]"]:checked'))
+      .map(function (input) { return String(input.value || '').trim(); })
+      .filter(Boolean);
+  }
+
+  function getTotalStudyMinutes() {
+    return getSelectedSubjects().length * getSharedMinutes();
+  }
+
+  function updateStudySummary() {
+    const summary = document.getElementById('studySummary');
+    if (summary) {
+      summary.textContent = 'Total study duration: ' + getTotalStudyMinutes() + ' min';
+    }
+  }
+
+  const subjectColorMap = { math: 'color-math', reading: 'color-reading', writing: 'color-writing' };
+
+  function subjectColorClass(name) {
+    return subjectColorMap[normalizeKey(name)] || 'color-custom';
+  }
+
+  function renderSubjectOptions(selectedSet) {
+    const container = document.getElementById('subjectOptionsContainer');
+    const addBtn = document.getElementById('addSubjectBtn');
+    if (!container) return;
+
+    container.querySelectorAll('.subject-card-wrap').forEach(function (el) { el.remove(); });
+
+    availableSubjects.slice(0, MAX_SUBJECTS).forEach(function (subjectName, index) {
+      const safeId = 'subjectOption_' + index;
+      const colorCls = subjectColorClass(subjectName);
+      const isChecked = selectedSet.has(normalizeKey(subjectName));
+      const wrapper = document.createElement('div');
+      wrapper.className = 'subject-card-wrap';
+      wrapper.innerHTML =
+        '<input type="checkbox" class="subject-option-input" id="' + safeId + '" name="subject_name[]" value="' + escapeHtml(subjectName) + '" ' + (isChecked ? 'checked' : '') + '>' +
+        '<label class="subject-card-label" for="' + safeId + '">' +
+          '<div class="subject-card ' + colorCls + '">' +
+            '<div class="subject-card-radio"></div>' +
+            '<div class="subject-card-name">' + escapeHtml(subjectName) + '</div>' +
+          '</div>' +
+        '</label>' +
+        '<button type="button" class="subject-card-remove" data-remove-subject="' + escapeHtml(subjectName) + '" aria-label="Remove ' + escapeHtml(subjectName) + '">\u00d7</button>';
+      if (addBtn) {
+        container.insertBefore(wrapper, addBtn);
+      } else {
+        container.appendChild(wrapper);
+      }
+    });
+
+    if (addBtn) {
+      const atLimit = availableSubjects.length >= MAX_SUBJECTS;
+      addBtn.disabled = atLimit;
+      addBtn.style.opacity = atLimit ? '0.6' : '';
+      addBtn.style.cursor = atLimit ? 'not-allowed' : '';
+      addBtn.title = atLimit ? ('Maximum ' + MAX_SUBJECTS + ' subjects allowed') : 'Add Subject';
+    }
+
+    updateStudySummary();
+    refreshAllDayTimes();
+  }
+
+  function initSubjectsSection() {
+    const optionsContainer = document.getElementById('subjectOptionsContainer');
+    const addBtn = document.getElementById('addSubjectBtn');
+    const sharedMinutesInput = document.getElementById('sharedMinutesInput');
+    const modalBackdrop = document.getElementById('subjectModalBackdrop');
+    const modalInput = document.getElementById('subjectModalInput');
+    const modalSave = document.getElementById('subjectModalSave');
+    const modalCancel = document.getElementById('subjectModalCancel');
+
+    if (!optionsContainer) return;
+
+    function closeSubjectModal() {
+      if (!modalBackdrop) return;
+      modalBackdrop.classList.remove('show');
+      modalBackdrop.setAttribute('aria-hidden', 'true');
+      if (modalInput) modalInput.value = '';
+    }
+
+    function openSubjectModal() {
+      if (!modalBackdrop) return;
+      modalBackdrop.classList.add('show');
+      modalBackdrop.setAttribute('aria-hidden', 'false');
+      if (modalInput) { modalInput.value = ''; modalInput.focus(); }
+    }
+
+    function saveSubjectFromModal() {
+      const name = (modalInput ? modalInput.value : '').trim();
+      if (!name) { if (modalInput) modalInput.focus(); return; }
+      if (availableSubjects.length >= MAX_SUBJECTS) {
+        alert('You can only add up to ' + MAX_SUBJECTS + ' subjects.');
+        closeSubjectModal();
+        return;
+      }
+      const key = normalizeKey(name);
+      if (!availableSubjects.some(function (s) { return normalizeKey(s) === key; })) {
+        availableSubjects.push(name.trim());
+      }
+      const selectedSet = new Set(
+        Array.from(optionsContainer.querySelectorAll('input[name="subject_name[]"]')).filter(function (i) { return i.checked; }).map(function (i) { return normalizeKey(i.value); })
+      );
+      selectedSet.add(key);
+      renderSubjectOptions(selectedSet);
+      closeSubjectModal();
+    }
+
+    if (addBtn) addBtn.addEventListener('click', openSubjectModal);
+    if (modalSave) modalSave.addEventListener('click', saveSubjectFromModal);
+    if (modalCancel) modalCancel.addEventListener('click', closeSubjectModal);
+    if (modalInput) {
+      modalInput.addEventListener('keydown', function (e) {
+        if (e.key === 'Enter') { e.preventDefault(); saveSubjectFromModal(); }
+      });
+    }
+    if (modalBackdrop) {
+      modalBackdrop.addEventListener('click', function (e) {
+        if (e.target === modalBackdrop) closeSubjectModal();
+      });
+    }
+    document.addEventListener('keydown', function (e) {
+      if (e.key === 'Escape' && modalBackdrop && modalBackdrop.classList.contains('show')) closeSubjectModal();
+    });
+
+    const seen = new Set();
+    const initialSelectedSet = new Set();
+
+    function registerSubject(rawName) {
+      const name = String(rawName || '').trim();
+      const key = normalizeKey(name);
+      if (!key || seen.has(key)) return;
+      seen.add(key);
+      availableSubjects.push(name);
+    }
+
+    defaultSubjectOptions.forEach(registerSubject);
+
+    const rows = Array.isArray(initialSubjectRows) ? initialSubjectRows : [];
+    const hasExplicitSelectedFlag = rows.some(function (row) {
+      return row && Object.prototype.hasOwnProperty.call(row, 'selected');
+    });
+
+    rows.forEach(function (row) {
+      if (!row || !row.name) return;
+      registerSubject(row.name);
+      if (hasExplicitSelectedFlag) {
+        if (row.selected) { initialSelectedSet.add(normalizeKey(row.name)); }
+      } else if (String(row.name).trim()) {
+        initialSelectedSet.add(normalizeKey(row.name));
+      }
+    });
+
+    if (availableSubjects.length > MAX_SUBJECTS) {
+      availableSubjects = availableSubjects.slice(0, MAX_SUBJECTS);
+    }
+
+    if (initialSubjectRows && initialSubjectRows.length > 0 && initialSubjectRows[0].minutes && sharedMinutesInput) {
+      sharedMinutesInput.value = String(Math.max(5, Number(initialSubjectRows[0].minutes) || 30));
+    }
+
+    if (availableSubjects.length === 0) { defaultSubjectOptions.forEach(registerSubject); }
+    if (initialSelectedSet.size === 0) { initialSelectedSet.add(normalizeKey('Math')); }
+
+    const filteredSelectedSet = new Set();
+    const allowedSubjectKeys = new Set(availableSubjects.map(normalizeKey));
+    initialSelectedSet.forEach(function (key) {
+      if (allowedSubjectKeys.has(key)) {
+        filteredSelectedSet.add(key);
+      }
+    });
+
+    renderSubjectOptions(filteredSelectedSet.size ? filteredSelectedSet : initialSelectedSet);
+
+    optionsContainer.addEventListener('change', function (e) {
+      if (e.target && e.target.matches('input[name="subject_name[]"]')) {
+        updateStudySummary();
+        refreshAllDayTimes();
+      }
+    });
+
+    optionsContainer.addEventListener('click', function (e) {
+      const removeBtn = e.target.closest('.subject-card-remove');
+      if (!removeBtn) return;
+      const subjectName = removeBtn.dataset.removeSubject;
+      if (!subjectName) return;
+      availableSubjects = availableSubjects.filter(function (s) { return normalizeKey(s) !== normalizeKey(subjectName); });
+      const currentSelected = new Set(getSelectedSubjects().map(normalizeKey));
+      renderSubjectOptions(currentSelected);
+    });
+
+    if (sharedMinutesInput) {
+      sharedMinutesInput.addEventListener('input', function () {
+        updateStudySummary();
+        refreshAllDayTimes();
+      });
+    }
+
+    updateStudySummary();
+  }
+
+  function to12Hour(minutesSinceMidnight) {
+    const h24 = Math.floor(minutesSinceMidnight / 60);
+    const min = minutesSinceMidnight % 60;
+    const ampm = h24 >= 12 ? 'PM' : 'AM';
+    const h12 = h24 % 12 || 12;
+    return h12 + ':' + String(min).padStart(2, '0') + ' ' + ampm;
+  }
+
+  function generateTimeSlots(startTime, endTime, offsetMinutes) {
+    offsetMinutes = offsetMinutes || 30;
+    const slots = [];
+    const startParts = startTime.split(':').map(Number);
+    const endParts = endTime.split(':').map(Number);
+    let current = (startParts[0] * 60) + startParts[1];
+    const end = (endParts[0] * 60) + endParts[1] - offsetMinutes;
+    while (current <= end) {
+      const h = Math.floor(current / 60);
+      const m = current % 60;
+      const value = String(h).padStart(2, '0') + ':' + String(m).padStart(2, '0');
+      slots.push({ value: value, display: to12Hour(current) });
+      current += 30;
+    }
+    return slots;
+  }
+
+  // ── Multi-day schedule ──
+  var selectedSchedule = {};
+  savedSchedule.forEach(function(entry) {
+    if (!entry || !entry.day) return;
+    selectedSchedule[entry.day] = entry.time || '';
+  });
+
+  function enforceScheduleLimit() {
+    const days = Object.keys(selectedSchedule);
+    if (days.length <= MAX_SCHEDULE_DAYS) return;
+    days.slice(MAX_SCHEDULE_DAYS).forEach(function(day) {
+      delete selectedSchedule[day];
+    });
+  }
+
+  function fillDayTimeSelect(selectEl, day, savedTime) {
+    const offset = getTotalStudyMinutes();
+    selectEl.innerHTML = '<option value="">-- Time --</option>';
+    let slots = [];
+    if (classHours[day]) {
+      slots = generateTimeSlots(classHours[day].start, classHours[day].end, offset);
+    } else {
+      slots = generateTimeSlots('06:00', '21:30', 30);
+    }
+    slots.forEach(function(slot) {
+      const opt = document.createElement('option');
+      opt.value = slot.value;
+      opt.textContent = slot.display;
+      if (savedTime && slot.value === savedTime) opt.selected = true;
+      selectEl.appendChild(opt);
+    });
+  }
+
+  function updateScheduleHidden() {
+    enforceScheduleLimit();
+    const schedule = Object.keys(selectedSchedule).slice(0, MAX_SCHEDULE_DAYS).map(function(day) {
+      return { day: day, time: selectedSchedule[day] };
+    });
+    const input = document.getElementById('scheduleJsonInput');
+    if (input) input.value = JSON.stringify(schedule);
+  }
+
+  function refreshAllDayTimes() {
+    document.querySelectorAll('#dayPickerWrap .day-card.day-selected').forEach(function(card) {
+      const day = card.dataset.day;
+      const sel = card.querySelector('.day-card-time');
+      if (sel && sel.tagName === 'SELECT') {
+        const cur = sel.value;
+        fillDayTimeSelect(sel, day, cur || selectedSchedule[day] || '');
+      }
+    });
+  }
+
+  function renderDayCards() {
+    enforceScheduleLimit();
+    document.querySelectorAll('#dayPickerWrap .day-card').forEach(function(card) {
+      const day = card.dataset.day;
+      const isSelected = Object.prototype.hasOwnProperty.call(selectedSchedule, day);
+      card.classList.toggle('day-selected', isSelected);
+      const hasHours = !!classHours[day];
+      var sel = card.querySelector('.day-card-time');
+
+      if (!sel || (hasHours && sel.tagName !== 'SELECT') || (!hasHours && sel.tagName !== 'INPUT')) {
+        if (sel) sel.remove();
+        if (hasHours) {
+          sel = document.createElement('select');
+          sel.className = 'day-card-time form-select form-select-sm';
+        } else {
+          sel = document.createElement('input');
+          sel.type = 'time';
+          sel.className = 'day-card-time form-control form-control-sm';
+        }
+        card.appendChild(sel);
+      }
+
+      if (isSelected) {
+        sel.style.display = '';
+        if (hasHours) {
+          fillDayTimeSelect(sel, day, selectedSchedule[day] || '');
+        } else {
+          sel.value = selectedSchedule[day] || '';
+        }
+        sel.onchange = (function(d, s) {
+          return function() { selectedSchedule[d] = s.value; updateScheduleHidden(); };
+        })(day, sel);
+      } else {
+        sel.style.display = 'none';
+      }
+    });
+    updateScheduleHidden();
+  }
+
+  function initDayPicker() {
+    const wrap = document.getElementById('dayPickerWrap');
+    if (!wrap) return;
+    wrap.addEventListener('click', function(e) {
+      const card = e.target.closest('.day-card');
+      if (!card) return;
+      const sel = card.querySelector('.day-card-time');
+      if (sel && (e.target === sel || sel.contains(e.target))) return;
+      const day = card.dataset.day;
+      if (Object.prototype.hasOwnProperty.call(selectedSchedule, day)) {
+        delete selectedSchedule[day];
+      } else {
+        selectedSchedule[day] = '';
+      }
+      renderDayCards();
+    });
+    renderDayCards();
+  }
+
+  function initExclusiveClassification() {
+    const options = Array.from(document.querySelectorAll('.classification-option'));
+    const defaultOption = document.getElementById('monitoredCheck');
+
+    function keepOnly(checkedOption) {
+      options.forEach(function(option) { option.checked = option === checkedOption; });
+    }
+
+    options.forEach(function(option) {
+      option.addEventListener('change', function () {
+        if (this.checked) { keepOnly(this); return; }
+        const anyChecked = options.some(function(o) { return o.checked; });
+        if (!anyChecked && defaultOption) { defaultOption.checked = true; }
+      });
+    });
+
+    const checked = options.filter(function(o) { return o.checked; });
+    if (checked.length === 0 && defaultOption) {
+      defaultOption.checked = true;
+    } else if (checked.length > 1) {
+      const priority = [
+        document.getElementById('monitoredCheck'),
+        document.getElementById('assistedCheck'),
+        document.getElementById('independentCheck'),
+        document.getElementById('virtualCheck')
+      ].filter(Boolean);
+      const chosen = priority.find(function(p) { return p.checked; }) || checked[0];
+      keepOnly(chosen);
+    }
+  }
+
+  document.addEventListener('DOMContentLoaded', function () {
+    const photoWrap = document.getElementById('photoAvatarWrap');
+    const photoInput = document.getElementById('photoFileInput');
+    const photoPreview = document.getElementById('photoPreviewImg');
+    const photoAvatar = document.getElementById('photoAvatar');
+
+    if (photoWrap && photoInput) {
+      photoWrap.addEventListener('click', function () { photoInput.click(); });
+      photoInput.addEventListener('change', function () {
+        const file = photoInput.files[0];
+        if (!file) return;
+        const reader = new FileReader();
+        reader.onload = function (e) {
+          const icon = photoAvatar.querySelector('.photo-avatar-icon');
+          if (icon) icon.style.display = 'none';
+          if (photoPreview) { photoPreview.src = e.target.result; photoPreview.style.display = ''; }
+        };
+        reader.readAsDataURL(file);
+      });
+    }
+
+    initSubjectsSection();
+    initDayPicker();
+    initExclusiveClassification();
+
+    document.getElementById('studentForm').addEventListener('submit', function (e) {
+      updateScheduleHidden();
+      const selectedSubjects = getSelectedSubjects();
+      if (selectedSubjects.length === 0) {
+        e.preventDefault();
+        alert('Please select at least one subject.');
+        return;
+      }
+      const mins = String(getSharedMinutes());
+      const form = document.getElementById('studentForm');
+      selectedSubjects.forEach(function () {
+        const inp = document.createElement('input');
+        inp.type = 'hidden';
+        inp.name = 'subject_minutes[]';
+        inp.value = mins;
+        form.appendChild(inp);
+      });
+    });
+  });
+</script>
+{% endblock %}

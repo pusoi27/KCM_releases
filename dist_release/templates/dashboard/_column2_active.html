@@ -1,0 +1,42 @@
+<!-- COLUMN 2 – Active Students (16 Seats Grid: 4x4) -->
+<div id="activeCol" class="col dashboard-col">
+  <div class="card shadow-sm h-100">
+    <div class="card-body d-flex flex-column overflow-hidden" style="padding:0.5rem;">
+
+      {% if subscription_access.can_access_assistants %}
+      <div class="on-duty-panel mb-2">
+        <div class="d-flex align-items-center on-duty-inline-row">
+          <h6 class="text-primary fw-bold mb-0 small on-duty-inline-title"><i class="bi bi-person-badge"></i> Staff On Duty</h6>
+          <div id="assistantsDutyList" class="d-flex flex-wrap align-items-center gap-1 ms-2"></div>
+        </div>
+      </div>
+      {% endif %}
+      <!-- Active Students Section -->
+      <div class="d-flex align-items-center justify-content-between mb-1" style="margin:0 0 0.5rem 0;">
+        <h6 class="text-success fw-bold mb-0">
+          <i class="bi bi-lightning-charge"></i> Active Students in Class <span id="activeCount" class="small"></span>
+        </h6>
+        {% if subscription_access.can_access_assistants %}
+        <div class="staff-duty-panel-wrap">
+          <button id="checkedDrawerButton" type="button" class="btn btn-sm btn-outline-success py-0 px-2" title="Checked out students">
+            <i class="bi bi-list"></i>
+          </button>
+          <div id="checkedDrawerPanel" class="checked-drawer-panel">
+            <h6 class="text-danger fw-bold mb-1"><i class="bi bi-box-arrow-right"></i> Checked Out</h6>
+            <p class="small text-muted mb-1" id="checkedCount"></p>
+            <p class="small text-primary mb-2" id="daySessionCount"></p>
+            <ul id="checkedList" class="list-group list-group-flush overflow-auto" style="max-height:65vh;"></ul>
+          </div>
+        </div>
+        {% endif %}
+      </div>
+       <div id="seatGrid"
+         style="display:grid; grid-template-columns:repeat(4,1fr); gap:0.5rem; overflow-y:auto; overflow-x:hidden; width:100%; padding:0; margin:0; flex:1 1 auto; min-height:0;"></div>
+       <!-- Overflow list for students beyond seat limit -->
+       <div id="overflowStudents" class="mt-1" style="display:none;">
+         <h6 class="text-warning fw-bold small"><i class="bi bi-list-ul"></i> Additional Students Waiting:</h6>
+         <div id="overflowList" class="d-flex flex-wrap gap-2"></div>
+       </div>
+    </div>
+  </div>
+</div>

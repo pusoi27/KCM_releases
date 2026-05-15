@@ -1,6 +1,8 @@
 ﻿# -*- mode: python ; coding: utf-8 -*-
 # PyInstaller spec file for Stdytime v04.05.16
 
+from PyInstaller.utils.hooks import collect_submodules
+
 block_cipher = None
 
 a = Analysis(
@@ -17,6 +19,7 @@ a = Analysis(
         'flask',
         'werkzeug',
         'reportlab',
+        *collect_submodules('reportlab.graphics.barcode'),
         'sqlite3',
         'waitress',
         'pystray',
@@ -61,6 +64,7 @@ exe = EXE(
     a.datas,
     [],
     name='Stdytime',
+    icon='assets/stdytime.ico',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,

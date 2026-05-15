@@ -1,0 +1,84 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="container py-3">
+  <h4>Loaned Books Report</h4>
+  
+  <div class="mb-3">
+    <span class="badge bg-primary">Total Books on Loan: {{ total_loans }}</span>
+  </div>
+
+  {% if books_by_student and books_by_student|length > 0 %}
+  <div class="card mt-3">
+    <div class="card-body">
+      <div class="table-responsive">
+        <table class="table table-sm table-striped align-middle">
+          <thead class="table-primary">
+            <tr>
+              <th>Student Name</th>
+              <th>Book Title</th>
+              <th>Date Loaned</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for student_name, books in books_by_student.items() %}
+              {% for book in books %}
+              <tr>
+                {% if loop.first %}
+                <td rowspan="{{ books|length }}" class="fw-bold align-middle" style="vertical-align: middle;">
+                  {{ student_name }}
+                </td>
+                {% endif %}
+                <td>{{ book.title }}</td>
+                <td>{{ book.checkout_date }}</td>
+              </tr>
+              {% endfor %}
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+  {% else %}
+  <div class="alert alert-info mt-3">
+    <i class="bi bi-info-circle"></i> No books are currently on loan.
+  </div>
+  {% endif %}
+  
+  <div class="mt-3">
+    <a href="{{ url_for('books_loan_page') }}" class="btn btn-primary">
+      <i class="bi bi-book"></i> Manage Book Loans
+    </a>
+    <button type="button" class="btn btn-warning" onclick="syncBookStatus()" title="Sync the 'B' icon status for all students">
+      <i class="bi bi-arrow-repeat"></i> Sync Student Status
+    </button>
+  </div>
+</div>
+
+<script>
+function syncBookStatus() {
+  if (!confirm('This will sync the book loaned status (B icon) for all students based on current loans. Continue?')) {
+    return;
+  }
+  
+  fetch('/api/books/sync-student-status', { method: 'POST' })
+    .then(response => response.json())
+    .then(data => {
+      if (data.error) {
+        alert('Error: ' + data.error);
+      } else {
+        alert('Successfully synced! Students and books updated.\nThe B icon should now display correctly in the main window.');
+        location.reload();
+      }
+    })
+    .catch(err => {
+      alert('Failed to sync: ' + err);
+    });
+}
+</script>
+
+<style>
+.table tbody tr td[rowspan] {
+  border-right: 2px solid #dee2e6;
+}
+</style>
+{% endblock %}

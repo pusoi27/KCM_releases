@@ -16,6 +16,7 @@ import shutil
 from dotenv import load_dotenv
 from flask_wtf.csrf import CSRFProtect, generate_csrf
 import logging
+import atexit
 
 # Load environment variables from .env file
 load_dotenv()
@@ -32,11 +33,97 @@ from modules.rate_limiter import limiter
 #  Flask setup
 # ================================================================
 app = Flask(__name__)
+app.config['DEV_TRACE_ENABLED'] = False
+app.config['DEV_TRACE_FILE_PATH'] = ''
 
 IS_PRODUCTION = (
     os.getenv('APP_ENV', 'development').lower() == 'production'
     or os.getenv('RENDER', '').lower() == 'true'
 )
+
+_DEV_TRACE_HANDLE = None
+_ORIGINAL_STDOUT = sys.stdout
+_ORIGINAL_STDERR = sys.stderr
+
+
+class _TeeStream:
+    """Write stream output to both the original stream and a trace file."""
+
+    def __init__(self, primary_stream, trace_stream):
+        self._primary = primary_stream
+        self._trace = trace_stream
+
+    @property
+    def encoding(self):
+        return getattr(self._primary, "encoding", "utf-8")
+
+    def write(self, data):
+        self._primary.write(data)
+        self._trace.write(data)
+        return len(data)
+
+    def flush(self):
+        self._primary.flush()
+        self._trace.flush()
+
+    def isatty(self):
+        return bool(getattr(self._primary, "isatty", lambda: False)())
+
+
+def _setup_development_trace(flask_app):
+    """Enable per-launch trace logging in development mode only."""
+    global _DEV_TRACE_HANDLE
+
+    if IS_PRODUCTION:
+        return
+
+    if os.getenv('DEV_TRACE_ENABLED', 'true').lower() != 'true':
+        return
+
+    use_reloader = os.getenv("FLASK_USE_RELOADER", "true").lower() == "true"
+    if use_reloader and os.getenv("WERKZEUG_RUN_MAIN") != "true":
+        # Skip the watchdog parent process; enable trace only for the active worker.
+        return
+
+    trace_dir = os.path.join(os.getcwd(), 'trace_logs')
+    os.makedirs(trace_dir, exist_ok=True)
+    stamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+    trace_path = os.path.join(trace_dir, f'trace_{stamp}_{os.getpid()}.txt')
+
+    _DEV_TRACE_HANDLE = open(trace_path, 'a', encoding='utf-8', buffering=1)
+    sys.stdout = _TeeStream(_ORIGINAL_STDOUT, _DEV_TRACE_HANDLE)
+    sys.stderr = _TeeStream(_ORIGINAL_STDERR, _DEV_TRACE_HANDLE)
+
+    logging.basicConfig(
+        level=logging.DEBUG,
+        handlers=[logging.StreamHandler(sys.stdout)],
+        force=True,
+    )
+    logging.getLogger('werkzeug').setLevel(logging.DEBUG)
+    flask_app.logger.setLevel(logging.DEBUG)
+
+    flask_app.config['DEV_TRACE_ENABLED'] = True
+    flask_app.config['DEV_TRACE_FILE_PATH'] = trace_path
+    print(f"[trace] Development trace enabled: {trace_path}")
+
+
+def _close_development_trace():
+    global _DEV_TRACE_HANDLE
+    if isinstance(sys.stdout, _TeeStream):
+        sys.stdout = _ORIGINAL_STDOUT
+    if isinstance(sys.stderr, _TeeStream):
+        sys.stderr = _ORIGINAL_STDERR
+    if _DEV_TRACE_HANDLE:
+        try:
+            _DEV_TRACE_HANDLE.flush()
+            _DEV_TRACE_HANDLE.close()
+        except Exception:
+            pass
+        _DEV_TRACE_HANDLE = None
+
+
+_setup_development_trace(app)
+atexit.register(_close_development_trace)
 
 _raw_secret = os.getenv('SECRET_KEY')
 if not _raw_secret:
@@ -234,6 +321,7 @@ def before_request_license_state():
 def before_request_profiler():
     """Capture request start time."""
     g.start_time = datetime.now()
+    app.logger.debug("[request] -> %s %s", request.method, request.path)
 
 
 @app.before_request
@@ -255,6 +343,11 @@ def before_request_capture_email():
         'api_csrf_token',
         'healthz',
         'email_login',
+        'setup_requirements',
+        'setup_storage',
+        'api_setup_status',
+        'instructor_profile_edit',
+        'instructor_profile',
         'not_found',
     }
 
@@ -310,6 +403,7 @@ def before_request_enforce_first_run_setup():
 
     setup_allowed_endpoints = {
         'static',
+        'email_login',
         'setup_requirements',
         'setup_storage',
         'instructor_profile_edit',
@@ -347,6 +441,7 @@ def after_request_profiler(response):
     from flask import g
     endpoint = request.path
     profiler.log_request(request.method, endpoint, response.status_code)
+    app.logger.debug("[request] <- %s %s %s", request.method, endpoint, response.status_code)
     return response
 
 # Prevent client/proxies from caching API responses
@@ -452,6 +547,16 @@ def inject_branding():
         brand_primary='#2e7d32',
         brand_primary_dark='#1b5e20',
         brand_accent='#fdd835',
+    )
+
+
+@app.context_processor
+def inject_dev_trace_context():
+    """Expose development trace metadata to templates."""
+    trace_path = app.config.get('DEV_TRACE_FILE_PATH', '') or ''
+    return dict(
+        dev_trace_enabled=bool(app.config.get('DEV_TRACE_ENABLED', False)),
+        dev_trace_filename=os.path.basename(trace_path) if trace_path else '',
     )
 
 
@@ -768,7 +873,6 @@ def not_found(e):
 # ================================================================
 #  Shutdown handler - print profiler summary
 # ================================================================
-import atexit
 
 def print_profiler_summary():
     """Print request profiler summary on app shutdown."""
@@ -782,16 +886,17 @@ atexit.register(print_profiler_summary)
 # ================================================================
 if __name__ == "__main__":
     port = int(os.getenv("PORT", "5000"))
+    host = os.getenv("HOST", "127.0.0.1")
     if IS_PRODUCTION:
         # Production: use Waitress (no Flask dev-server warnings)
         from waitress import serve
-        print(f"[Stdytime] Serving on http://127.0.0.1:{port}  (Waitress)")
-        serve(app, host="127.0.0.1", port=port, threads=8)
+        print(f"[Stdytime] Serving on http://{host}:{port}  (Waitress)")
+        serve(app, host=host, port=port, threads=8)
     else:
         # Development: Flask dev server with reloader for fast iteration
         use_reloader = os.getenv("FLASK_USE_RELOADER", "true").lower() == "true"
         app.run(
-            host="127.0.0.1",
+            host=host,
             port=port,
             debug=True,
             use_reloader=use_reloader,

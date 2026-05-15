@@ -1,0 +1,117 @@
+{% extends "base.html" %}
+
+{% block title %}Instructor Profile{% endblock %}
+
+{% block content %}
+<div class="container mt-5">
+    <div class="row">
+        <div class="col-md-8 mx-auto">
+            <div class="card shadow-sm">
+                <div class="card-header brand-card-header">
+                    <div class="d-flex justify-content-between align-items-center">
+                        <h4 class="mb-0">
+                            <i class="bi bi-person-workspace"></i> Instructor Profile
+                        </h4>
+                        {% if profile %}
+                        <a href="{{ url_for('instructor_profile_edit') }}" class="btn btn-sm btn-light">
+                            <i class="bi bi-pencil"></i> Edit
+                        </a>
+                        {% else %}
+                        <a href="{{ url_for('instructor_profile_edit') }}" class="btn btn-sm btn-light">
+                            <i class="bi bi-plus-circle"></i> Create Profile
+                        </a>
+                        {% endif %}
+                    </div>
+                </div>
+
+                <div class="card-body">
+                    {% if profile %}
+                    <div class="row mb-4">
+                        <div class="col-md-6">
+                            <h6 class="text-muted mb-1">Instructor Name</h6>
+                            <p class="fs-5 fw-semibold">{{ profile.name }}</p>
+                        </div>
+                        <div class="col-md-6">
+                            <h6 class="text-muted mb-1">Center Name</h6>
+                            <p class="fs-5 fw-semibold">{{ profile.center_location or 'Not specified' }}</p>
+                        </div>
+                    </div>
+
+                    <div class="row mb-4">
+                        <div class="col-md-6">
+                            <h6 class="text-muted mb-1">Center Address</h6>
+                            <p class="fs-5 fw-semibold">{{ profile.center_address or 'Not specified' }}</p>
+                        </div>
+                        <div class="col-md-6">
+                            <h6 class="text-muted mb-1">Center Time Zone</h6>
+                            <p class="fs-5 fw-semibold">{{ profile.center_time_zone or 'Not specified' }}</p>
+                        </div>
+                    </div>
+
+                    <div class="row mb-4">
+                        <div class="col-md-12">
+                            <h6 class="text-muted mb-3">Class Hours</h6>
+                            <table class="table table-sm table-borderless">
+                                <tbody>
+                                    {% set days = [('Monday', 'monday'), ('Tuesday', 'tuesday'), ('Wednesday', 'wednesday'), ('Thursday', 'thursday'), ('Friday', 'friday'), ('Saturday', 'saturday'), ('Sunday', 'sunday')] %}
+                                    {% for day, day_key in days %}
+                                    <tr>
+                                        <td class="fw-semibold">{{ day }}</td>
+                                        <td>
+                                            {% if profile[day_key + '_start'] and profile[day_key + '_end'] %}
+                                                {{ profile[day_key + '_start'] }} - {{ profile[day_key + '_end'] }}
+                                            {% else %}
+                                                <span class="text-muted">Closed</span>
+                                            {% endif %}
+                                        </td>
+                                    </tr>
+                                    {% endfor %}
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+
+                    <div class="row mb-4">
+                        <div class="col-md-6">
+                            <h6 class="text-muted mb-1">Email</h6>
+                            <p class="fs-5">
+                                {% if profile.email %}
+                                <a href="mailto:{{ profile.email }}">{{ profile.email }}</a>
+                                {% else %}
+                                <span class="text-muted">Not specified</span>
+                                {% endif %}
+                            </p>
+                        </div>
+                        <div class="col-md-6">
+                            <h6 class="text-muted mb-1">Phone Number</h6>
+                            <p class="fs-5">
+                                {% if profile.phone %}
+                                <a href="tel:{{ profile.phone }}">{{ profile.phone }}</a>
+                                {% else %}
+                                <span class="text-muted">Not specified</span>
+                                {% endif %}
+                            </p>
+                        </div>
+                    </div>
+
+                    <div class="row">
+                        <div class="col-12">
+                            <hr>
+                            <small class="text-muted">
+                                <i class="bi bi-clock-history"></i> Created: {{ profile.created_at }}<br>
+                                <i class="bi bi-pencil-square"></i> Last Updated: {{ profile.updated_at }}
+                            </small>
+                        </div>
+                    </div>
+                    {% else %}
+                    <div class="alert alert-info" role="alert">
+                        <i class="bi bi-info-circle"></i> No instructor profile has been created yet.
+                        <a href="{{ url_for('instructor_profile_edit') }}" class="alert-link">Create one now</a>
+                    </div>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

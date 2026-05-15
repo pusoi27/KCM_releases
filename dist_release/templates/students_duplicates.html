@@ -1,0 +1,130 @@
+{% extends "base.html" %}
+{% block content %}
+
+<div class="container-fluid mt-3" style="max-width:1200px;">
+  <div class="d-flex justify-content-between align-items-center mb-4">
+    <h4 class="mb-0">
+      <i class="bi bi-exclamation-triangle-fill text-warning"></i> Duplicate Student Names
+    </h4>
+    <a href="{{ url_for('students_list') }}" class="btn btn-secondary btn-sm">
+      <i class="bi bi-list"></i> Back to Students
+    </a>
+  </div>
+
+  {% if not has_duplicates %}
+    <div class="alert alert-success" role="alert">
+      <i class="bi bi-check-circle"></i> No duplicate student names found. All student names are unique!
+    </div>
+  {% else %}
+    <div class="alert alert-warning" role="alert">
+      <i class="bi bi-exclamation-triangle-fill"></i> 
+      Found <strong>{{ duplicate_summary|length }}</strong> name(s) with duplicates. Review and take action below.
+    </div>
+
+    {% for duplicate_group in duplicate_summary %}
+      <div class="card mb-4 border-warning">
+        <div class="card-header bg-warning bg-opacity-10 border-warning">
+          <div class="row align-items-center">
+            <div class="col-auto">
+              <h6 class="mb-0">
+                <strong class="text-danger">{{ duplicate_group.name }}</strong>
+                <span class="badge bg-warning text-dark ms-2">{{ duplicate_group.count }} students</span>
+              </h6>
+            </div>
+          </div>
+        </div>
+        <div class="card-body p-0">
+          <div class="table-responsive">
+            <table class="table table-sm table-hover mb-0">
+              <thead class="table-light">
+                <tr>
+                  <th style="width: 50px;">ID</th>
+                  <th>Name</th>
+                  <th>Email</th>
+                  <th>Phone</th>
+                  <th>Subject</th>
+                  <th>Schedule</th>
+                  <th>Flags</th>
+                  <th style="width: 150px;">Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {% for student in duplicate_group.students %}
+                  <tr>
+                    <td><strong>{{ student.id }}</strong></td>
+                    <td>{{ student.name }}</td>
+                    <td>
+                      {% if student.email %}
+                        <small>{{ student.email }}</small>
+                      {% else %}
+                        <span class="text-muted">-</span>
+                      {% endif %}
+                    </td>
+                    <td>
+                      {% if student.phone %}
+                        <small>{{ student.phone }}</small>
+                      {% else %}
+                        <span class="text-muted">-</span>
+                      {% endif %}
+                    </td>
+                    <td>
+                      <span class="badge {% if student.subject == 'S1' %}bg-info{% elif student.subject == 'S2' %}bg-warning text-dark{% else %}bg-secondary{% endif %}">
+                        {{ student.subject or 'N/A' }}
+                      </span>
+                    </td>
+                    <td>
+                      <small>
+                        {% if student.day1 %}
+                          <span class="badge bg-light text-dark">D1: {{ student.day1 }} {{ student.day1_time }}</span>
+                        {% endif %}
+                        {% if student.day2 %}
+                          <span class="badge bg-light text-dark">D2: {{ student.day2 }} {{ student.day2_time }}</span>
+                        {% endif %}
+                        {% if not student.day1 and not student.day2 %}
+                          <span class="text-muted">No schedule</span>
+                        {% endif %}
+                      </small>
+                    </td>
+                    <td>
+                      <small>
+                        {% if student.el %}<span class="badge bg-warning text-dark">EL</span>{% endif %}
+                        {% if student.pi %}<span class="badge bg-info">PI</span>{% endif %}
+                        {% if student.v %}<span class="badge bg-success">V</span>{% endif %}
+                      </small>
+                    </td>
+                    <td>
+                      <a href="{{ url_for('students_edit', sid=student.id) }}" class="btn btn-sm btn-primary" title="Edit Student">
+                        <i class="bi bi-pencil"></i> Edit
+                      </a>
+                    </td>
+                  </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+        </div>
+        <div class="card-footer bg-light border-warning py-2">
+          <small class="text-muted">
+            <i class="bi bi-info-circle"></i> 
+            Consider renaming one of these students to make their name unique, or verify they are indeed different students.
+          </small>
+        </div>
+      </div>
+    {% endfor %}
+
+    <div class="card border-info mt-4">
+      <div class="card-header bg-info bg-opacity-10">
+        <h6 class="mb-0"><i class="bi bi-lightbulb"></i> How to Resolve Duplicates</h6>
+      </div>
+      <div class="card-body">
+        <ol class="mb-0">
+          <li><strong>Edit Student Name:</strong> Click "Edit" to modify a student's name to be unique (e.g., add middle initial, surname, or ID)</li>
+          <li><strong>Merge Records:</strong> If they're the same person with duplicate records, identify which one is current and delete the old one</li>
+          <li><strong>Add Context:</strong> Include additional info in the name (e.g., "John Smith (9am)" vs "John Smith (2pm)") to distinguish them</li>
+        </ol>
+      </div>
+    </div>
+  {% endif %}
+</div>
+
+{% endblock %}

@@ -1,0 +1,503 @@
+{% extends "base.html" %}
+{% block content %}
+{% macro format_time_12hr(time_str) %}
+  {% if time_str and time_str is string %}
+    {% set parts = time_str.split(':') %}
+    {% if parts|length >= 2 %}
+      {% set hour = parts[0]|int %}
+      {% set minute = parts[1] %}
+      {% if hour == 0 %}
+        12:{{ minute }} AM
+      {% elif hour < 12 %}
+        {{ hour }}:{{ minute }} AM
+      {% elif hour == 12 %}
+        12:{{ minute }} PM
+      {% else %}
+        {{ hour - 12 }}:{{ minute }} PM
+      {% endif %}
+    {% else %}
+      {{ time_str }}
+    {% endif %}
+  {% endif %}
+{% endmacro %}
+<style>
+  /* Excel-like table styling with frozen header */
+  .table-container {
+    max-height: calc(100vh - 200px);
+    overflow-y: auto;
+    overflow-x: auto;
+    position: relative;
+    border: 1px solid #ddd;
+    width: 100%;
+    margin: 0;
+    padding: 0;
+  }
+  .student-table {
+    font-size: 0.85rem;
+    border-collapse: collapse;
+    margin-bottom: 0;
+    width: 100%;
+    min-width: fit-content;
+  }
+  .student-table thead {
+    position: sticky;
+    top: 0;
+    z-index: 10;
+  }
+  .student-table th {
+    white-space: nowrap;
+    background-color: var(--brand-primary) !important;
+    color: white !important;
+    font-weight: 600;
+    padding: 6px 4px !important;
+    border: 1px solid white !important;
+    box-shadow: 0 2px 2px -1px rgba(0, 0, 0, 0.4);
+    font-size: 0.8rem;
+  }
+  .student-table td {
+    padding: 4px !important;
+    vertical-align: middle;
+    border: 1px solid #dee2e6 !important;
+  }
+  .student-table tbody tr:hover {
+    background-color: #f3f9ef !important;
+  }
+  .deleted-student-row {
+    background-color: #f5f5f5 !important;
+  }
+  .deleted-student-row:hover {
+    background-color: #efefef !important;
+  }
+  .table-section-header {
+    background-color: #e9ecef !important;
+    color: #6c757d;
+    font-weight: 500;
+    border-top: 2px solid #dee2e6 !important;
+  }
+  .col-id { width: 35px; text-align: center; font-weight: 600; }
+  .col-name { min-width: 90px; }
+  .student-name-link {
+    color: inherit;
+    text-decoration: none;
+    font-weight: 600;
+    display: inline-block;
+  }
+  .student-name-link:hover,
+  .student-name-link:focus {
+    color: var(--brand-primary-dark);
+    text-decoration: underline;
+  }
+  .col-subject-flag {
+    width: 44px;
+    min-width: 44px;
+    max-width: 44px;
+    text-align: center;
+  }
+  .col-photo {
+    width: 44px;
+    min-width: 44px;
+    max-width: 44px;
+    text-align: center;
+  }
+  .student-photo-avatar {
+    width: 36px;
+    height: 36px;
+    border-radius: 50%;
+    object-fit: cover;
+    border: 1.5px solid #d1d9ee;
+    background: #f0f4ff;
+    display: inline-block;
+  }
+  .student-photo-default {
+    width: 36px;
+    height: 36px;
+    border-radius: 50%;
+    background: #e0e7ef;
+    color: #7c8ba1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 1.3rem;
+    border: 1.5px solid #d1d9ee;
+  }
+  .col-classification { min-width: 110px; text-align: center; }
+  .col-day-flag {
+    width: 40px;
+    min-width: 40px;
+    max-width: 40px;
+    text-align: center;
+  }
+  .col-qr { width: 45px; text-align: center; }
+  .col-checkbox { width: 32px; text-align: center; padding: 3px 2px !important; }
+  .col-actions { min-width: 220px; }
+
+  .subject-check {
+    width: 16px;
+    height: 16px;
+    accent-color: #2e7d32;
+    cursor: default;
+  }
+
+  .classification-badge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 100px;
+    padding: 0.3rem 0.55rem;
+    border-radius: 999px;
+    font-size: 0.78rem;
+    font-weight: 700;
+    border: 1px solid #b8d7b5;
+    color: var(--brand-primary-dark);
+    background: #e8f5e9;
+    transition: background 0.2s, border-color 0.2s;
+  }
+  .classification-badge.assisted {
+    background: #fefce8;
+    border-color: #fde68a;
+    color: #a16207;
+  }
+  .classification-badge.monitored {
+    background: #eff6ff;
+    border-color: #bfdbfe;
+    color: #2563eb;
+  }
+  .classification-badge.independent {
+    background: #f0fdf4;
+    border-color: #bbf7d0;
+    color: #15803d;
+  }
+  .classification-badge.virtual {
+    background: #faf5ff;
+    border-color: #e9d5ff;
+    color: #7c3aed;
+  }
+
+  .students-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.4rem;
+    align-items: center;
+    margin-bottom: 0.6rem;
+  }
+
+  .students-actions .btn {
+    margin: 0;
+  }
+
+  .students-actions form {
+    margin: 0;
+  }
+
+  /* Responsive adjustments for smaller screens */
+  @media (max-width: 1200px) {
+    .student-table { font-size: 0.8rem; }
+    .student-table th { padding: 5px 3px !important; font-size: 0.75rem; }
+    .student-table td { padding: 3px !important; }
+    .col-name { min-width: 80px; }
+    .col-actions { min-width: 180px; }
+  }
+
+  @media (max-width: 768px) {
+    .students-actions .btn,
+    .students-actions form {
+      width: 100%;
+    }
+
+    .students-actions .btn {
+      text-align: center;
+    }
+  }
+</style>
+<div class="container-fluid mt-3 px-2 px-md-3">
+  <h4 class="mb-2 text-primary">Student Database</h4>
+
+  <!-- Duplicate Names Alert -->
+  {% if has_duplicates %}
+    <div class="alert alert-warning alert-dismissible fade show" role="alert">
+      <i class="bi bi-exclamation-triangle-fill"></i> 
+      <strong>Duplicate Names Detected!</strong> 
+      {{ duplicate_count }} student name(s) appear more than once in your database.
+      <a href="{{ url_for('students_duplicates') }}" class="alert-link"><strong>View and resolve duplicates</strong></a>
+      <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+    </div>
+  {% endif %}
+
+  <!-- Action buttons -->
+  <div class="students-actions">
+    <a href="{{ url_for('students_add') }}" class="btn btn-success btn-sm">Add Student</a>
+    <a href="{{ url_for('students_export') }}" class="btn btn-outline-primary btn-sm">Export CSV</a>
+    <form action="{{ url_for('students_import') }}" method="post" enctype="multipart/form-data" id="importForm">
+      <input type="file" name="csvfile" accept=".csv" required style="display:none;" id="csvFileInput" onchange="this.form.submit()">
+      <button type="button" class="btn btn-outline-secondary btn-sm" onclick="document.getElementById('csvFileInput').click()">Import CSV</button>
+    </form>
+    <form action="{{ url_for('qr_students_generate_all_dashboard') }}" method="post" class="d-inline">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <button type="submit" class="btn btn-outline-primary btn-sm">Generate All QRs</button>
+    </form>
+    <a href="{{ url_for('qr_pdf_all') }}" class="btn btn-outline-dark btn-sm">Print QR Code (Avery 8160)</a>
+  </div>
+
+  <div class="table-container">
+  <table class="table table-sm table-striped align-middle student-table">
+    <thead>
+      <tr>
+        <th class="col-id">ID</th>
+        <th class="col-photo">Photo</th>
+        <th class="col-name">Name</th>
+        <th class="col-subject-flag" title="Math" aria-label="Math">M</th>
+        <th class="col-subject-flag" title="Reading" aria-label="Reading">R</th>
+        <th class="col-subject-flag" title="Writing" aria-label="Writing">W</th>
+        <th class="col-classification">Classification</th>
+        <th class="col-day-flag" title="Monday" aria-label="Monday">M</th>
+        <th class="col-day-flag" title="Tuesday" aria-label="Tuesday">T</th>
+        <th class="col-day-flag" title="Wednesday" aria-label="Wednesday">W</th>
+        <th class="col-day-flag" title="Thursday" aria-label="Thursday">Th</th>
+        <th class="col-day-flag" title="Friday" aria-label="Friday">F</th>
+        <th class="col-day-flag" title="Saturday" aria-label="Saturday">Sa</th>
+        <th>Email</th>
+        <th>Phone</th>
+        <th class="col-qr">QR</th>
+        <th class="col-checkbox">Book Loan</th>
+        <th class="col-actions">Actions</th>
+      </tr>
+    </thead>
+    <tbody>
+      <!-- Active Students -->
+      {% for s in students %}
+      <tr>
+        <td class="col-id">{{ s.id }}</td>
+        <td class="col-photo">
+          {% if s.photo_url %}
+            <img src="{{ s.photo_url }}" alt="Photo" class="student-photo-avatar" loading="lazy" decoding="async" onerror="handleStudentPhotoError(this, 'photo-fallback-{{ s.id }}');">
+            <span id="photo-fallback-{{ s.id }}" class="student-photo-default" style="display:none;">
+              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" style="display:block;margin:auto;">
+                <circle cx="12" cy="12" r="12" fill="#e0e7ef"/>
+                <circle cx="12" cy="10" r="4" fill="#7c8ba1"/>
+                <ellipse cx="12" cy="17" rx="6" ry="3.5" fill="#b6c2d1"/>
+              </svg>
+            </span>
+          {% else %}
+            <span class="student-photo-default">
+              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" style="display:block;margin:auto;">
+                <circle cx="12" cy="12" r="12" fill="#e0e7ef"/>
+                <circle cx="12" cy="10" r="4" fill="#7c8ba1"/>
+                <ellipse cx="12" cy="17" rx="6" ry="3.5" fill="#b6c2d1"/>
+              </svg>
+            </span>
+          {% endif %}
+        </td>
+        <td class="col-name">
+          <a href="{{ url_for('students_edit',sid=s.id) }}" class="student-name-link">{{ s.name }}</a>
+        </td>
+        {% set ns = namespace(m=false, r=false, w=false) %}
+        {% for subject_name in s.subjects %}
+          {% set token = (subject_name or '')|trim|lower %}
+          {% if token in ['m', 'math', 'mathematics', 's2'] %}{% set ns.m = true %}{% endif %}
+          {% if token in ['r', 'reading', 'read', 's1'] %}{% set ns.r = true %}{% endif %}
+          {% if token in ['w', 'writing', 'write'] %}{% set ns.w = true %}{% endif %}
+        {% endfor %}
+        <td class="col-subject-flag"><input class="form-check-input subject-check" type="checkbox" {% if ns.m %}checked{% endif %} disabled></td>
+        <td class="col-subject-flag"><input class="form-check-input subject-check" type="checkbox" {% if ns.r %}checked{% endif %} disabled></td>
+        <td class="col-subject-flag"><input class="form-check-input subject-check" type="checkbox" {% if ns.w %}checked{% endif %} disabled></td>
+        <td class="col-classification">
+          {% set class_tooltip = {
+            'Assisted': 'Student needs one-on-one assistance; dedicated staff must be available to work with the student.',
+            'Monitored': 'Student is semi-independent, needs guidance from staff, staff can service 2 to 4 students.',
+            'Independent': 'Student is capable of working independently; staff planning per center guidelines.',
+            'Virtual': 'Student joins the afterschool activity online, staff can service 2 to 4 students.'
+          } %}
+          {% set class_map = {'Assisted': 'assisted', 'Monitored': 'monitored', 'Independent': 'independent', 'Virtual': 'virtual'} %}
+          <span class="classification-badge {{ class_map.get(s.classification, '') }}" title="{{ class_tooltip.get(s.classification, '') }}" aria-label="{{ class_tooltip.get(s.classification, '') }}">{{ s.classification }}</span>
+        </td>
+        {% set ds = namespace(m=false, t=false, w=false, th=false, f=false, sa=false) %}
+        {% for slot in s.schedule %}
+          {% set day_token = (slot.day or '')|trim|lower %}
+          {% if day_token.startswith('mon') %}{% set ds.m = true %}{% endif %}
+          {% if day_token.startswith('tue') %}{% set ds.t = true %}{% endif %}
+          {% if day_token.startswith('wed') %}{% set ds.w = true %}{% endif %}
+          {% if day_token.startswith('thu') %}{% set ds.th = true %}{% endif %}
+          {% if day_token.startswith('fri') %}{% set ds.f = true %}{% endif %}
+          {% if day_token.startswith('sat') %}{% set ds.sa = true %}{% endif %}
+        {% endfor %}
+        <td class="col-day-flag"><input class="form-check-input subject-check" type="checkbox" {% if ds.m %}checked{% endif %} disabled></td>
+        <td class="col-day-flag"><input class="form-check-input subject-check" type="checkbox" {% if ds.t %}checked{% endif %} disabled></td>
+        <td class="col-day-flag"><input class="form-check-input subject-check" type="checkbox" {% if ds.w %}checked{% endif %} disabled></td>
+        <td class="col-day-flag"><input class="form-check-input subject-check" type="checkbox" {% if ds.th %}checked{% endif %} disabled></td>
+        <td class="col-day-flag"><input class="form-check-input subject-check" type="checkbox" {% if ds.f %}checked{% endif %} disabled></td>
+        <td class="col-day-flag"><input class="form-check-input subject-check" type="checkbox" {% if ds.sa %}checked{% endif %} disabled></td>
+        <td>{{ s.email }}</td>
+        <td>{{ s.phone }}</td>
+        <td class="col-qr">
+          <img src="{{ url_for('serve_student_qr', sid=s.id) }}?v={{ date_str|replace(',', '')|replace(' ', '') }}{{ time_str|replace(':', '')|replace(' ', '') }}" alt="QR" width="48" height="48" loading="lazy" decoding="async" data-fallback-src="{{ url_for('static', filename='img/logo.png') }}" onerror="handleStudentQrError(this);">
+        </td>
+        <td class="text-center col-checkbox">
+          {% if s.book_loaned %}<span class="badge bg-primary">B</span>{% endif %}
+        </td>
+        <td class="col-actions">
+          <a href="{{ url_for('students_edit',sid=s.id) }}" class="btn btn-outline-info btn-sm">Edit</a>
+          <a href="{{ url_for('qr_pdf_individual', sid=s.id) }}" class="btn btn-outline-dark btn-sm" title="Download individual QR PDF">Print QR</a>
+          {% if current_user and current_user.is_admin() %}
+          <form method="POST" action="{{ url_for('students_delete',sid=s.id) }}" class="d-inline">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <button type="submit" class="btn btn-outline-danger btn-sm" onclick='return confirm("Delete student " + {{ s.name|tojson }} + "?");'>Del</button>
+          </form>
+          {% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+
+      <!-- Deleted Students Section -->
+      {% if deleted_students %}
+      <tr>
+        <td colspan="17" class="table-section-header bg-light px-3 py-2">
+          <strong class="text-muted">Deleted Students</strong>
+        </td>
+      </tr>
+      {% for s in deleted_students %}
+      <tr class="deleted-student-row">
+        <td class="col-id text-muted">{{ s.id }}</td>
+        <td class="col-photo">
+          {% if s.photo_url %}
+            <img src="{{ s.photo_url }}" alt="Photo" class="student-photo-avatar" loading="lazy" decoding="async" style="opacity:0.6;" onerror="handleStudentPhotoError(this, 'photo-fallback-{{ s.id }}-del');">
+            <span id="photo-fallback-{{ s.id }}-del" class="student-photo-default" style="display:none;opacity:0.6;">
+              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" style="display:block;margin:auto;">
+                <circle cx="12" cy="12" r="12" fill="#e0e7ef"/>
+                <circle cx="12" cy="10" r="4" fill="#7c8ba1"/>
+                <ellipse cx="12" cy="17" rx="6" ry="3.5" fill="#b6c2d1"/>
+              </svg>
+            </span>
+          {% else %}
+            <span class="student-photo-default" style="opacity:0.6;">
+              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" style="display:block;margin:auto;">
+                <circle cx="12" cy="12" r="12" fill="#e0e7ef"/>
+                <circle cx="12" cy="10" r="4" fill="#7c8ba1"/>
+                <ellipse cx="12" cy="17" rx="6" ry="3.5" fill="#b6c2d1"/>
+              </svg>
+            </span>
+          {% endif %}
+        </td>
+        <td class="col-name text-muted">{{ s.name }}</td>
+        {% set ns = namespace(m=false, r=false, w=false) %}
+        {% for subject_name in s.subjects %}
+          {% set token = (subject_name or '')|trim|lower %}
+          {% if token in ['m', 'math', 'mathematics', 's2'] %}{% set ns.m = true %}{% endif %}
+          {% if token in ['r', 'reading', 'read', 's1'] %}{% set ns.r = true %}{% endif %}
+          {% if token in ['w', 'writing', 'write'] %}{% set ns.w = true %}{% endif %}
+        {% endfor %}
+        <td class="col-subject-flag"><input class="form-check-input subject-check" type="checkbox" {% if ns.m %}checked{% endif %} disabled style="opacity:0.6;"></td>
+        <td class="col-subject-flag"><input class="form-check-input subject-check" type="checkbox" {% if ns.r %}checked{% endif %} disabled style="opacity:0.6;"></td>
+        <td class="col-subject-flag"><input class="form-check-input subject-check" type="checkbox" {% if ns.w %}checked{% endif %} disabled style="opacity:0.6;"></td>
+        <td class="col-classification text-muted">
+          {% set class_tooltip = {
+            'Assisted': 'Student needs one-on-one assistance; dedicated staff must be available to work with the student.',
+            'Monitored': 'Student is semi-independent, needs guidance from staff, staff can service 2 to 4 students.',
+            'Independent': 'Student is capable of working independently; staff planning per center guidelines.',
+            'Virtual': 'Student joins the afterschool activity online, staff can service 2 to 4 students.'
+          } %}
+          {% set class_map = {'Assisted': 'assisted', 'Monitored': 'monitored', 'Independent': 'independent', 'Virtual': 'virtual'} %}
+          <span class="classification-badge {{ class_map.get(s.classification, '') }}" style="opacity:0.7;" title="{{ class_tooltip.get(s.classification, '') }}" aria-label="{{ class_tooltip.get(s.classification, '') }}">{{ s.classification }}</span>
+        </td>
+        {% set ds = namespace(m=false, t=false, w=false, th=false, f=false, sa=false) %}
+        {% for slot in s.schedule %}
+          {% set day_token = (slot.day or '')|trim|lower %}
+          {% if day_token.startswith('mon') %}{% set ds.m = true %}{% endif %}
+          {% if day_token.startswith('tue') %}{% set ds.t = true %}{% endif %}
+          {% if day_token.startswith('wed') %}{% set ds.w = true %}{% endif %}
+          {% if day_token.startswith('thu') %}{% set ds.th = true %}{% endif %}
+          {% if day_token.startswith('fri') %}{% set ds.f = true %}{% endif %}
+          {% if day_token.startswith('sat') %}{% set ds.sa = true %}{% endif %}
+        {% endfor %}
+        <td class="col-day-flag"><input class="form-check-input subject-check" type="checkbox" {% if ds.m %}checked{% endif %} disabled style="opacity:0.6;"></td>
+        <td class="col-day-flag"><input class="form-check-input subject-check" type="checkbox" {% if ds.t %}checked{% endif %} disabled style="opacity:0.6;"></td>
+        <td class="col-day-flag"><input class="form-check-input subject-check" type="checkbox" {% if ds.w %}checked{% endif %} disabled style="opacity:0.6;"></td>
+        <td class="col-day-flag"><input class="form-check-input subject-check" type="checkbox" {% if ds.th %}checked{% endif %} disabled style="opacity:0.6;"></td>
+        <td class="col-day-flag"><input class="form-check-input subject-check" type="checkbox" {% if ds.f %}checked{% endif %} disabled style="opacity:0.6;"></td>
+        <td class="col-day-flag"><input class="form-check-input subject-check" type="checkbox" {% if ds.sa %}checked{% endif %} disabled style="opacity:0.6;"></td>
+        <td class="text-muted">{{ s.email }}</td>
+        <td class="text-muted">{{ s.phone }}</td>
+        <td class="col-qr">
+          <img src="{{ url_for('serve_student_qr', sid=s.id) }}?v={{ date_str|replace(',', '')|replace(' ', '') }}{{ time_str|replace(':', '')|replace(' ', '') }}" alt="QR" width="48" height="48" loading="lazy" decoding="async" data-fallback-src="{{ url_for('static', filename='img/logo.png') }}" onerror="handleStudentQrError(this);" style="opacity: 0.5;">
+        </td>
+        <td class="text-center col-checkbox text-muted">
+          {% if s.book_loaned %}<span class="badge bg-secondary">B</span>{% endif %}
+        </td>
+        <td class="col-actions">
+          {% if current_user and current_user.is_admin() %}
+          <form method="POST" action="{{ url_for('students_reactivate',sid=s.id) }}" class="d-inline">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <button type="submit" class="btn btn-outline-success btn-sm" onclick="return confirm('Reactivate student?');">Reactivate</button>
+          </form>
+          <form method="POST" action="{{ url_for('students_permanent_delete',sid=s.id) }}" class="d-inline">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <button type="submit" class="btn btn-outline-danger btn-sm" onclick="return confirm('Permanently delete student? This cannot be undone.');">Perm Delete</button>
+          </form>
+          {% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+      {% endif %}
+    </tbody>
+  </table>
+  </div>
+</div>
+
+<script>
+  function _retryImageOnce(imgElement) {
+    if (imgElement.dataset.retryAttempted === '1') {
+      return false;
+    }
+    imgElement.dataset.retryAttempted = '1';
+    const separator = imgElement.src.includes('?') ? '&' : '?';
+    imgElement.src = `${imgElement.src}${separator}retry=${Date.now()}`;
+    return true;
+  }
+
+  function handleStudentQrError(imgElement) {
+    if (_retryImageOnce(imgElement)) {
+      return;
+    }
+    imgElement.onerror = null;
+    imgElement.src = imgElement.dataset.fallbackSrc || '{{ url_for('static', filename='img/logo.png') }}';
+  }
+
+  function handleStudentPhotoError(imgElement, fallbackId) {
+    if (_retryImageOnce(imgElement)) {
+      return;
+    }
+    imgElement.style.display = 'none';
+    const fallbackElement = document.getElementById(fallbackId);
+    if (fallbackElement) {
+      fallbackElement.style.display = 'flex';
+    }
+  }
+
+  // Save and restore scroll position
+  const TABLE_CONTAINER_KEY = 'studentTableScrollPos';
+  const tableContainer = document.querySelector('.table-container');
+
+  // Restore scroll position on page load
+  window.addEventListener('load', () => {
+    const savedPos = sessionStorage.getItem(TABLE_CONTAINER_KEY);
+    if (savedPos && tableContainer) {
+      tableContainer.scrollTop = parseInt(savedPos, 10);
+    }
+  });
+
+  // Save scroll position before navigating away
+  document.querySelectorAll('a[href*="/students/edit/"]').forEach(link => {
+    link.addEventListener('click', () => {
+      if (tableContainer) {
+        sessionStorage.setItem(TABLE_CONTAINER_KEY, tableContainer.scrollTop);
+      }
+    });
+  });
+
+  // Also save when using back button (via pagehide event)
+  window.addEventListener('pagehide', () => {
+    if (tableContainer) {
+      sessionStorage.setItem(TABLE_CONTAINER_KEY, tableContainer.scrollTop);
+    }
+  });
+</script>
+{% endblock %}

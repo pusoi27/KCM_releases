@@ -1,0 +1,104 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="container mt-4">
+  <h4 class="mb-4">Generate QR Code</h4>
+
+  <!-- Students Section -->
+  <div class="card mb-3">
+    <div class="card-body">
+      <label class="form-label fw-semibold">Select Student:</label>
+      <select id="studentSelect" class="form-select mb-3">
+        <option value="">-- Choose a student --</option>
+        {% for s in students %}
+          <option value="{{ s[0] }}">{{ s[1] }}</option>
+        {% endfor %}
+      </select>
+      <button type="button" class="btn btn-primary" onclick="generateStudentQR()">Generate QR Code</button>
+      <button type="button" class="btn btn-warning" onclick="generateAllStudentQRs()">Generate QR for All Students</button>
+    </div>
+  </div>
+
+  <!-- Staff Section -->
+  <div class="card mb-3">
+    <div class="card-body">
+      <label class="form-label fw-semibold">Select a staff member:</label>
+      <select id="assistantSelect" class="form-select mb-3">
+        <option value="">-- Choose</option>
+        {% for a in assistants %}
+          <option value="{{ a[0] }}">{{ a[1] }}</option>
+        {% endfor %}
+      </select>
+      <button type="button" class="btn btn-primary" onclick="generateAssistantQR()">Generate QR Code</button>
+      <button type="button" class="btn btn-warning" onclick="generateAllAssistantQRs()">Generate QR for All Staff</button>
+    </div>
+  </div>
+
+  <!-- Books Section -->
+  <div class="card mb-3">
+    <div class="card-body">
+      <label class="form-label fw-semibold">Select a book:</label>
+      <select id="bookSelect" class="form-select mb-3">
+        <option value="">-- Choose</option>
+        {% for b in books %}
+          <option value="{{ b[0] }}">{{ b[1] }}</option>
+        {% endfor %}
+      </select>
+      <button type="button" class="btn btn-primary" onclick="generateBookQR()">Generate QR Code</button>
+      <button type="button" class="btn btn-warning" onclick="generateAllBookQRs()">Generate QR for All Books</button>
+    </div>
+  </div>
+</div>
+
+<script>
+function generateStudentQR() {
+  const sid = document.getElementById('studentSelect').value;
+  if (!sid) { alert('Please select a student'); return; }
+  fetch(`/qr/generate/${sid}`, { method: 'POST' })
+    .then(() => alert('QR code generated for student'))
+    .catch(err => alert('Error: ' + err));
+}
+
+function generateAllStudentQRs() {
+  fetch('/qr/generate_all', { method: 'POST' })
+    .then(r => r.json())
+    .then(data => {
+      const gen = (data.generated_count != null) ? data.generated_count : ((data.generated && data.generated.length) ? data.generated.length : 0);
+      const skip = (data.skipped_count != null) ? data.skipped_count : ((data.skipped && data.skipped.length) ? data.skipped.length : 0);
+      alert(`Generated: ${gen}\nSkipped: ${skip}`);
+    })
+    .catch(err => alert('Error: ' + err));
+}
+
+function generateAssistantQR() {
+  const aid = document.getElementById('assistantSelect').value;
+  if (!aid) { alert('Please select a staff member'); return; }
+  fetch(`/qr/assistants/generate/${aid}`, { method: 'POST' })
+    .then(r => r.json())
+    .then(data => alert(data.message || 'QR code generated'))
+    .catch(err => alert('Error: ' + err));
+}
+
+function generateAllAssistantQRs() {
+  fetch('/qr/assistants/generate_all', { method: 'POST' })
+    .then(r => r.json())
+    .then(data => alert(`Generated: ${data.generated?.length || 0}\nSkipped: ${data.skipped?.length || 0}`))
+    .catch(err => alert('Error: ' + err));
+}
+
+function generateBookQR() {
+  const bid = document.getElementById('bookSelect').value;
+  if (!bid) { alert('Please select a book'); return; }
+  fetch(`/qr/books/generate/${bid}`, { method: 'POST' })
+    .then(r => r.json())
+    .then(data => alert(data.message || 'QR code generated'))
+    .catch(err => alert('Error: ' + err));
+}
+
+function generateAllBookQRs() {
+  fetch('/qr/books/generate_all', { method: 'POST' })
+    .then(r => r.json())
+    .then(data => alert(`Generated: ${data.generated?.length || 0}\nSkipped: ${data.skipped?.length || 0}`))
+    .catch(err => alert('Error: ' + err));
+}
+</script>
+{% endblock %}

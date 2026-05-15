@@ -9,6 +9,23 @@ import json
 DATA_DIR = os.getenv("DATA_DIR", "data")
 LOCAL_FALLBACK_DB_PATH = os.path.join("data", "Stdytime.db")
 
+
+def _default_local_db_path_for_runtime() -> str:
+    """Return the safest default DB path for the current runtime context.
+
+    - Frozen/installed Windows app: use a per-user LOCALAPPDATA location.
+    - Source/dev runs: keep the historical relative ./data path.
+    """
+    if getattr(sys, "frozen", False):
+        local_appdata = os.getenv("LOCALAPPDATA", "").strip()
+        if local_appdata:
+            return os.path.join(local_appdata, "StdyTime", "Stdytime.db")
+
+        # Defensive fallback when LOCALAPPDATA is unavailable
+        return os.path.join(os.path.expanduser("~"), "AppData", "Local", "StdyTime", "Stdytime.db")
+
+    return os.path.join(DATA_DIR, "Stdytime.db")
+
 # ---------------------------------------------------------------------------
 # Config file (db_config.json next to app.py).
 # Supported keys:
@@ -38,32 +55,62 @@ def _read_db_config_path() -> str | None:
     return path if path else None
 
 
+def _normalize_path(path: str) -> str:
+    return (path or "").strip().replace("\\", "/")
+
+
+def _is_google_drive_location(path: str) -> bool:
+    normalized = _normalize_path(path).lower()
+    if not normalized:
+        return False
+    return (
+        normalized.startswith("g:/")
+        or "my drive" in normalized
+        or "google drive" in normalized
+    )
+
+
+def _resolve_gdrive_sync_target(gdrive_sync_path: str) -> str:
+    """Return the actual DB file path used for Google Drive sync.
+
+    The setup screen may store either a folder path (preferred) or an explicit
+    database file path for backwards compatibility. Folder inputs resolve to a
+    Stdytime.db file inside that folder.
+    """
+    path = _normalize_path(gdrive_sync_path)
+    if not path:
+        return ""
+
+    last_segment = os.path.basename(path.rstrip("/"))
+    if not os.path.splitext(last_segment)[1]:
+        return os.path.join(path, "Stdytime.db").replace("\\", "/")
+    return path
+
+
 def get_db_config_status() -> dict:
     """Return readiness status for local DB path + Google Drive sync path setup."""
     cfg = _read_db_config()
     db_path = str(cfg.get("db_path", "") or "").strip()
+    if not db_path:
+        # Local DB path is auto-managed; default it when not explicitly set.
+        db_path = _default_local_db_path_for_runtime().replace("\\", "/")
     gdrive_sync_path = str(cfg.get("gdrive_sync_path", "") or "").strip()
 
     issues: list[str] = []
     warnings: list[str] = []
 
-    if not db_path:
-        issues.append("Local database path is not configured.")
-    else:
-        usable, reason = _can_use_db_parent(db_path)
-        if not usable:
-            issues.append(f"Local database path is not writable: {reason}")
+    usable, reason = _can_use_db_parent(db_path)
+    if not usable:
+        issues.append(f"Local database path is not writable: {reason}")
 
     if not gdrive_sync_path:
-        issues.append("Google Drive sync path is not configured.")
+        issues.append(
+            "Google Drive folder path is required. Install Google Drive for Desktop and choose a folder in My Drive, for example: G:/My Drive/StdyTime."
+        )
     else:
-        usable, reason = _can_use_db_parent(gdrive_sync_path)
-        if not usable:
-            issues.append(f"Google Drive sync path is not writable: {reason}")
-        normalized = gdrive_sync_path.replace('\\', '/').lower()
-        if "google drive" not in normalized and "my drive" not in normalized and not normalized.startswith("g:/"):
-            warnings.append(
-                "Path does not look like a Google Drive location. This is allowed, but sync may not work as intended."
+        if not _is_google_drive_location(gdrive_sync_path):
+            issues.append(
+                "Google Drive folder path must point to Google Drive/My Drive. Install Google Drive for Desktop and choose a path like G:/My Drive/StdyTime."
             )
 
     return {
@@ -73,31 +120,35 @@ def get_db_config_status() -> dict:
         "config": {
             "db_path": db_path,
             "gdrive_sync_path": gdrive_sync_path,
-            "sync_interval_minutes": int(cfg.get("sync_interval_minutes", 5) or 5),
+            "sync_interval_minutes": int(cfg.get("sync_interval_minutes", 7) or 7),
             "startup_pull_from_gdrive": bool(cfg.get("startup_pull_from_gdrive", False)),
         },
         "example": {
             "db_path": "C:/Users/YourName/AppData/Local/StdyTime/Stdytime.db",
-            "gdrive_sync_path": "G:/My Drive/StdyTime/Stdytime.db",
+            "gdrive_sync_path": "G:/My Drive/StdyTime",
         },
     }
 
 
-def save_db_config_paths(*, db_path: str, gdrive_sync_path: str, sync_interval_minutes: int | None = None) -> dict:
+def save_db_config_paths(*, db_path: str | None, gdrive_sync_path: str, sync_interval_minutes: int | None = None) -> dict:
     """Persist db_path and gdrive_sync_path to db_config.json and return updated status."""
-    db_path = (db_path or "").strip().replace("\\", "/")
-    gdrive_sync_path = (gdrive_sync_path or "").strip().replace("\\", "/")
+    db_path = _normalize_path(db_path or "")
+    gdrive_sync_path = _normalize_path(gdrive_sync_path or "")
 
     cfg = _read_db_config()
+    existing_db_path = str(cfg.get("db_path", "") or "").strip().replace("\\", "/")
+    if not db_path:
+        db_path = existing_db_path or _default_local_db_path_for_runtime().replace("\\", "/")
+
     cfg["_comment"] = "db_path = local machine path (fast, all session reads/writes go here)."
-    cfg["_comment2"] = "gdrive_sync_path = Google Drive path used only for background sync."
+    cfg["_comment2"] = "gdrive_sync_path = Google Drive folder path used only for background sync; Stdytime.db is created there automatically."
     cfg["_comment3"] = "sync_interval_minutes = how often local DB is pushed to Google Drive (0 = disable)."
     cfg["db_path"] = db_path
     cfg["gdrive_sync_path"] = gdrive_sync_path
     if sync_interval_minutes is not None:
         cfg["sync_interval_minutes"] = max(0, int(sync_interval_minutes))
-    elif "sync_interval_minutes" not in cfg:
-        cfg["sync_interval_minutes"] = 5
+    else:
+        cfg["sync_interval_minutes"] = 7
 
     with open(_DB_CONFIG_FILE, "w", encoding="utf-8") as fh:
         json.dump(cfg, fh, indent=2)
@@ -126,11 +177,34 @@ def _can_use_db_parent(path):
 def _resolve_db_path():
     # Priority: db_config.json db_path > DB_PATH env var > DATA_DIR default
     config_path = _read_db_config_path()
-    preferred = config_path or os.getenv("DB_PATH", os.path.join(DATA_DIR, "Stdytime.db"))
+    env_db_path = os.getenv("DB_PATH", "").strip()
+    preferred = config_path or env_db_path or _default_local_db_path_for_runtime()
     is_usable, reason = _can_use_db_parent(preferred)
     if is_usable:
         print(f"[startup] Local DB path: {preferred}")
         return preferred
+
+    # If the chosen path is relative/non-writable in an installed build,
+    # transparently fall back to a per-user writable location.
+    fallback_local = _default_local_db_path_for_runtime()
+    should_try_local_fallback = (
+        preferred != fallback_local
+        and (not config_path and not env_db_path or not os.path.isabs(preferred))
+    )
+    if should_try_local_fallback:
+        fallback_usable, fallback_reason = _can_use_db_parent(fallback_local)
+        if fallback_usable:
+            print(
+                f"[startup] WARNING: DB_PATH '{preferred}' is unavailable ({reason}). "
+                f"Falling back to '{fallback_local}'.",
+                file=sys.stderr,
+            )
+            return fallback_local
+        print(
+            f"[startup] WARNING: DB_PATH '{preferred}' is unavailable ({reason}) and "
+            f"fallback '{fallback_local}' is also unavailable ({fallback_reason}).",
+            file=sys.stderr,
+        )
 
     normalized = preferred.replace("\\", "/")
     if normalized.startswith("/var/data"):
@@ -266,6 +340,7 @@ def sync_from_gdrive(local_path: str, gdrive_path: str) -> bool:
     Pull GDrive → local on startup if the GDrive copy is newer.
     Returns True if a pull was performed.
     """
+    gdrive_path = _resolve_gdrive_sync_target(gdrive_path)
     if not gdrive_path or not os.path.exists(gdrive_path):
         return False
     try:
@@ -292,6 +367,7 @@ def sync_to_gdrive(local_path: str, gdrive_path: str, retries: int = 0, retry_de
     retry_delay: seconds to wait between attempts.
     silent: if True, suppresses all console output (used by background thread).
     """
+    gdrive_path = _resolve_gdrive_sync_target(gdrive_path)
     if not gdrive_path:
         return False
     if not os.path.exists(local_path):
@@ -344,6 +420,7 @@ class GDriveLockError(RuntimeError):
 
 def _lock_path(gdrive_sync_path: str) -> str:
     """Return the .lock file path next to the GDrive DB."""
+    gdrive_sync_path = _resolve_gdrive_sync_target(gdrive_sync_path)
     base = os.path.splitext(gdrive_sync_path)[0]
     return base + ".lock"
 
@@ -354,6 +431,7 @@ def acquire_gdrive_lock(gdrive_sync_path: str, timeout_minutes: int = 60) -> boo
     Raises GDriveLockError if another live machine holds the lock.
     Returns False if gdrive_sync_path is not set (no-op).
     """
+    gdrive_sync_path = _resolve_gdrive_sync_target(gdrive_sync_path)
     if not gdrive_sync_path:
         return False
 
@@ -409,6 +487,7 @@ def release_gdrive_lock(gdrive_sync_path: str) -> bool:
     Remove the lock file only if it belongs to this process.
     Returns True if removed, False otherwise.
     """
+    gdrive_sync_path = _resolve_gdrive_sync_target(gdrive_sync_path)
     if not gdrive_sync_path:
         return False
     lock_file = _lock_path(gdrive_sync_path)
@@ -450,7 +529,7 @@ def _start_background_sync(local_path: str, gdrive_path: str, interval_minutes: 
 
 _cfg = _read_db_config()
 GDRIVE_SYNC_PATH: str | None = _cfg.get("gdrive_sync_path", "").strip() or None
-_SYNC_INTERVAL = int(_cfg.get("sync_interval_minutes", 5))
+_SYNC_INTERVAL = int(_cfg.get("sync_interval_minutes", 7))
 _STARTUP_PULL_ENABLED = str(_cfg.get("startup_pull_from_gdrive", "false")).strip().lower() == "true"
 
 DB_PATH = _resolve_db_path()

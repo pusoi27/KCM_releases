@@ -1,0 +1,89 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="container mt-4" style="max-width:600px;">
+  <h4>{{ action }} Staff</h4>
+  <form method="post">
+    <div class="mb-2">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <label class="form-label">Name</label>
+      <input name="name" class="form-control" value="{{ assistant[1] if assistant else '' }}" required>
+    </div>
+    <div class="mb-2">
+      <label class="form-label">Role</label>
+      <input name="role" class="form-control" value="{{ assistant[2] if assistant else '' }}">
+    </div>
+    <div class="mb-2">
+      <label class="form-label">Email</label>
+      <input name="email" type="email" class="form-control" value="{{ assistant[3] if assistant else '' }}">
+    </div>
+    <div class="mb-3">
+      <label class="form-label">Phone</label>
+      <input name="phone" class="form-control" value="{{ assistant[4] if assistant else '' }}">
+    </div>
+    <div class="mb-3">
+      <label class="form-label">Photo</label>
+      <input type="file" id="photoInput" name="photo" class="form-control" accept="image/jpeg,image/png,image/gif,image/webp" style="display:none;">
+      <div class="card p-3" style="cursor:pointer; border: 2px dashed #dee2e6; text-align: center;" onclick="document.getElementById('photoInput').click();">
+        <div id="photoPreview" style="display:none;">
+          <img id="photoImg" src="" alt="Photo preview" style="max-width: 150px; max-height: 150px; border-radius: 8px;">
+          <div class="mt-2 small text-muted">Click to change photo</div>
+        </div>
+        <div id="photoPlaceholder">
+          <svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" fill="currentColor" class="bi bi-image" viewBox="0 0 16 16">
+            <path d="M6.002 5.5a1.5 1.5 0 1 1-3 0 1.5 1.5 0 0 1 3 0z"/>
+            <path d="M2.002 1a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V3a2 2 0 0 0-2-2h-12zm12 1a1 1 0 0 1 1 1v6.5l-3.777-1.947a.5.5 0 0 0-.577.093l-3.71 3.71-2.66-1.772a.5.5 0 0 0-.63.062L1.002 12V3a1 1 0 0 1 1-1h12z"/>
+          </svg>
+          <div class="mt-2">Click to upload photo (JPG, PNG, GIF, WebP)</div>
+        </div>
+      </div>
+    </div>
+    <button type="submit" class="btn btn-primary">{{ action }}</button>
+    <a href="{{ url_for('assistants_list') }}" class="btn btn-secondary">Cancel</a>
+  </form>
+
+  <script>
+    const photoInput = document.getElementById('photoInput');
+    const photoPreview = document.getElementById('photoPreview');
+    const photoPlaceholder = document.getElementById('photoPlaceholder');
+    const photoImg = document.getElementById('photoImg');
+
+    photoInput.addEventListener('change', function(e) {
+      const file = e.target.files[0];
+      if (file) {
+        const reader = new FileReader();
+        reader.onload = function(event) {
+          photoImg.src = event.target.result;
+          photoPreview.style.display = 'block';
+          photoPlaceholder.style.display = 'none';
+        };
+        reader.readAsDataURL(file);
+      }
+    });
+
+    // Check if staff member already has a photo and load it
+    {% if assistant %}
+    fetch('/staff/icon/{{ assistant[0] }}')
+      .then(response => {
+        if (response.ok) {
+          photoImg.src = '/staff/icon/{{ assistant[0] }}';
+          photoPreview.style.display = 'block';
+          photoPlaceholder.style.display = 'none';
+        }
+      })
+      .catch(() => {
+        // No photo, show placeholder
+      });
+    {% endif %}
+  </script>
+
+  <style>
+    .card[onclick] {
+      transition: border-color 0.3s, background-color 0.3s;
+    }
+    .card[onclick]:hover {
+      border-color: #0d6efd;
+      background-color: #f8f9fa;
+    }
+  </style>
+</div>
+{% endblock %}

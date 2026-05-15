@@ -1,0 +1,95 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="container py-3">
+  <h4>Student Attendance Report</h4>
+  <form class="row gy-2 gx-2 align-items-end" method="get" action="{{ url_for('student_attendance_page') }}">
+    <div class="col-auto">
+      <label for="student" class="form-label small mb-0">Student</label>
+      <select id="student" name="sid" class="form-select form-select-sm">
+        <option value="">-- Choose a student --</option>
+        {% for s in students %}
+          <option value="{{ s[0] }}" {% if sid == s[0] %}selected{% endif %}>{{ s[1] }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="col-auto">
+      <label for="start" class="form-label small mb-0">Start date</label>
+      <input type="date" id="start" name="start" class="form-control form-control-sm" value="{{ start }}">
+    </div>
+    <div class="col-auto">
+      <label for="end" class="form-label small mb-0">End date</label>
+      <input type="date" id="end" name="end" class="form-control form-control-sm" value="{{ end }}">
+    </div>
+    <div class="col-auto">
+      <button type="submit" class="btn btn-primary btn-sm">Update</button>
+    </div>
+    <div class="col-auto ms-auto">
+      <button type="button" class="btn btn-outline-secondary btn-sm" onclick="printPDF()" {% if not sid %}disabled{% endif %}>Print to PDF</button>
+    </div>
+  </form>
+
+  {% if error %}
+    <div class="alert alert-warning mt-3 mb-0">{{ error }}</div>
+  {% endif %}
+
+  {% if sid and student_name %}
+  <div class="card mt-3">
+    <div class="card-body">
+      <div class="mb-3">
+        <div><strong>Student:</strong> {{ student_name }} (ID {{ sid }})</div>
+        <div class="text-muted small">Date Range: {{ start }} to {{ end }}</div>
+      </div>
+      <div class="table-responsive">
+        <table class="table table-sm align-middle">
+          <thead>
+            <tr>
+              <th style="width: 16rem;">Session Date</th>
+              <th style="width: 12rem;">Start Time</th>
+              <th style="width: 15rem;">Session Active Time</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% if sessions and sessions|length > 0 %}
+              {% for row in sessions %}
+              <tr>
+                <td>{{ row.date }}</td>
+                <td>{{ row.start_time }}</td>
+                <td>{{ row.duration }}</td>
+              </tr>
+              {% endfor %}
+            {% else %}
+              <tr><td colspan="3" class="text-muted">No sessions found for selected range.</td></tr>
+            {% endif %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+  {% elif sid %}
+    <div class="alert alert-info mt-3">Student not found or no data available.</div>
+  {% else %}
+    <div class="alert alert-info mt-3">Please select a student to view attendance.</div>
+  {% endif %}
+</div>
+
+<script>
+function printPDF(){
+  const sid = document.getElementById('student').value;
+  const start = document.getElementById('start').value;
+  const end = document.getElementById('end').value;
+  if(!sid){ alert('Please select a student.'); return; }
+  if(!start || !end){ alert('Please select start and end dates.'); return; }
+  if(start > end){ alert('Start date must be before or equal to end date.'); return; }
+  // Enforce last 30 calendar days
+  const today = new Date().toISOString().slice(0,10);
+  const past30 = new Date(); past30.setDate(new Date().getDate()-30);
+  const earliest = past30.toISOString().slice(0,10);
+  if(start < earliest || end > today){
+    alert('Dates must be within the last 30 calendar days.');
+    return;
+  }
+  const url = `/reports/student-attendance/pdf?sid=${sid}&start=${start}&end=${end}`;
+  window.open(url, '_blank');
+}
+</script>
+{% endblock %}

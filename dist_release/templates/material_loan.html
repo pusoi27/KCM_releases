@@ -1,0 +1,357 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="container mt-4">
+  <div class="d-flex justify-content-between align-items-center mb-3">
+    <div>
+      <h4 class="mb-1"><i class="bi bi-arrow-left-right"></i> Device Checkout / Checkin</h4>
+      <p class="text-muted mb-0">Scan or type a device QR code, or type title. Then loan or return it.</p>
+    </div>
+    <a class="btn btn-outline-secondary btn-sm" href="{{ url_for('materials_list') }}"><i class="bi bi-arrow-left"></i> Back to Devices List</a>
+  </div>
+
+  <div class="card shadow-sm mb-3">
+    <div class="card-body">
+      <div class="row g-3 align-items-end">
+        <div class="col-md-6">
+          <label class="form-label">Device (title or QR code)</label>
+          <input type="text" id="materialSearch" class="form-control" placeholder="Scan or type device QR code, or type title">
+        </div>
+        <div class="col-md-3">
+          <button class="btn btn-primary w-100" id="findMaterialBtn"><i class="bi bi-search"></i> Find Device</button>
+        </div>
+        <div class="col-md-3 text-end"><span id="statusText" class="text-muted small"></span></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card mb-3 d-none" id="materialCard">
+    <div class="card-body">
+      <div class="row">
+        <div class="col-md-8">
+          <h5 id="materialTitle" class="mb-1"></h5>
+          <p class="text-muted mb-1" id="materialAuthor"></p>
+          <p class="mb-1"><strong>Publisher:</strong> <span id="materialPublisher"></span></p>
+          <p class="mb-1"><strong>Level:</strong> <span id="materialLevel" class="badge bg-info"></span></p>
+          <p class="mb-0"><strong>QR Code:</strong> <span id="materialQr"></span></p>
+        </div>
+        <div class="col-md-4 text-md-end">
+          <p class="mb-1"><strong>Status:</strong> <span id="materialStatus" class="badge"></span></p>
+          <p class="mb-1"><strong>Borrower:</strong> <span id="materialBorrower">-</span></p>
+          <p class="mb-0"><strong>Copies:</strong> <span id="materialCopies"></span></p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card d-none" id="loanCard">
+    <div class="card-body">
+      <div id="loanAvailable" class="d-none">
+        <div class="row g-3 align-items-end">
+          <div class="col-md-6">
+            <label class="form-label">Student (name or QR/id)</label>
+            <input type="text" id="studentInput" class="form-control" placeholder="Type student name or scan QR" list="studentSuggestions" autocomplete="off">
+            <datalist id="studentSuggestions"></datalist>
+            <div class="small text-muted mt-1" id="studentStatus"></div>
+          </div>
+          <div class="col-md-3"><button class="btn btn-outline-info w-100" id="findStudentBtn"><i class="bi bi-search"></i> Find Student</button></div>
+          <div class="col-md-3"><button class="btn btn-success w-100" id="checkoutBtn" disabled><i class="bi bi-box-arrow-right"></i> Check Out</button></div>
+        </div>
+      </div>
+      <div id="loanBorrowed" class="d-none">
+        <p class="mb-3 text-warning"><i class="bi bi-info-circle"></i> Device is currently loaned to <strong id="borrowedName"></strong>. Click return when it comes back.</p>
+        <div class="row g-3"><div class="col-md-3"><button class="btn btn-info w-100" id="returnBtn"><i class="bi bi-box-arrow-in-left"></i> Check In / Return</button></div></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div id="alertBox" class="alert d-none mt-3" role="alert"></div>
+
+<div class="container mt-4">
+  <div class="card shadow-sm">
+    <div class="card-header bg-primary text-white d-flex justify-content-between align-items-center">
+      <h5 class="mb-0"><i class="bi bi-boxes"></i> Currently Loaned Devices</h5>
+      <span class="badge bg-light text-primary">{{ total_loans }} devices on loan</span>
+    </div>
+    <div class="card-body">
+      {% if materials_by_student and materials_by_student|length > 0 %}
+      <div class="table-responsive">
+        <table class="table table-sm table-hover align-middle">
+          <thead class="table-light">
+            <tr><th>Student Name</th><th>Material Title</th><th>Date Loaned</th><th class="text-center">Action</th></tr>
+          </thead>
+          <tbody>
+            {% for student_name, materials in materials_by_student.items() %}
+              {% for material in materials %}
+              <tr>
+                {% if loop.first %}
+                <td rowspan="{{ materials|length }}" class="fw-bold align-middle" style="vertical-align: middle; border-right: 2px solid #dee2e6;">{{ student_name }}</td>
+                {% endif %}
+                <td>{{ material.title }}</td>
+                <td><small class="text-muted">{{ material.checkout_date }}</small></td>
+                <td class="text-center">
+                  {% if material.show_clear and current_user and current_user.is_admin() %}
+                  <button type="button" class="btn btn-outline-danger btn-sm" onclick='clearLoan({{ material.material_id }}, {{ material.student_id }}, {{ material.title|tojson }}, {{ student_name|tojson }})'>
+                    <i class="bi bi-x-circle"></i> Clear
+                  </button>
+                  {% else %}
+                  <span class="text-muted small">—</span>
+                  {% endif %}
+                </td>
+              </tr>
+              {% endfor %}
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% else %}
+      <div class="alert alert-info mb-0"><i class="bi bi-info-circle"></i> No devices are currently on loan.</div>
+      {% endif %}
+    </div>
+  </div>
+</div>
+
+<script>
+function clearLoan(materialId, studentId, materialTitle, studentName) {
+  const ok = confirm(`Clear loan for "${materialTitle}" from ${studentName}?`);
+  if (!ok) return;
+
+  fetch('/api/materials/clear-loan', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ material_id: materialId, student_id: studentId })
+  })
+  .then(response => response.json())
+  .then(data => {
+    if (data.error) { alert('Error: ' + data.error); return; }
+    alert('Loan cleared successfully.');
+    location.reload();
+  })
+  .catch(err => alert('Failed to clear loan: ' + err));
+}
+</script>
+
+<script>
+(function() {
+  const materialSearch = document.getElementById('materialSearch');
+  const findMaterialBtn = document.getElementById('findMaterialBtn');
+  const statusText = document.getElementById('statusText');
+  const materialCard = document.getElementById('materialCard');
+  const loanCard = document.getElementById('loanCard');
+  const loanAvailable = document.getElementById('loanAvailable');
+  const loanBorrowed = document.getElementById('loanBorrowed');
+  const studentInput = document.getElementById('studentInput');
+  const findStudentBtn = document.getElementById('findStudentBtn');
+  const checkoutBtn = document.getElementById('checkoutBtn');
+  const returnBtn = document.getElementById('returnBtn');
+  const alertBox = document.getElementById('alertBox');
+  const studentStatus = document.getElementById('studentStatus');
+  const studentSuggestions = document.getElementById('studentSuggestions');
+
+  let currentMaterialId = null;
+  let studentReady = false;
+  let currentStudent = null;
+  let suggestionTimeout = null;
+
+  findMaterialBtn.addEventListener('click', findMaterial);
+  materialSearch.addEventListener('keypress', e => { if (e.key === 'Enter') { e.preventDefault(); findMaterial(); } });
+  findStudentBtn.addEventListener('click', confirmStudent);
+  studentInput.addEventListener('keypress', e => { if (e.key === 'Enter') { e.preventDefault(); confirmStudent(); } });
+
+  studentInput.addEventListener('input', async function() {
+    const val = this.value.trim();
+    if (val.length >= 3 && !val.startsWith('ID:')) {
+      clearTimeout(suggestionTimeout);
+      suggestionTimeout = setTimeout(async () => {
+        try {
+          const resp = await fetch(`/api/students/suggest?q=${encodeURIComponent(val)}`);
+          const data = await resp.json();
+          studentSuggestions.innerHTML = '';
+          if (data.suggestions && data.suggestions.length > 0) {
+            data.suggestions.forEach(student => {
+              const option = document.createElement('option');
+              option.value = student.name;
+              option.textContent = `${student.name} (ID: ${student.id})`;
+              studentSuggestions.appendChild(option);
+            });
+          }
+        } catch (err) { console.error('Failed to fetch suggestions:', err); }
+      }, 300);
+    } else {
+      studentSuggestions.innerHTML = '';
+    }
+  });
+
+  checkoutBtn.addEventListener('click', checkoutMaterial);
+  returnBtn.addEventListener('click', returnMaterial);
+  materialSearch.focus();
+
+  function setStatus(msg) { statusText.textContent = msg || ''; }
+  function showAlert(msg, type='info') {
+    if (!msg) { alertBox.classList.add('d-none'); alertBox.textContent = ''; return; }
+    alertBox.className = 'alert alert-' + type;
+    alertBox.textContent = msg;
+    alertBox.classList.remove('d-none');
+  }
+  function setStudentStatus(text, type='muted') {
+    studentStatus.textContent = text || '';
+    studentStatus.className = 'small mt-1 text-' + (type === 'muted' ? 'muted' : type);
+  }
+  function setCheckoutEnabled(enabled) { checkoutBtn.disabled = !enabled; }
+
+  function renderMaterial(material) {
+    document.getElementById('materialTitle').textContent = material.title || 'Untitled';
+    document.getElementById('materialAuthor').textContent = material.author || 'Unknown';
+    document.getElementById('materialPublisher').textContent = material.publisher || '-';
+    document.getElementById('materialLevel').textContent = material.reading_level || '-';
+    document.getElementById('materialQr').textContent = material.qr_code || '-';
+    document.getElementById('materialCopies').textContent = material.copies || 0;
+    const statusBadge = document.getElementById('materialStatus');
+    const hasQr = !!material.qr_code;
+    const isAvailable = !!(hasQr && material.available && !material.borrower_id);
+    statusBadge.textContent = isAvailable ? 'Available' : 'Unavailable';
+    statusBadge.className = 'badge ' + (isAvailable ? 'bg-success' : 'bg-secondary');
+    document.getElementById('materialBorrower').textContent = material.borrower_name || '-';
+    document.getElementById('borrowedName').textContent = material.borrower_name || '-';
+
+    materialCard.classList.remove('d-none');
+    loanCard.classList.remove('d-none');
+
+    if (isAvailable) {
+      loanAvailable.classList.remove('d-none');
+      loanBorrowed.classList.add('d-none');
+      studentReady = false;
+      setCheckoutEnabled(false);
+      currentStudent = null;
+      setStudentStatus('');
+      studentInput.focus();
+    } else if (material.borrower_name) {
+      loanAvailable.classList.add('d-none');
+      loanBorrowed.classList.remove('d-none');
+      returnBtn.focus();
+    } else if (!hasQr) {
+      loanAvailable.classList.add('d-none');
+      loanBorrowed.classList.add('d-none');
+      setCheckoutEnabled(false);
+      showAlert('This material is unavailable for loan (missing QR code).', 'warning');
+    } else {
+      loanAvailable.classList.add('d-none');
+      loanBorrowed.classList.add('d-none');
+      setCheckoutEnabled(false);
+      showAlert('This material is currently unavailable for loan.', 'warning');
+    }
+  }
+
+  async function findMaterial() {
+    showAlert('', 'info');
+    setStatus('Searching...');
+    const q = materialSearch.value.trim();
+    if (!q) { showAlert('Please enter a title or QR code.', 'warning'); setStatus(''); return; }
+
+    try {
+      const resp = await fetch(`/api/materials/search?q=${encodeURIComponent(q)}&level=`);
+      const data = await resp.json();
+      if (!resp.ok) throw new Error(data.error || 'Search failed');
+
+      let material = null;
+      if (data.materials && data.materials.length === 1) {
+        material = data.materials[0];
+      } else if (data.materials && data.materials.length > 1) {
+        showAlert('Multiple matches found. Please refine your search or use full QR code.', 'warning');
+        setStatus('');
+        return;
+      } else {
+        showAlert('Device not found. Add it first in the Devices page.', 'warning');
+        setStatus('');
+        return;
+      }
+
+      currentMaterialId = material.id;
+      studentReady = false;
+      setCheckoutEnabled(false);
+      currentStudent = null;
+      setStudentStatus('');
+      renderMaterial(material);
+      setStatus('Ready');
+    } catch (err) {
+      showAlert(err.message, 'danger');
+      setStatus('');
+    }
+  }
+
+  async function confirmStudent() {
+    if (!currentMaterialId) { showAlert('Find a material first.', 'warning'); return; }
+    const studentVal = studentInput.value.trim();
+    if (!studentVal) { showAlert('Enter student name or scan QR, then click Find Student.', 'warning'); return; }
+    setStatus('Finding student...');
+    try {
+      const resp = await fetch(`/api/students/lookup?q=${encodeURIComponent(studentVal)}`);
+      const data = await resp.json();
+      if (!resp.ok) throw new Error(data.error || 'Lookup failed');
+      currentStudent = data.student;
+      studentReady = true;
+      setCheckoutEnabled(true);
+      setStudentStatus(`Student: ${currentStudent.name} (ID ${currentStudent.id})`, 'primary');
+      showAlert('Student captured. You can now check out the material.', 'info');
+    } catch (err) {
+      currentStudent = null;
+      studentReady = false;
+      setCheckoutEnabled(false);
+      setStudentStatus('');
+      showAlert(err.message, 'danger');
+    } finally { setStatus(''); }
+  }
+
+  async function checkoutMaterial() {
+    if (!currentMaterialId) { showAlert('Find a material first.', 'warning'); return; }
+    if (!studentReady || !currentStudent) { showAlert('Click Find Student after entering/scanning the student.', 'warning'); return; }
+
+    setStatus('Checking out...');
+    try {
+      const resp = await fetch('/api/materials/loan', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ material_id: currentMaterialId, student_input: studentInput.value.trim(), student_id: currentStudent.id })
+      });
+      const data = await resp.json();
+      if (!resp.ok) throw new Error(data.error || 'Checkout failed');
+      showAlert('Material checked out successfully.', 'success');
+      studentReady = false;
+      setCheckoutEnabled(false);
+      currentStudent = null;
+      setStudentStatus('');
+      await refreshMaterial();
+    } catch (err) {
+      showAlert(err.message, 'danger');
+    } finally { setStatus(''); }
+  }
+
+  async function returnMaterial() {
+    if (!currentMaterialId) { showAlert('Find a material first.', 'warning'); return; }
+    setStatus('Checking in...');
+    try {
+      const resp = await fetch('/api/materials/return', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ material_id: currentMaterialId })
+      });
+      const data = await resp.json();
+      if (!resp.ok) throw new Error(data.error || 'Return failed');
+      showAlert('Material checked in successfully.', 'success');
+      await refreshMaterial();
+    } catch (err) {
+      showAlert(err.message, 'danger');
+    } finally { setStatus(''); }
+  }
+
+  async function refreshMaterial() {
+    if (!currentMaterialId) return;
+    const resp = await fetch(`/api/materials/${currentMaterialId}`);
+    const data = await resp.json();
+    if (!resp.ok) { showAlert(data.error || 'Failed to refresh material.', 'danger'); return; }
+    renderMaterial(data.material);
+  }
+})();
+</script>
+{% endblock %}

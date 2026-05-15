@@ -18,10 +18,10 @@ import webbrowser
 import logging
 
 # ---------------------------------------------------------------------------
-# Port — first CLI arg or env var, default 5000
+# Port/Host — CLI arg or env var, default 5000/127.0.0.1
 # ---------------------------------------------------------------------------
 PORT = int(sys.argv[1]) if len(sys.argv) > 1 else int(os.getenv("PORT", "5000"))
-HOST = "127.0.0.1"
+HOST = os.getenv("HOST", "127.0.0.1")
 URL  = f"http://{HOST}:{PORT}"
 
 # ---------------------------------------------------------------------------

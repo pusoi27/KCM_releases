@@ -1,0 +1,457 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="container-fluid mt-2 schedule-month-compact">
+  <div class="row">
+    <div class="col-md-12">
+      <h4 class="mb-2"><i class="bi bi-calendar3"></i> Schedule Staff</h4>
+
+      <!-- Month Navigation -->
+      {% set prev_month = (month - 1) if month > 1 else 12 %}
+      {% set prev_year = year if month > 1 else (year - 1) %}
+      {% set next_month = (month + 1) if month < 12 else 1 %}
+      {% set next_year = year if month < 12 else (year + 1) %}
+      
+      <div class="d-flex justify-content-between align-items-center mb-2">
+        <a href="{{ url_for('schedule_assistants', year=prev_year, month=prev_month) }}" 
+           class="btn btn-sm btn-outline-secondary">Previous</a>
+        <h5 class="mb-0">{{ month_name }} {{ year }}</h5>
+        <div class="d-flex gap-1">
+         <a href="{{ pdf_url }}"
+           class="btn btn-sm btn-outline-primary">
+           <i class="bi bi-file-earmark-pdf"></i> Print PDF
+         </a>
+         <a href="{{ url_for('schedule_assistants', year=next_year, month=next_month) }}" 
+           class="btn btn-sm btn-outline-secondary">Next</a>
+        </div>
+      </div>
+
+      <!-- Calendar Grid -->
+      <div class="row gx-1">
+        <!-- Day Headers -->
+        <div class="row mb-1 w-100 gx-1 calendar-header-row">
+          <div class="col-sm day-cell {% if 0 in operating_days %}day-open{% else %}day-closed{% endif %}">
+            <div class="text-center fw-bold small">Monday</div>
+          </div>
+          <div class="col-sm day-cell {% if 1 in operating_days %}day-open{% else %}day-closed{% endif %}">
+            <div class="text-center fw-bold small">Tuesday</div>
+          </div>
+          <div class="col-sm day-cell {% if 2 in operating_days %}day-open{% else %}day-closed{% endif %}">
+            <div class="text-center fw-bold small">Wednesday</div>
+          </div>
+          <div class="col-sm day-cell {% if 3 in operating_days %}day-open{% else %}day-closed{% endif %}">
+            <div class="text-center fw-bold small">Thursday</div>
+          </div>
+          <div class="col-sm day-cell {% if 4 in operating_days %}day-open{% else %}day-closed{% endif %}">
+            <div class="text-center fw-bold small">Friday</div>
+          </div>
+          <div class="col-sm day-cell {% if 5 in operating_days %}day-open{% else %}day-closed{% endif %}">
+            <div class="text-center fw-bold small">Saturday</div>
+          </div>
+          <div class="col-sm day-cell {% if 6 in operating_days %}day-open{% else %}day-closed{% endif %}">
+            <div class="text-center fw-bold small">Sunday</div>
+          </div>
+        </div>
+
+        <!-- Calendar Weeks -->
+        {% for week in calendar_weeks %}
+        <div class="row mb-1 w-100 gx-1 calendar-week">
+          {% for day in week %}
+          {% set weekday_idx = loop.index0 %}
+          <div class="col-sm day-cell {% if weekday_idx in operating_days %}day-open{% else %}day-closed{% endif %}">
+            {% if day %}
+              {% set is_today = day['date'] == today %}
+              {% set is_operating = day['is_operating'] %}
+              <div class="calendar-day card {% if is_today %}border-success border-2{% endif %} {% if not is_operating %}bg-light{% endif %}"
+                   data-date="{{ day['date'] }}"
+                    style="min-height: 118px;">
+                <div class="card-header {% if is_today %}bg-success text-white{% elif is_operating %}bg-light{% else %}bg-secondary text-white{% endif %}">
+                  <strong>{{ day['day'] }}</strong>
+                  {% if day['is_center_closed'] %}
+                    <span class="badge bg-warning text-dark" style="font-size: 0.75rem;">Holiday</span>
+                  {% elif is_operating %}
+                    <span class="badge bg-info" style="font-size: 0.75rem;">Open</span>
+                  {% else %}
+                    <span class="badge bg-secondary" style="font-size: 0.75rem;">Closed</span>
+                  {% endif %}
+                </div>
+                <div class="card-body p-1" style="display: flex; flex-direction: column;">
+                  
+                  <!-- Scheduled Assistants -->
+                  <div class="scheduled-assistants mb-1" style="flex: 1; min-height: 54px; overflow: hidden;">
+                    {% for asst in day['assistants'] %}
+                    <div class="assistant-tag badge text-white d-flex justify-content-between align-items-center"
+                         data-assistant-id="{{ asst[0] }}" data-date="{{ day['date'] }}"
+                         title="{{ asst[1] }}">
+                      <span class="assistant-name">{{ asst[1] }}</span>
+                      <button type="button" class="btn-close btn-close-white remove-assistant" title="Remove"></button>
+                    </div>
+                    {% endfor %}
+                  </div>
+                  
+                  <!-- Add Assistant Dropdown -->
+                  {% if day['weekday_is_operating'] %}
+                  <div class="mt-auto pt-1 border-top">
+                    <select class="form-select form-select-sm assistant-select" data-date="{{ day['date'] }}">
+                      {% if day['is_center_closed'] %}
+                        <option value="">Center Closed (Holiday)</option>
+                        <option value="__reopen_center__">↺ Reopen Center</option>
+                      {% else %}
+                        <option value="">+ Add Staff</option>
+                        {% for asst in all_assistants %}
+                          {% set ns = namespace(is_scheduled=false) %}
+                          {% for s in day['assistants'] %}
+                            {% if s[0] == asst[0] %}
+                              {% set ns.is_scheduled = true %}
+                            {% endif %}
+                          {% endfor %}
+                          {% if not ns.is_scheduled %}
+                          <option value="{{ asst[0] }}">{{ asst[1] }}{% if asst[2] %} ({{ asst[2] }}){% endif %}</option>
+                          {% endif %}
+                        {% endfor %}
+                        <option value="__center_closed__">🚫 Holiday / Center Closed</option>
+                      {% endif %}
+                    </select>
+                  </div>
+                  {% endif %}
+                </div>
+              </div>
+            {% else %}
+            <div class="card bg-light border-0" style="min-height: 118px;"></div>
+            {% endif %}
+          </div>
+          {% endfor %}
+        </div>
+        {% endfor %}
+      </div>
+    </div>
+  </div>
+</div>
+
+<style>
+  .schedule-month-compact {
+    --day-cell-min-h: 118px;
+  }
+
+  .calendar-header-row,
+  .calendar-week {
+    display: flex;
+    flex-wrap: nowrap;
+    width: 100%;
+  }
+
+  .day-cell {
+    width: auto;
+    max-width: none;
+    padding-left: 2px;
+    padding-right: 2px;
+  }
+
+  .day-open {
+    flex: 1.15 1 0;
+  }
+
+  .day-closed {
+    flex: 0.62 1 0;
+  }
+
+  .calendar-day {
+    transition: box-shadow 0.2s;
+  }
+
+  .calendar-day .card-header {
+    padding: 0.2rem 0.45rem;
+    font-size: 0.78rem;
+    line-height: 1.1;
+    min-height: 1.65rem;
+  }
+
+  .calendar-day .badge {
+    font-size: 0.65rem;
+  }
+
+  .assistant-tag {
+    border-radius: 4px;
+    white-space: nowrap;
+    font-size: 0.72rem;
+    line-height: 1;
+    padding: 0.18rem 0.28rem;
+    margin: 0;
+    max-width: 92px;
+    min-height: 22px;
+    gap: 0.2rem;
+    color: #fff !important;
+  }
+
+  .assistant-name {
+    display: inline-block;
+    max-width: 72px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    vertical-align: bottom;
+  }
+
+  .scheduled-assistants {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 3px;
+    align-content: flex-start;
+  }
+
+  .form-select-sm {
+    border-radius: 4px;
+    font-size: 0.75rem;
+    padding: 0.12rem 0.25rem;
+    min-height: 1.55rem;
+  }
+
+  .remove-assistant {
+    transform: scale(0.52);
+    margin-left: 0 !important;
+  }
+</style>
+
+<script>
+const assistantColorPalette = [
+  '#2E7D32', // green
+  '#1565C0', // blue
+  '#6A1B9A', // purple
+  '#EF6C00', // orange
+  '#00897B', // teal
+  '#C62828', // red
+  '#5D4037', // brown
+  '#283593', // indigo
+  '#AD1457', // pink
+  '#37474F', // blue-grey
+];
+
+function getAssistantColor(assistantId) {
+  const id = Number(assistantId) || 0;
+  return assistantColorPalette[Math.abs(id) % assistantColorPalette.length];
+}
+
+function applyAssistantTagColor(tagElement, assistantId) {
+  const color = getAssistantColor(assistantId);
+  tagElement.style.setProperty('background-color', color, 'important');
+  tagElement.style.setProperty('border-color', color, 'important');
+}
+
+// Colorize already-rendered tags on load
+document.querySelectorAll('.assistant-tag').forEach(tag => {
+  applyAssistantTagColor(tag, tag.dataset.assistantId);
+});
+
+// Remove assistant button handlers
+document.querySelectorAll('.remove-assistant').forEach(btn => {
+  btn.addEventListener('click', (e) => {
+    e.preventDefault();
+    const badgeElement = btn.closest('.assistant-tag');
+    const assistantId = badgeElement.dataset.assistantId;
+    const date = badgeElement.dataset.date;
+    removeAssistant(assistantId, date, badgeElement);
+  });
+});
+
+// Dropdown change handler
+document.querySelectorAll('.assistant-select').forEach(select => {
+  select.addEventListener('change', (e) => {
+    const date = e.target.dataset.date;
+    const selectedValue = e.target.value;
+
+    if (selectedValue === '__center_closed__') {
+      markCenterClosed(date, e.target);
+      e.target.value = '';
+      return;
+    }
+
+    if (selectedValue === '__reopen_center__') {
+      reopenCenter(date, e.target);
+      e.target.value = '';
+      return;
+    }
+
+    const assistantId = parseInt(selectedValue);
+    if (!assistantId) return;
+
+    const assistantName = e.target.options[e.target.selectedIndex].text.split(' (')[0];
+
+    assignAssistant(assistantId, assistantName, date, e.target);
+    e.target.value = '';
+  });
+});
+
+function markCenterClosed(date, selectElement) {
+  const token = document.querySelector('input[name=csrf_token]')?.value ||
+                document.querySelector('meta[name=csrf_token]')?.content;
+
+  fetch('/api/schedule/mark-closed', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'X-CSRFToken': token,
+    },
+    body: JSON.stringify({
+      scheduled_date: date,
+      reason: 'Holiday / Center Closed',
+    }),
+  })
+    .then(async (r) => {
+      const contentType = r.headers.get('content-type') || '';
+      const payload = contentType.includes('application/json') ? await r.json() : { error: await r.text() };
+      if (!r.ok) {
+        throw new Error(payload.error || 'Failed to mark center closed');
+      }
+      return payload;
+    })
+    .then(() => {
+      // Simplest reliable sync for badges/status/options across the day card.
+      window.location.reload();
+    })
+    .catch(err => {
+      console.error('Error:', err);
+      alert(err.message || 'Error marking center closed');
+      if (selectElement) selectElement.value = '';
+    });
+}
+
+function reopenCenter(date, selectElement) {
+  const token = document.querySelector('input[name=csrf_token]')?.value ||
+                document.querySelector('meta[name=csrf_token]')?.content;
+
+  fetch('/api/schedule/unmark-closed', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'X-CSRFToken': token,
+    },
+    body: JSON.stringify({
+      scheduled_date: date,
+    }),
+  })
+    .then(async (r) => {
+      const contentType = r.headers.get('content-type') || '';
+      const payload = contentType.includes('application/json') ? await r.json() : { error: await r.text() };
+      if (!r.ok) {
+        throw new Error(payload.error || 'Failed to reopen center for date');
+      }
+      return payload;
+    })
+    .then(() => {
+      window.location.reload();
+    })
+    .catch(err => {
+      console.error('Error:', err);
+      alert(err.message || 'Error reopening center for date');
+      if (selectElement) selectElement.value = '';
+    });
+}
+
+// Helper function: assign staff member to date
+function assignAssistant(assistantId, assistantName, date, selectElement) {
+  const token = document.querySelector('input[name=csrf_token]')?.value || 
+                document.querySelector('meta[name=csrf_token]')?.content;
+
+  fetch('/api/schedule/assign', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'X-CSRFToken': token,
+    },
+    body: JSON.stringify({
+      assistant_id: assistantId,
+      scheduled_date: date,
+    }),
+  })
+    .then(async (r) => {
+      const contentType = r.headers.get('content-type') || '';
+      const payload = contentType.includes('application/json') ? await r.json() : { error: await r.text() };
+      if (!r.ok) {
+        throw new Error(payload.error || 'Failed to schedule staff member');
+      }
+      return payload;
+    })
+    .then(data => {
+      if (data.success) {
+        // Find the scheduled-assistants container for this date
+        const dayCard = selectElement.closest('.calendar-day');
+        const container = dayCard.querySelector('.scheduled-assistants');
+        
+        const badge = document.createElement('div');
+        badge.className = 'assistant-tag badge text-white d-flex justify-content-between align-items-center';
+        badge.dataset.assistantId = assistantId;
+        badge.dataset.date = date;
+        badge.title = assistantName;
+        badge.innerHTML = `
+          <span class="assistant-name">${assistantName}</span>
+          <button type="button" class="btn-close btn-close-white remove-assistant" title="Remove"></button>
+        `;
+        applyAssistantTagColor(badge, assistantId);
+        container.appendChild(badge);
+
+        // Attach remove listener to new badge
+        badge.querySelector('.remove-assistant').addEventListener('click', (e) => {
+          e.preventDefault();
+          removeAssistant(assistantId, date, badge);
+        });
+
+        // Remove this option from the select since it's now scheduled
+        const option = selectElement.querySelector(`option[value="${assistantId}"]`);
+        if (option) option.remove();
+      }
+    })
+    .catch(err => {
+      console.error('Error:', err);
+      alert(err.message || 'Error scheduling staff member');
+    });
+}
+
+// Helper function: remove staff member from date
+function removeAssistant(assistantId, date, badgeElement) {
+  const token = document.querySelector('input[name=csrf_token]')?.value || 
+                document.querySelector('meta[name=csrf_token]')?.content;
+
+  fetch('/api/schedule/unassign', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'X-CSRFToken': token,
+    },
+    body: JSON.stringify({
+      assistant_id: assistantId,
+      scheduled_date: date,
+    }),
+  })
+    .then(async (r) => {
+      const contentType = r.headers.get('content-type') || '';
+      const payload = contentType.includes('application/json') ? await r.json() : { error: await r.text() };
+      if (!r.ok) {
+        throw new Error(payload.error || 'Failed to remove staff member from schedule');
+      }
+      return payload;
+    })
+    .then(data => {
+      if (data.success) {
+        // Remove badge from DOM
+        const dayCard = badgeElement.closest('.calendar-day');
+        const select = dayCard.querySelector('.assistant-select');
+        
+        badgeElement.remove();
+
+        // Re-add this assistant to the dropdown
+        if (select) {
+          const assistantName = badgeElement.querySelector('span').textContent;
+          const option = document.createElement('option');
+          option.value = assistantId;
+          option.textContent = assistantName;
+          select.appendChild(option);
+          select.value = '';
+        }
+      }
+    })
+    .catch(err => {
+      console.error('Error:', err);
+      alert(err.message || 'Error removing staff member from schedule');
+    });
+}
+</script>
+{% endblock %}

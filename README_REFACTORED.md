@@ -195,6 +195,30 @@ Attendance and payroll reports.
 
 ---
 
+## 🌐 LAN Mode (iOS/Windows Local Access)
+
+To allow iOS devices (or any device on your local network) to access Stdytime running on Windows:
+
+1. **Enable LAN mode:**
+   - Set the `HOST` environment variable to `0.0.0.0` in your `.env` file:
+     ```
+     HOST=0.0.0.0
+     ```
+   - (Optional) Set a fixed `PORT` (default is 5000).
+2. **Restart the app** using the launcher or build script.
+3. **Find your Windows machine's LAN IP address** (e.g., `192.168.1.42`).
+4. **On your iOS device**, open Safari and go to:
+   ```
+   http://<windows-ip>:<port>
+   ```
+   Example: `http://192.168.1.42:5000`
+5. **Firewall:**
+   - Allow inbound connections to the chosen port (private network only).
+
+This enables iOS (or any LAN device) to use the app with no cloud or internet required.
+
+---
+
 ## 🚀 Getting Started
 
 ### Run the Application

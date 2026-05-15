@@ -1,0 +1,1127 @@
+<script>
+const SEAT_LIMIT = 16;
+const SEAT_LIMIT_FULLSCREEN = 16; // 4x4 grid = 16 seats
+const DURATION_LIMITS = { "S1": 30*60, "S2": 60*60 };
+const IDLE_TIMEOUT_MS = 60000; // 1 minute
+const isActiveClassWindow = true; // only dashboard should handle class check-in/out
+
+let idleTimer = null;
+let isFullscreenMode = false;
+let lastActivityTime = Date.now();
+let lastAssistantsSnapshot = [];
+let dashboardRefreshToken = 0;
+let seatTimerHandles = [];
+
+function pageIsReadyForScan(){
+  return document.visibilityState === 'visible' && document.hasFocus();
+}
+
+function recordActivity(){
+  lastActivityTime = Date.now();
+  if(isFullscreenMode){
+    exitFullscreenMode();
+  }
+  resetIdleTimer();
+}
+
+function resetIdleTimer(){
+  if(idleTimer) clearTimeout(idleTimer);
+  idleTimer = setTimeout(checkIdleState, IDLE_TIMEOUT_MS);
+}
+
+function checkIdleState(){
+  // Only enter fullscreen if there are active students
+  const seatGrid = document.getElementById('seatGrid');
+  const activeCards = seatGrid.querySelectorAll('.seat-card');
+  if(activeCards.length > 0 && !isFullscreenMode){
+    enterFullscreenMode();
+  }
+}
+
+function enterFullscreenMode(){
+  isFullscreenMode = true;
+  const col1 = document.getElementById('studentsCol');
+  const col2 = document.getElementById('activeCol');
+  const col3 = document.getElementById('checkedCol');
+  
+  if(col1) col1.style.display = 'none';
+  if(col3) col3.style.display = 'none';
+  if(col2){
+    col2.classList.remove('col-lg-8', 'col-md-6');
+    col2.classList.add('col-12');
+    const card = col2.querySelector('.card');
+    if(card) card.style.height = '98vh';
+  }
+  
+  // Request full screen API to cover browser menus
+  const elem = document.documentElement;
+  if(elem.requestFullscreen){
+    elem.requestFullscreen().catch(err => console.warn('Fullscreen request failed:', err));
+  } else if(elem.webkitRequestFullscreen){
+    elem.webkitRequestFullscreen();
+  } else if(elem.mozRequestFullScreen){
+    elem.mozRequestFullScreen();
+  } else if(elem.msRequestFullscreen){
+    elem.msRequestFullscreen();
+  }
+  
+  // Rebuild grid
+  fetchDashboardData();
+}
+
+function exitFullscreenMode(){
+  if(!isFullscreenMode) return;
+  isFullscreenMode = false;
+  
+  const col1 = document.getElementById('activeCol');
+  const leftCol = document.getElementById('studentsCol');
+  const rightCol = document.getElementById('checkedCol');
+  
+  if(col1){
+    col1.className = 'col dashboard-col';
+    col1.querySelector('.card').style.height = '';
+  }
+
+  if(leftCol) leftCol.style.display = '';
+  if(rightCol) rightCol.style.display = '';
+  
+  // Exit full screen API
+  if(document.fullscreenElement){
+    document.exitFullscreen().catch(err => console.warn('Exit fullscreen failed:', err));
+  } else if(document.webkitFullscreenElement){
+    document.webkitExitFullscreen();
+  } else if(document.mozFullScreenElement){
+    document.mozCancelFullScreen();
+  } else if(document.msFullscreenElement){
+    document.msExitFullscreen();
+  }
+  
+  // Rebuild grid with normal seat count
+  fetchDashboardData();
+}
+
+function formatHHMMSS(sec){
+  const h=Math.floor(sec/3600), m=Math.floor(sec%3600/60), s=sec%60;
+  return [h,m,s].map(v=>String(v).padStart(2,"0")).join(":");
+}
+function formatSessionTime(seconds){
+  const mins=Math.floor(seconds/60), h=Math.floor(mins/60), m=mins%60;
+  return `${h} h ${m} m`;
+}
+
+function escapeHtmlAttr(value){
+  return String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/"/g, '&quot;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+}
+
+function normalizeSubjectKey(value){
+  return String(value ?? '').trim().toLowerCase();
+}
+
+function subjectBadgeClass(value){
+  const key = normalizeSubjectKey(value);
+  if (key === 'math') return 'subject-badge-math';
+  if (key === 'reading') return 'subject-badge-reading';
+  if (key === 'writing') return 'subject-badge-writing';
+  return 'bg-secondary';
+}
+
+function subjectBadgeHtml(value){
+  const subject = String(value ?? '').trim();
+  if (!subject) return '';
+  return `<span class="badge ${subjectBadgeClass(subject)} me-1" style="font-size:0.65em;">${escapeHtmlAttr(subject)}</span>`;
+}
+
+
+async function fetchDashboardData(){
+  const refreshToken = ++dashboardRefreshToken;
+
+  const resAll=await fetch('/api/students/list');
+  const students=await resAll.json();
+  const resSess=await fetch('/api/sessions/active');
+  const sessions=await resSess.json();
+  const resAssist=await fetch('/api/assistants/list');
+  const assistants=await resAssist.json();
+  if (refreshToken !== dashboardRefreshToken) {
+    return;
+  }
+  if (Array.isArray(assistants)) {
+    lastAssistantsSnapshot = assistants;
+  }
+  
+  // Deduplicate active sessions by student id (safety against duplicates)
+  const seenActive = new Set();
+  const uniqueSessions = [];
+  for(const s of sessions){
+    const sid = s.id ?? s.student_id ?? s.sid;
+    if(sid == null) continue;
+    if(!seenActive.has(sid)){
+      seenActive.add(sid);
+      uniqueSessions.push(s);
+    }
+  }
+  const activeIds = seenActive;
+  
+  // Filter lists to ensure exclusivity across columns
+  // Column 1 should show any non-active student (including checked out today)
+  const studentsAvailable = (students||[])
+    .filter(st => !activeIds.has(st.id));
+  const checkedOnly = (students||[])
+    .filter(st => st.status === 'checked' && !activeIds.has(st.id));
+  const daySessionCount = checkedOnly.length + uniqueSessions.length;
+
+  buildStudentList(studentsAvailable);
+  buildSeatGrid(uniqueSessions);
+  buildCheckedList(checkedOnly, daySessionCount);
+  buildAssistantsList(assistants);
+}
+// ---------- Column 2 (Staff) ----------
+function buildAssistantsList(assistants){
+  const list = document.getElementById("assistantsDutyList");
+  const onDuty = assistants.filter(a => a.on_duty);
+  
+  if(!list) return;
+
+  list.innerHTML = "";
+
+  if(onDuty.length === 0){
+    list.innerHTML = `<div class="col-12"><small class="text-muted">No staff on duty</small></div>`;
+    return;
+  }
+
+  onDuty.forEach(a => {
+    const div = document.createElement("div");
+    div.className = "duty-mini-item";
+    div.innerHTML = `
+      <div class="card duty-mini-card border-info bg-light" title="Click to toggle staff on/off duty">
+        <div class="fw-bold text-dark duty-mini-name">${a.name}</div>
+      </div>
+    `;
+    list.appendChild(div);
+    
+    // Add click handler to card
+    const cardEl = div.querySelector('.card');
+    cardEl.addEventListener('click', function(e) {
+      e.preventDefault();
+      e.stopPropagation();
+      toggleAssistantDuty(a.id);
+    });
+    
+    // Add hover effect
+    cardEl.addEventListener('mouseenter', function() {
+      this.style.opacity = '0.8';
+    });
+    cardEl.addEventListener('mouseleave', function() {
+      this.style.opacity = '1';
+    });
+  });
+}
+
+// Toggle staff on/off duty from dashboard
+function toggleAssistantDuty(assistantId) {
+  fetch(`/api/assistants/select/${assistantId}`, { method: 'POST' })
+    .then(response => response.json())
+    .then(data => {
+      if (data.success) {
+        // Refresh dashboard to show duty changes and update timers
+        if (typeof fetchDashboardData === 'function') {
+          fetchDashboardData();
+        }
+      }
+    })
+    .catch(error => console.error('Error toggling staff:', error));
+}
+
+// Open Staff on Duty modal
+function openStaffDutyModal() {
+  const modal = new bootstrap.Modal(document.getElementById('staffDutyModal'));
+  loadStaffDutyModal();
+  modal.show();
+}
+
+// Load and display all staff in modal
+function loadStaffDutyModal() {
+  const listContainer = document.getElementById('staffDutyList');
+  listContainer.innerHTML = '<p class="text-muted text-center">Loading staff...</p>';
+
+  function renderStaffRows(assistants) {
+    if (!assistants || assistants.length === 0) {
+      listContainer.innerHTML = '<p class="text-muted text-center">No staff available</p>';
+      return;
+    }
+
+    listContainer.innerHTML = '';
+    assistants.forEach(asst => {
+      const item = document.createElement('div');
+      item.className = 'list-group-item';
+      item.style.cursor = 'pointer';
+      item.style.display = 'flex';
+      item.style.justifyContent = 'space-between';
+      item.style.alignItems = 'center';
+      item.innerHTML = `
+        <div>
+          <strong>${asst.name}</strong>
+          ${asst.role ? `<br><small class="text-muted">${asst.role}</small>` : ''}
+        </div>
+        <div class="staff-duty-status">
+          ${asst.on_duty ?
+            `<span class="badge bg-success"><i class="bi bi-check-circle"></i> On Duty</span>` :
+            `<span class="badge bg-secondary">Off Duty</span>`}
+        </div>
+      `;
+
+      item.addEventListener('click', function() {
+        if (item.dataset.pending === '1') {
+          return;
+        }
+        toggleStaffAndRefresh(asst.id, item);
+      });
+
+      item.addEventListener('mouseenter', function() {
+        this.style.backgroundColor = '#f0f0f0';
+      });
+
+      item.addEventListener('mouseleave', function() {
+        this.style.backgroundColor = 'transparent';
+      });
+
+      listContainer.appendChild(item);
+    });
+  }
+  
+  fetch('/api/assistants/list')
+    .then(async response => {
+      const payload = await response.json().catch(() => null);
+      if (!response.ok) {
+        const msg = payload && payload.error ? payload.error : `HTTP ${response.status}`;
+        throw new Error(msg);
+      }
+      if (!Array.isArray(payload)) {
+        throw new Error('Unexpected staff payload format');
+      }
+      return payload;
+    })
+    .then(assistants => {
+      lastAssistantsSnapshot = assistants;
+      renderStaffRows(assistants);
+    })
+    .catch(error => {
+      console.error('Error loading staff:', error);
+      if (Array.isArray(lastAssistantsSnapshot) && lastAssistantsSnapshot.length > 0) {
+        renderStaffRows(lastAssistantsSnapshot);
+        if (typeof showQuickToast === 'function') {
+          showQuickToast('Live staff refresh failed; showing cached list', true);
+        }
+      } else {
+        listContainer.innerHTML = '<p class="text-danger text-center">Error loading staff</p>';
+      }
+    });
+}
+
+function setStaffRowLoading(rowEl, isLoading) {
+  if (!rowEl) return;
+  const statusEl = rowEl.querySelector('.staff-duty-status');
+  if (!statusEl) return;
+
+  if (isLoading) {
+    rowEl.dataset.pending = '1';
+    rowEl.style.opacity = '0.75';
+    statusEl.innerHTML = `
+      <span class="badge bg-light text-dark border">
+        <span class="spinner-border spinner-border-sm me-1" role="status" aria-hidden="true" style="width:0.75rem;height:0.75rem;"></span>
+        Updating...
+      </span>
+    `;
+  } else {
+    rowEl.dataset.pending = '0';
+    rowEl.style.opacity = '';
+  }
+}
+
+// Toggle staff and refresh modal
+function toggleStaffAndRefresh(assistantId, rowEl) {
+  setStaffRowLoading(rowEl, true);
+
+  fetch(`/api/assistants/select/${assistantId}`, { method: 'POST' })
+    .then(async response => {
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok || !data.success) {
+        throw new Error(data.error || 'Failed to toggle staff duty status');
+      }
+      // Reload the modal list to show updated status
+      loadStaffDutyModal();
+      // Refresh dashboard to show duty changes
+      if (typeof fetchDashboardData === 'function') {
+        fetchDashboardData();
+      }
+    })
+    .catch(error => {
+      console.error('Error toggling staff:', error);
+      if (typeof showQuickToast === 'function') {
+        showQuickToast(error.message || 'Error toggling staff', true);
+      }
+    })
+    .finally(() => {
+      setStaffRowLoading(rowEl, false);
+    });
+}
+// ---------- Column 1 ----------
+  function buildStudentList(data){
+    const list=document.getElementById("studentList");
+    list.innerHTML="";
+    
+    // Get today's day name
+    const days = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+    const today = days[new Date().getDay()];
+    
+    // Filter non-active students (registered + checked)
+    const availableStudents = data.filter(s => s.status !== "active");
+    
+    // Separate students into scheduled for today and others
+    const scheduledToday = [];
+    const others = [];
+    
+    availableStudents.forEach(s => {
+      // Check if scheduled for today
+      const isScheduledToday = (s.day1 === today || s.day2 === today);
+      
+      if (isScheduledToday) {
+        // Get the time for today
+        let time = null;
+        if (s.day1 === today) time = s.day1_time;
+        else if (s.day2 === today) time = s.day2_time;
+        
+        scheduledToday.push({ student: s, time: time });
+      } else {
+        others.push(s);
+      }
+    });
+    
+    // Sort scheduled students by time
+    scheduledToday.sort((a, b) => {
+      if (!a.time || !b.time) return 0;
+      return a.time.localeCompare(b.time);
+    });
+    
+    // Sort others alphabetically by name
+    others.sort((a, b) => a.name.localeCompare(b.name));
+    
+    // Helper function to create student entry
+    function createStudentEntry(s, timeDisplay = null) {
+      const div = document.createElement("div");
+      div.className = "p-2 border rounded mb-1 hover-bg d-flex align-items-center";
+      const info = document.createElement('div');
+      info.className = 'flex-fill';
+      const badges = [];
+      if (s.subject) badges.push(subjectBadgeHtml(s.subject));
+      if (s.book_loaned) badges.push('<span class="badge bg-light text-dark border me-1" style="font-size:0.65em;">B</span>');
+      if (s.paper_ws) badges.push('<span class="badge bg-light text-dark border me-1" style="font-size:0.65em;">P</span>');
+      const badgeDisplay = badges.length > 0 ? badges.join('') : '<span class="text-muted">-</span>';
+      
+      const checkedBadge = s.status === 'checked'
+        ? ' <span class="badge bg-secondary" style="font-size:0.65em;">Checked out</span>'
+        : '';
+
+      const nameDisplay = timeDisplay 
+        ? `<b>${s.name}</b>${checkedBadge} <span class="text-primary">(${timeDisplay})</span>`
+        : `<b>${s.name}</b>${checkedBadge}`;
+      
+      info.innerHTML = `${nameDisplay}<br><small>${badgeDisplay}</small>`;
+      div.appendChild(info);
+      div.onclick = async () => {
+        if (confirm("Start session for " + s.name + "?")) {
+          try {
+            const res = await fetch(`/api/students/start/${s.id}`, { method: 'POST' });
+            if (!res.ok) {
+              let errorMessage = 'Failed to start session';
+              try {
+                const payload = await res.json();
+                if (payload && payload.error) {
+                  errorMessage = payload.error;
+                }
+              } catch (e) {
+                // keep default message when response isn't JSON
+              }
+              alert(errorMessage);
+              return;
+            }
+            fetchDashboardData();
+          } catch (err) {
+            alert('Failed to start session. Please try again.');
+          }
+        }
+      };
+      return div;
+    }
+    
+    // Add scheduled students first
+    scheduledToday.forEach(({student: s, time}) => {
+      list.appendChild(createStudentEntry(s, time));
+    });
+    
+    // Add remaining students
+    others.forEach(s => {
+      list.appendChild(createStudentEntry(s));
+    });
+    
+    document.getElementById("registeredCount").innerText=
+      `${availableStudents.length} students available`;
+
+}
+
+// ---------- Column 2 ----------
+function buildSeatGrid(activeSessions){
+  seatTimerHandles.forEach(timerId => clearInterval(timerId));
+  seatTimerHandles = [];
+
+  const grid=document.getElementById("seatGrid");
+  grid.innerHTML="";
+  document.getElementById("activeCount").innerText=
+    `(${activeSessions.length} active)`;
+  const seatLimit = isFullscreenMode ? SEAT_LIMIT_FULLSCREEN : SEAT_LIMIT;
+  const seatHeight = isFullscreenMode ? "180px" : "170px";
+  for(let i=0;i<seatLimit;i++){
+    const seatLabel="Seat "+(i+1);
+    const col=document.createElement("div"); col.className="";
+    const s=activeSessions[i];
+    if(s){
+      const start=new Date((s.start_time||"").replace(/\u202f|\u2009/g," "));
+      const limit=DURATION_LIMITS[s.subject]||1800;
+      const badges = [];
+      if (s.subject) {  // Only add subject badge if subject is not empty
+        badges.push(s.subject);
+      }
+      if (s.book_loaned) {
+        badges.push('B');
+      }
+      if (s.paper_ws) {
+        badges.push('P');
+      }
+      const badgeText = badges.join(', ');
+      const fontSize = isFullscreenMode ? '42px' : '32px';
+
+      const card=document.createElement("div");
+      card.className="card shadow-sm seat-card";
+      card.style.minHeight=seatHeight;
+      card.style.height=seatHeight;
+      card.style.display="flex";
+      card.style.flexDirection="column";
+
+      // Build photo HTML
+      const photoSrc = s.photo_data_uri || s.photo_url || '';
+      const safeName = escapeHtmlAttr(s.name || 'Student');
+      const safePhotoSrc = escapeHtmlAttr(photoSrc);
+      const photoHtml = photoSrc
+        ? `<div style="width:48px;height:48px;position:relative;flex-shrink:0;">
+             <img src="${safePhotoSrc}" alt="${safeName}" style="width:48px;height:48px;object-fit:cover;border-radius:50%;border:2px solid #dee2e6;display:block;">
+             <div style="width:48px;height:48px;border-radius:50%;border:2px solid #dee2e6;background:#e9ecef;display:none;align-items:center;justify-content:center;"><i class="bi bi-person" style="font-size:1.4em;color:#adb5bd;"></i></div>
+           </div>`
+        : `<div style="width:48px;height:48px;border-radius:50%;border:2px solid #dee2e6;background:#e9ecef;display:flex;align-items:center;justify-content:center;flex-shrink:0;"><i class="bi bi-person" style="font-size:1.4em;color:#adb5bd;"></i></div>`;
+
+      // Build subjects badges HTML
+      const subjectsList = (s.subjects && s.subjects.length > 0) ? s.subjects : (s.subject ? [s.subject] : []);
+      const subjectsHtml = subjectsList.length > 0
+        ? subjectsList.map(sub => subjectBadgeHtml(sub)).join('')
+        : '';
+
+      card.innerHTML=`
+        <div class="d-flex align-items-center gap-2 p-2">
+          ${photoHtml}
+          <div class="flex-grow-1 overflow-hidden">
+            <div class="fw-semibold text-truncate" style="font-size:${fontSize}; line-height:1.2;">${s.name}</div>
+            ${subjectsHtml ? `<div class="mt-1">${subjectsHtml}</div>` : ''}
+          </div>
+        </div>
+        <div class="flex-grow-1 d-flex align-items-center justify-content-center">
+          <div class="timer fw-bold text-success" style="font-size:${fontSize}; line-height:1.2;">--:--:--</div>
+        </div>
+        <div class="text-center text-muted" style="font-size:0.7em; padding:0.25rem 0.5rem; border-top:1px solid #e9ecef;">
+          Started: ${start.toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'})}
+        </div>`;
+      card.onclick=async()=>{
+        if(confirm("Stop session for "+s.name+"?")){
+          try {
+            const res = await fetch(`/api/students/stop/${s.id}`,{method:'POST'});
+            const j = await res.json().catch(()=>({}));
+            if(!res.ok){
+              showQuickToast(j.error || 'Failed to stop session', true);
+            } else if(j && j.checkout_email_status === 'sent'){
+              showCheckoutEmailConfirmation(s.name);
+            } else if(j && j.checkout_email_status === 'disabled'){
+              showQuickToast(j.checkout_email_message || 'Checkout email is unavailable', true);
+            } else if(j && j.checkout_email_status === 'no_email'){
+              showQuickToast('No email on file', true);
+            } else if(j && (j.checkout_email_status === 'failed' || j.checkout_email_status === 'error')){
+              showQuickToast(j.checkout_email_message || 'Checkout email failed', true);
+            }
+          } catch(err){
+            showQuickToast('Failed to stop session', true);
+          } finally {
+            fetchDashboardData();
+          }
+        }
+      };
+      col.appendChild(card); grid.appendChild(col);
+      const tEl=card.querySelector(".timer");
+      const timerId = setInterval(()=>{
+        const diff=Math.floor((new Date()-start)/1000);
+        tEl.textContent=formatHHMMSS(diff);
+        tEl.classList.toggle("text-danger",diff>limit);
+        tEl.classList.toggle("text-success",diff<=limit);
+      },1000);
+      seatTimerHandles.push(timerId);
+    }else{
+      const emptyCard = document.createElement("div");
+      emptyCard.className = "card shadow-sm seat-card seat-empty";
+      emptyCard.style.minHeight = seatHeight;
+      emptyCard.style.height = seatHeight;
+      emptyCard.style.display = "flex";
+      emptyCard.style.alignItems = "center";
+      emptyCard.style.justifyContent = "center";
+      emptyCard.style.textAlign = "center";
+      emptyCard.innerHTML = `<div class="fw-light text-muted" style="font-size:0.9em;">${seatLabel} Empty</div>`;
+      col.appendChild(emptyCard);
+      grid.appendChild(col);
+    }
+  }
+  
+  // Handle overflow students (21+)
+  const overflowContainer = document.getElementById('overflowStudents');
+  const overflowList = document.getElementById('overflowList');
+  const overflowStudents = activeSessions.slice(seatLimit);
+  
+  if(overflowStudents.length > 0){
+    overflowContainer.style.display = 'block';
+    overflowList.innerHTML = '';
+    overflowStudents.forEach(s => {
+      const badge = document.createElement('span');
+      badge.className = 'badge bg-warning text-dark';
+      badge.textContent = s.name;
+      badge.style.cursor = 'pointer';
+      badge.onclick = async() => {
+        if(confirm(`Stop session for ${s.name}?`)){
+          try {
+            const res = await fetch(`/api/students/stop/${s.id}`, {method:'POST'});
+            const j = await res.json().catch(()=>({}));
+            if(!res.ok){
+              showQuickToast(j.error || 'Failed to stop session', true);
+            } else if(j && j.checkout_email_status === 'sent'){
+              showCheckoutEmailConfirmation(s.name);
+            } else if(j && j.checkout_email_status === 'disabled'){
+              showQuickToast(j.checkout_email_message || 'Checkout email is unavailable', true);
+            } else if(j && j.checkout_email_status === 'no_email'){
+              showQuickToast('No email on file', true);
+            } else if(j && (j.checkout_email_status === 'failed' || j.checkout_email_status === 'error')){
+              showQuickToast(j.checkout_email_message || 'Checkout email failed', true);
+            }
+          } catch(err){
+            showQuickToast('Failed to stop session', true);
+          } finally {
+            fetchDashboardData();
+          }
+        }
+      };
+      overflowList.appendChild(badge);
+    });
+  } else {
+    overflowContainer.style.display = 'none';
+  }
+}
+
+// ---------- Column 3 ----------
+function buildCheckedList(data, daySessionCount){
+  const checked=data.filter(s=>s.status==="checked");
+  const ul=document.getElementById("checkedList"); ul.innerHTML="";
+    checked.forEach(s=>{
+      // prefer accumulated total_seconds (today) if available, otherwise fall back to last-session duration
+      const dur = formatSessionTime(s.total_seconds || s.duration || 0);
+    const li=document.createElement("li");
+    li.className="list-group-item";
+    li.innerHTML=`<div class="d-flex align-items-center">
+      <div><div class="fw-semibold">${s.name}</div>
+      <div class="text-success small">${dur}</div></div></div>`;
+    ul.appendChild(li);
+  });
+  document.getElementById("checkedCount").innerText=
+    `${checked.length} students checked out today`;
+  document.getElementById("daySessionCount").innerText=
+    `${daySessionCount} students were in session today`;
+}
+
+fetchDashboardData();
+
+// ---------------- Idle Fullscreen Mode ----------------
+function recordActivity(){
+  if(isFullscreenMode){
+    exitFullscreenMode();
+  }
+  resetIdleTimer();
+}
+
+function resetIdleTimer(){
+  if(idleTimer) clearTimeout(idleTimer);
+  idleTimer = setTimeout(checkIdleState, IDLE_TIMEOUT_MS);
+}
+
+function checkIdleState(){
+  const seatGrid = document.getElementById('seatGrid');
+  const activeCards = seatGrid.querySelectorAll('.seat-card');
+  if(activeCards.length > 0 && !isFullscreenMode){
+    enterFullscreenMode();
+  }
+}
+
+function enterFullscreenMode(){
+  isFullscreenMode = true;
+  const col1 = document.getElementById('studentsCol');
+  const col2 = document.getElementById('activeCol');
+  const col3 = document.getElementById('checkedCol');
+  
+  if(col1) col1.style.display = 'none';
+  if(col3) col3.style.display = 'none';
+  if(col2){
+    col2.classList.remove('col-lg-8', 'col-md-6');
+    col2.classList.add('col-12');
+    const card = col2.querySelector('.card');
+    if(card) card.style.height = '98vh';
+  }
+  
+  fetchDashboardData();
+}
+
+function exitFullscreenMode(){
+  if(!isFullscreenMode) return;
+  isFullscreenMode = false;
+  
+  const col1 = document.getElementById('studentsCol');
+  const col2 = document.getElementById('activeCol');
+  const col3 = document.getElementById('checkedCol');
+  
+  if(col1) col1.style.display = '';
+  if(col3) col3.style.display = '';
+  if(col2){
+    col2.className = 'col dashboard-col';
+    const card = col2.querySelector('.card');
+    if(card) card.style.height = '';
+  }
+  
+  fetchDashboardData();
+}
+
+// Track activity
+document.addEventListener('mousemove', recordActivity, {passive: true});
+document.addEventListener('click', recordActivity, {passive: true});
+document.addEventListener('keydown', recordActivity, {passive: true});
+document.addEventListener('scroll', recordActivity, {passive: true});
+document.addEventListener('touchstart', recordActivity, {passive: true});
+resetIdleTimer();
+
+// ---------------- QR Keyboard Scanner on Dashboard ----------------
+// Goal: When a student QR is scanned on the main dashboard, automatically
+// start a session, or if already active, check the student out.
+// We listen for fast keystrokes from the hardware scanner and finalize
+// the payload after a brief idle timeout.
+
+(function(){
+  let scanBuffer = '';
+  let finalizeTimer = null;
+  let forceFinalizeTimer = null;
+  let lastKeyTs = 0;
+  const IDLE_MS = 180; // idle gap that indicates scan end
+  const FORCE_MS = 1000; // max wait before forcing finalize
+  const KEEP_FOCUS_MS = 2000; // refocus interval to keep page ready
+  let focusTimer = null;
+  let listenersAttached = false;
+  let debugPanelVisible = localStorage.getItem('dashDebugPanelVisible') === 'true';
+
+  // Debug panel to collect logs visible on the page
+  function ensureDebugPanel(){
+    if(document.getElementById('dashDebugPanel')) return;
+    const wrap = document.createElement('div');
+    wrap.id = 'dashDebugPanel';
+    wrap.style.position='fixed';
+    wrap.style.bottom='12px';
+    wrap.style.right='12px';
+    wrap.style.width='320px';
+    wrap.style.maxHeight='240px';
+    wrap.style.zIndex='2100';
+    wrap.style.background='#fff';
+    wrap.style.border='1px solid #ced4da';
+    wrap.style.boxShadow='0 4px 12px rgba(0,0,0,0.15)';
+    wrap.style.borderRadius='6px';
+    wrap.style.display=debugPanelVisible ? 'block' : 'none';
+    wrap.innerHTML = `
+      <div style="display:flex; align-items:center; justify-content:space-between; padding:6px 8px; background:var(--brand-primary); color:#fff; border-radius:6px 6px 0 0;">
+        <strong style="font-size:0.95em;">Scanner Debug Log</strong>
+        <div>
+          <button id="dashDebugToggle" class="btn btn-sm btn-light py-0 px-1">Hide</button>
+          <button id="dashDebugCopy" class="btn btn-sm btn-light py-0 px-1">Copy</button>
+          <button id="dashDebugClear" class="btn btn-sm btn-outline-light py-0 px-1">Clear</button>
+        </div>
+      </div>
+      <textarea id="dashDebugArea" readonly tabindex="-1" style="width:100%; height:180px; font-size:12px; font-family:monospace; border:0; padding:6px; resize:none; outline:none; user-select:text;"></textarea>
+    `;
+    document.body.appendChild(wrap);
+    document.getElementById('dashDebugToggle').onclick = () => {
+      debugPanelVisible = !debugPanelVisible;
+      localStorage.setItem('dashDebugPanelVisible', debugPanelVisible);
+      wrap.style.display = debugPanelVisible ? 'block' : 'none';
+      const btn = document.getElementById('dashDebugToggle');
+      btn.textContent = debugPanelVisible ? 'Hide' : 'Show';
+    };
+    document.getElementById('dashDebugCopy').onclick = () => {
+      const ta = document.getElementById('dashDebugArea');
+      ta.select();
+      document.execCommand('copy');
+    };
+    document.getElementById('dashDebugClear').onclick = () => {
+      const ta = document.getElementById('dashDebugArea');
+      ta.value='';
+    };
+  }
+
+  function logDebug(msg){
+    ensureDebugPanel();
+    const ta = document.getElementById('dashDebugArea');
+    const ts = new Date().toLocaleTimeString();
+    ta.value += `[${ts}] ${msg}\n`;
+    ta.scrollTop = ta.scrollHeight;
+    console.debug('[dashboard][scan]', msg);
+  }
+
+  function isTypingInField(){
+    const ae = document.activeElement;
+    if(!ae) return false;
+    const tag = ae.tagName?.toLowerCase();
+    const isEditable = ae.isContentEditable;
+    // Allow scanning even if search field is focused, but don't intercept
+    // normal typing (scanner sends rapid keystrokes, we collect globally)
+    return (tag === 'textarea') || (tag === 'input' && ae.type !== 'button' && ae.type !== 'checkbox' && ae.type !== 'radio') || isEditable;
+  }
+
+  function deduplicateCharacters(str){
+    // Scanner sends each character 4x for error correction: IIIIDDDD -> ID
+    if(!str || str.length < 2) return str;
+    
+    // Try different repeat factors (4x, 3x, 2x)
+    for(let n of [4, 3, 2]){
+      if(str.length % n !== 0) continue;
+      let candidate = '';
+      let matches = true;
+      for(let i=0; i<str.length; i+=n){
+        const chunk = str.substring(i, i+n);
+        const firstChar = chunk[0];
+        if(chunk.split('').every(c => c === firstChar)){
+          candidate += firstChar;
+        } else {
+          matches = false;
+          break;
+        }
+      }
+      if(matches && candidate.length > 0){
+        logDebug(`CHAR DEDUP: ${n}x repetition detected`);
+        return candidate;
+      }
+    }
+    return str;
+  }
+
+  function normalizePayload(str){
+    return String(str||'')
+      .replace(/\r\n/g, "\n")
+      .replace(/\r/g, "\n")
+      .replace(/[\u202F\u2009\u00A0]/g, ' ')
+      .trim();
+  }
+
+  function deduplicateRepeatingDigits(numStr){
+    if(!numStr || numStr.length < 2) return numStr;
+    const uniqCount = new Set(numStr.split('')).size;
+
+    // Case A: all digits identical
+    if(uniqCount === 1){
+      // If length <= 2, keep as-is (e.g., 44 is valid ID 44)
+      if(numStr.length <= 2) return numStr;
+      // If length > 2, keep first two digits (e.g., 333333 -> 33)
+      return numStr.slice(0, 2);
+    }
+
+    // Case B: digit-repeat-based (e.g., 5577 -> 57, each digit repeats n times)
+    if(numStr.length % 2 === 0){
+      for(let n=2; n<=numStr.length/2; n++){
+        if(numStr.length % n === 0){
+          let result = '';
+          for(let i=0;i<numStr.length;i+=n) result += numStr[i];
+          let reconstructed = '';
+          for(const d of result){ for(let j=0;j<n;j++) reconstructed += d; }
+          if(reconstructed === numStr) return result;
+        }
+      }
+    }
+
+    // Case C: pattern-based, but avoid collapsing to single digit
+    for(let patternLen=2; patternLen<=Math.floor(numStr.length/2); patternLen++){
+      const pattern = numStr.substring(0, patternLen);
+      let repeated = '';
+      for(let i=0;i<Math.ceil(numStr.length/patternLen);i++) repeated += pattern;
+      if(repeated.substring(0, numStr.length) === numStr) return pattern;
+    }
+
+    return numStr;
+  }
+
+  async function finalizeScan(){
+    let raw = scanBuffer;
+    scanBuffer = '';
+    if(finalizeTimer){ clearTimeout(finalizeTimer); finalizeTimer = null; }
+    if(forceFinalizeTimer){ clearTimeout(forceFinalizeTimer); forceFinalizeTimer = null; }
+
+    // Deduplicate character-level repetition first (scanner sends 4x chars)
+    raw = deduplicateCharacters(raw);
+    const data = normalizePayload(raw);
+    if(!data) return;
+    logDebug(`RAW=${JSON.stringify(raw)}`);
+
+    // Parse type and id (supports ID and ASST)
+    let type = null;
+    let ident = null;
+
+    // Pass 1: direct clean pattern, e.g., "ID:57" or "ASST:3"
+    let m = data.match(/^(ID|ASST|ASSISTANT)\s*[:;=]?\s*(\d+)$/i);
+    if(m){
+      type = (m[1].toUpperCase()==='ASSISTANT') ? 'ASST' : m[1].toUpperCase();
+      ident = parseInt(deduplicateRepeatingDigits(m[2]),10);
+      logDebug(`DIRECT match -> type=${type} id=${ident}`);
+    }
+
+    // Pass 2: flexible pattern with noise
+    if(ident == null){
+      m = data.match(/(ID|ASST|ASSISTANT)[^\d]*[:+;=]*([0-9]+)/i);
+      if(m){
+        type = (m[1].toUpperCase()==='ASSISTANT') ? 'ASST' : m[1].toUpperCase();
+        let idStr = m[2];
+        if(idStr.length < 2){
+          const later = data.match(/(\d{2,6})(?!.*\d)/);
+          if(later) idStr = later[1];
+        }
+        ident = parseInt(deduplicateRepeatingDigits(idStr),10);
+        logDebug(`FLEX match -> type=${type} id=${ident} from ${idStr}`);
+      }
+    }
+
+    // Pass 3: last digits anywhere (fallback)
+    if(ident == null){
+      m = data.match(/(\d{2,6})(?!.*\d)/);
+      if(m){ ident = parseInt(deduplicateRepeatingDigits(m[1]),10); type = type || 'ID'; logDebug(`LAST-DIGITS -> type=${type} id=${ident}`); }
+    }
+
+    // Pass 4: all digits only -> assume student ID
+    if(ident == null){
+      const onlyDigits = data.match(/^(\d{1,6})$/);
+      if(onlyDigits){ ident = parseInt(deduplicateRepeatingDigits(onlyDigits[1]),10); type = type || 'ID'; logDebug(`ONLY-DIGITS -> type=${type} id=${ident}`); }
+    }
+
+    if(!Number.isFinite(ident)) return;
+
+    // Parse optional fields for display name (e.g., Name:John Doe)
+    const fields = {};
+    data.split('\n').map(l=>l.trim()).filter(Boolean).forEach(line => {
+      const mm = line.match(/^([^:;=]+)[:;=](.*)$/);
+      if(mm){ fields[mm[1].trim().toUpperCase()] = mm[2].trim(); }
+    });
+
+    async function resolveAssistantName(aid){
+      if(fields.NAME) return fields.NAME;
+      try{
+        const res = await fetch('/api/assistants/list', {cache:'no-store'});
+        const list = await res.json();
+        const a = list.find(x=>x.id===aid);
+        return a ? a.name : `Staff ${aid}`;
+      }catch{ return `Staff ${aid}`; }
+    }
+
+    if(type === 'ASST'){
+      // Toggle staff on/off duty
+      try{
+        const res = await fetch(`/api/assistants/select/${ident}`, {method:'POST'});
+        const j = await res.json().catch(()=>({}));
+        const name = await resolveAssistantName(ident);
+        if(!res.ok || j.error){
+          showQuickToast(`${name}: ${j.error || 'Toggle failed'}`, true);
+          logDebug(`ASST FAIL id=${ident} status=${res.status} body=${JSON.stringify(j)}`);
+        } else {
+          const action = j.on_duty ? 'On Duty' : 'Off Duty';
+          showQuickToast(`${name} — ${action}`);
+          logDebug(`ASST OK id=${ident} action=${action}`);
+          // Refresh navbar staff list to update checkmark
+          if (typeof loadAssistants === 'function') {
+            loadAssistants();
+          }
+        }
+        fetchDashboardData();
+      }catch(err){
+        console.error('[dashboard] staff toggle error', err);
+        showQuickToast('Error toggling staff '+ident, true);
+        logDebug(`ASST ERROR id=${ident} msg=${err.message}`);
+      }
+      return; // done
+    }
+
+    // Default: treat as student ID
+    try{
+      const res = await fetch('/api/sessions/toggle',{
+        method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({ student_id: ident })
+      });
+      const j = await res.json().catch(()=>({}));
+      if(!res.ok){
+        console.warn('[dashboard][scan] toggle failed', j);
+        showQuickToast(`ID ${ident}: ${j.error || 'Toggle failed'}`, true);
+        logDebug(`TOGGLE FAIL id=${ident} status=${res.status} body=${JSON.stringify(j)}`);
+      } else {
+        const action = (j && j.action) ? (j.action==='started'?'Started':'Checked Out') : 'Updated';
+        showQuickToast(`${j.name||('Student '+ident)} — ${action}`);
+        if(j && j.action === 'checked_out'){
+          if(j.checkout_email_status === 'sent'){
+            showCheckoutEmailConfirmation(j.name || ('Student ' + ident));
+          } else if(j.checkout_email_status === 'disabled'){
+            showQuickToast(j.checkout_email_message || 'Checkout email is unavailable', true);
+          } else if(j.checkout_email_status === 'no_email'){
+            showQuickToast('No email on file', true);
+          } else if(j.checkout_email_status === 'failed' || j.checkout_email_status === 'error'){
+            showQuickToast(j.checkout_email_message || 'Checkout email failed', true);
+          }
+        }
+        logDebug(`TOGGLE OK id=${ident} action=${action}`);
+      }
+      fetchDashboardData();
+    }catch(err){
+      console.error('[dashboard] toggle error', err);
+      showQuickToast('Error toggling session for ID '+ident, true);
+      logDebug(`ERROR id=${ident} msg=${err.message}`);
+    }
+
+    // ensure buffers are clear and ready for next scan immediately
+    scanBuffer = '';
+    lastKeyTs = 0;
+  }
+
+  function scheduleFinalize(){
+    if (!isActiveClassWindow || !pageIsReadyForScan()) return;
+    if(finalizeTimer) clearTimeout(finalizeTimer);
+    finalizeTimer = setTimeout(finalizeScan, IDLE_MS);
+    if(forceFinalizeTimer) clearTimeout(forceFinalizeTimer);
+    forceFinalizeTimer = setTimeout(finalizeScan, FORCE_MS);
+  }
+
+  function onKeyDown(e){
+    if (!isActiveClassWindow || !pageIsReadyForScan()) return;
+    // Block disruptive browser shortcuts (downloads/print/save/open/close)
+    if (e.ctrlKey) {
+      const kk = (e.key || '').toLowerCase();
+      if (["j","p","o","s","w"].includes(kk)) {
+        e.preventDefault();
+        e.stopPropagation();
+        logDebug(`BLOCKED Ctrl+${kk.toUpperCase()}`);
+        return;
+      }
+      // Ignore other Ctrl combos
+      return;
+    }
+    // Ignore Alt/Meta
+    if(e.altKey || e.metaKey) return;
+    const k = e.key;
+    if(k === 'Enter'){ e.preventDefault(); finalizeScan(); return; }
+    if(k.length === 1){
+      const now = Date.now();
+      logDebug(`KEY '${k}' buffer_before='${scanBuffer}' dt=${now-lastKeyTs}ms`);
+      lastKeyTs = now;
+      // If the user is typing in the search field, allow typing but still build the scan buffer
+      // Scanner sends fast sequences; human typing won't trigger finalize due to larger gaps
+      scanBuffer += k;
+      scheduleFinalize();
+    }
+  }
+
+  // Keep focus on body to avoid losing key events after first scan
+  function keepFocus(){
+    if(focusTimer) clearTimeout(focusTimer);
+    if(document.activeElement && document.activeElement.id === 'dashDebugArea'){
+      // don't steal focus if user is copying logs
+    } else {
+      // attempt to focus body without moving cursor
+      if(document.body) document.body.focus({preventScroll:true});
+    }
+    focusTimer = setTimeout(keepFocus, KEEP_FOCUS_MS);
+  }
+
+  function attachListeners(){
+    if(listenersAttached) return;
+    document.addEventListener('keydown', onKeyDown, {capture:true});
+    window.addEventListener('keydown', onKeyDown, {capture:true});
+    document.addEventListener('keypress', onKeyDown, {capture:true});
+    window.addEventListener('keypress', onKeyDown, {capture:true});
+    listenersAttached = true;
+    logDebug('Listeners attached (document/window, keydown/keypress, capture=true)');
+  }
+
+  function showQuickToast(msg, isError){
+    let el = document.getElementById('dashQuickToast');
+    if(!el){
+      el = document.createElement('div');
+      el.id = 'dashQuickToast';
+      el.style.position='fixed'; el.style.top='12px'; el.style.right='12px';
+      el.style.zIndex='2000'; el.style.minWidth='220px';
+      document.body.appendChild(el);
+    }
+    el.innerHTML = `<div class="alert ${isError?'alert-danger':'alert-success'} shadow-sm py-2 px-3 mb-0">${msg}</div>`;
+    setTimeout(()=>{ if(el) el.innerHTML=''; }, 2500);
+  }
+
+  function showCheckoutEmailConfirmation(studentName){
+    let backdrop = document.getElementById('checkoutEmailConfirmBackdrop');
+    if(!backdrop){
+      backdrop = document.createElement('div');
+      backdrop.id = 'checkoutEmailConfirmBackdrop';
+      backdrop.style.position = 'fixed';
+      backdrop.style.inset = '0';
+      backdrop.style.background = 'rgba(0, 0, 0, 0.35)';
+      backdrop.style.display = 'flex';
+      backdrop.style.alignItems = 'center';
+      backdrop.style.justifyContent = 'center';
+      backdrop.style.zIndex = '2200';
+      document.body.appendChild(backdrop);
+    }
+
+    const safeName = studentName || 'Student';
+    backdrop.innerHTML = `
+      <div class="card shadow-lg border-0" style="max-width:460px; width:92%; border-radius:14px; overflow:hidden;">
+        <div class="card-body text-center py-4 px-3">
+          <div class="mb-2" style="font-size:2.2rem;">✅</div>
+          <h5 class="mb-2">Checkout Confirmed</h5>
+          <p class="mb-1"><strong>${safeName}</strong> has been checked out.</p>
+          <p class="mb-0 text-success fw-semibold">Email sent successfully.</p>
+        </div>
+      </div>
+    `;
+
+    backdrop.style.display = 'flex';
+    setTimeout(() => {
+      const currentBackdrop = document.getElementById('checkoutEmailConfirmBackdrop');
+      if(currentBackdrop){
+        currentBackdrop.style.display = 'none';
+      }
+    }, 2000);
+  }
+
+  // Attach global keydown listener on dashboard
+  ensureDebugPanel();
+  keepFocus();
+  attachListeners();
+  window.showQuickToast = showQuickToast;
+  window.showCheckoutEmailConfirmation = showCheckoutEmailConfirmation;
+})();
+</script>

@@ -1,10 +1,11 @@
 # routes/instructor_profile.py
-from flask import render_template, request, redirect, url_for, flash, jsonify, session
+from flask import render_template, request, redirect, url_for, flash, jsonify, session, current_app, send_file
 from modules import instructor_profile_manager, student_manager, auth_manager, user_identity_manager
 from datetime import datetime
 from routes.auth import require_login
 import math
 import json
+import os
 
 
 TIMEZONE_OPTIONS = [
@@ -172,6 +173,143 @@ def register_instructor_profile_routes(app):
             'profile': None,
             'error': 'Instructor profile not found'
         })
+
+    @app.route('/instructor/dev-trace')
+    @require_login
+    def instructor_dev_trace():
+        """Download the per-launch development trace file."""
+        if not current_app.config.get('DEV_TRACE_ENABLED'):
+            flash('Development trace logging is disabled.', 'warning')
+            return redirect(url_for('instructor_profile'))
+
+        trace_path = current_app.config.get('DEV_TRACE_FILE_PATH', '')
+        if not trace_path or not os.path.exists(trace_path):
+            flash('Trace file not found for this app launch.', 'warning')
+            return redirect(url_for('instructor_profile'))
+
+        return send_file(
+            trace_path,
+            mimetype='text/plain; charset=utf-8',
+            as_attachment=True,
+            download_name=os.path.basename(trace_path),
+            max_age=0,
+        )
+
+    @app.route('/instructor/dev-trace-folder')
+    @require_login
+    def instructor_dev_trace_folder():
+        """Show available development trace files (newest first)."""
+        if not current_app.config.get('DEV_TRACE_ENABLED'):
+            flash('Development trace logging is disabled.', 'warning')
+            return redirect(url_for('instructor_profile'))
+
+        trace_dir = os.path.join(current_app.root_path, 'trace_logs')
+        os.makedirs(trace_dir, exist_ok=True)
+
+        trace_files = []
+        try:
+            for fname in os.listdir(trace_dir):
+                if not fname.lower().endswith('.txt'):
+                    continue
+                fpath = os.path.join(trace_dir, fname)
+                if not os.path.isfile(fpath):
+                    continue
+                stat = os.stat(fpath)
+                trace_files.append({
+                    'name': fname,
+                    'size_bytes': int(stat.st_size),
+                    'modified_at': datetime.fromtimestamp(stat.st_mtime).strftime('%Y-%m-%d %H:%M:%S'),
+                    'modified_ts': float(stat.st_mtime),
+                    'is_current': fname == os.path.basename(current_app.config.get('DEV_TRACE_FILE_PATH', '') or ''),
+                })
+        except Exception as exc:
+            flash(f'Unable to read trace folder: {exc}', 'danger')
+            return redirect(url_for('instructor_profile'))
+
+        trace_files.sort(key=lambda item: item['modified_ts'], reverse=True)
+        return render_template(
+            'dev_trace_folder.html',
+            trace_files=trace_files,
+            trace_dir=trace_dir,
+        )
+
+    @app.route('/instructor/dev-trace-file/<path:filename>')
+    @require_login
+    def instructor_dev_trace_file(filename):
+        """Download a specific development trace file from trace_logs."""
+        if not current_app.config.get('DEV_TRACE_ENABLED'):
+            flash('Development trace logging is disabled.', 'warning')
+            return redirect(url_for('instructor_profile'))
+
+        safe_name = os.path.basename(filename or '')
+        if not safe_name.lower().endswith('.txt'):
+            flash('Invalid trace file.', 'danger')
+            return redirect(url_for('instructor_dev_trace_folder'))
+
+        trace_dir = os.path.join(current_app.root_path, 'trace_logs')
+        file_path = os.path.join(trace_dir, safe_name)
+        if not os.path.exists(file_path):
+            flash('Trace file not found.', 'warning')
+            return redirect(url_for('instructor_dev_trace_folder'))
+
+        return send_file(
+            file_path,
+            mimetype='text/plain; charset=utf-8',
+            as_attachment=True,
+            download_name=safe_name,
+            max_age=0,
+        )
+
+    @app.route('/instructor/dev-trace-folder/cleanup', methods=['POST'])
+    @require_login
+    def instructor_dev_trace_cleanup():
+        """Delete older trace files while keeping the newest N files."""
+        if not current_app.config.get('DEV_TRACE_ENABLED'):
+            flash('Development trace logging is disabled.', 'warning')
+            return redirect(url_for('instructor_profile'))
+
+        keep_count_raw = (request.form.get('keep_count') or '20').strip()
+        try:
+            keep_count = max(0, int(keep_count_raw))
+        except ValueError:
+            keep_count = 20
+
+        trace_dir = os.path.join(current_app.root_path, 'trace_logs')
+        os.makedirs(trace_dir, exist_ok=True)
+        current_trace_name = os.path.basename(current_app.config.get('DEV_TRACE_FILE_PATH', '') or '')
+
+        trace_files = []
+        for fname in os.listdir(trace_dir):
+            if not fname.lower().endswith('.txt'):
+                continue
+            fpath = os.path.join(trace_dir, fname)
+            if not os.path.isfile(fpath):
+                continue
+            stat = os.stat(fpath)
+            trace_files.append((fname, float(stat.st_mtime), fpath))
+
+        trace_files.sort(key=lambda item: item[1], reverse=True)
+        keep_names = {name for name, _, _ in trace_files[:keep_count]}
+        if current_trace_name:
+            keep_names.add(current_trace_name)
+
+        deleted = 0
+        failed = 0
+        for name, _mtime, fpath in trace_files:
+            if name in keep_names:
+                continue
+            try:
+                os.remove(fpath)
+                deleted += 1
+            except Exception:
+                failed += 1
+
+        if failed:
+            flash(f'Deleted {deleted} old trace file(s); {failed} could not be deleted.', 'warning')
+        else:
+            flash(f'Deleted {deleted} old trace file(s); kept latest {keep_count}.', 'success')
+
+        return redirect(url_for('instructor_dev_trace_folder'))
 
     @app.route("/instructor/calendar")
     @require_login

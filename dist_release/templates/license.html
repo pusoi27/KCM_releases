@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Stdytime License Activation</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.1/dist/css/bootstrap.min.css" rel="stylesheet">
+  <style>
+    body { background: linear-gradient(135deg, #e8f5e9, #f8f9fa); min-height: 100vh; }
+    .license-shell { max-width: 980px; margin: 3rem auto; }
+    .license-card { border: none; border-radius: 1.25rem; box-shadow: 0 1rem 2.5rem rgba(0,0,0,.08); }
+    .mono { font-family: ui-monospace, SFMono-Regular, Consolas, monospace; word-break: break-all; }
+  </style>
+</head>
+<body>
+  <div class="container license-shell">
+    <div class="card license-card overflow-hidden">
+      <div class="row g-0">
+        <div class="col-lg-5 bg-success text-white p-4 p-lg-5">
+          <h1 class="h3 fw-bold mb-3">Stdytime License</h1>
+          <p class="mb-4">This installation is built for a single local machine. Once a subscription is paid, paste the issued license key here and the app stays unlocked until the license expires.</p>
+          <div class="small opacity-75 mb-2">Machine fingerprint</div>
+          <div class="mono bg-dark bg-opacity-25 p-3 rounded mb-4">{{ license_status.machine_fingerprint }}</div>
+          <div class="small opacity-75 mb-2">Current status</div>
+          <div class="fs-5 fw-semibold text-capitalize">{{ license_status.status }}</div>
+          {% if license_status.expires_at %}
+          <div class="mt-2">Expires on <strong>{{ license_status.expires_at }}</strong></div>
+          {% endif %}
+        </div>
+        <div class="col-lg-7 p-4 p-lg-5">
+          {% with messages = get_flashed_messages(with_categories=true) %}
+            {% if messages %}
+              {% for cat, msg in messages %}
+              <div class="alert alert-{{ cat }} alert-dismissible fade show" role="alert">
+                {{ msg }}
+                <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+              </div>
+              {% endfor %}
+            {% endif %}
+          {% endwith %}
+
+          <h2 class="h4 mb-3">Activate this machine</h2>
+          {% if license_status.status == 'unlicensed' %}
+          <div class="alert alert-info d-flex align-items-center gap-2 mb-3">
+            <span>Don't have a license yet?</span>
+            <a href="https://stdytime.com/#pricing" target="_blank" class="btn btn-sm btn-success">Buy a subscription</a>
+          </div>
+          {% endif %}
+          <p class="text-muted">After purchase, LemonSqueezy emails you a license key. Paste it below to activate this machine. One license key activates one machine.</p>
+
+          <form method="POST" action="{{ url_for('activate_license') }}" class="mb-4">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <div class="mb-3">
+              <label for="license_key" class="form-label">License key</label>
+              <textarea id="license_key" name="license_key" class="form-control mono" rows="6" placeholder="Paste license key here" required></textarea>
+            </div>
+            <button type="submit" class="btn btn-success btn-lg">Activate License</button>
+          </form>
+
+          <div class="border rounded p-3 mb-4 bg-light">
+            <h3 class="h6">Current license</h3>
+            <ul class="list-unstyled mb-0 small">
+              <li><strong>Licensee:</strong> {{ license_status.licensee or 'Not activated yet' }}</li>
+              <li><strong>Email:</strong> {{ license_status.email or '—' }}</li>
+              <li><strong>Days remaining:</strong> {{ license_status.days_remaining if license_status.days_remaining is not none else '—' }}</li>
+              <li><strong>LS status:</strong> {{ license_status.ls_status or license_status.status or '—' }}</li>
+              {% if license_status.activation_limit %}
+              <li><strong>Activation limit:</strong> {{ license_status.activation_usage }}/{{ license_status.activation_limit }} machines</li>
+              {% endif %}
+              <li><strong>Mode:</strong> {{ 'API-only' if license_status.api_only_mode else 'Webhook+API' }}</li>
+              <li><strong>Validation cache TTL:</strong> {{ (license_status.cache_ttl_seconds // 3600) if license_status.cache_ttl_seconds else '—' }} hour(s)</li>
+              <li><strong>Network grace window:</strong> {{ license_status.grace_hours if license_status.grace_hours is not none else '—' }} hour(s)</li>
+              <li><strong>Last LS verification:</strong> {{ license_status.ls_last_verified_at or 'Not verified yet' }}</li>
+            </ul>
+          </div>
+
+          {% if license_status.has_license_key %}
+          <div class="d-flex gap-2 flex-wrap mb-3">
+            <form method="POST" action="{{ url_for('verify_license') }}">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+              <button type="submit" class="btn btn-outline-secondary btn-sm">Re-check License Now</button>
+            </form>
+          <form method="POST" action="{{ url_for('remove_license') }}" onsubmit="return confirm('Remove the saved license from this machine?');">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <button type="submit" class="btn btn-outline-danger">Remove Saved License</button>
+          </form>
+          </div>
+          {% endif %}
+        </div>
+      </div>
+    </div>
+  </div>
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.1/dist/js/bootstrap.bundle.min.js"></script>
+</body>
+</html>

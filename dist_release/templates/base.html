@@ -1,0 +1,102 @@
+﻿<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Stdytime{% if branding_center_name and branding_center_name != 'Stdytime' %} · {{ branding_center_name }}{% endif %}</title>
+<meta name="csrf-token" content="{{ csrf_token() }}">
+<link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.1/dist/css/bootstrap.min.css" rel="stylesheet">
+<link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css" rel="stylesheet">
+<link href="{{ url_for('static', filename='css/style.css') }}" rel="stylesheet">
+<style>
+  html, body {
+    width: 100%;
+    overflow-x: hidden;
+    margin: 0;
+    padding: 0;
+  }
+  body {
+    overflow-x: hidden;
+  }
+</style>
+</head>
+<body>
+{% block topbar %}{% include "navbar.html" %}{% endblock %}
+{% with messages = get_flashed_messages(with_categories=true) %}
+  {% if messages %}
+    <div class="container mt-2">
+      {% for cat,msg in messages %}
+        <div class="alert alert-{{ cat }} alert-dismissible fade show" role="alert">
+          {{ msg }}
+          <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+        </div>
+      {% endfor %}
+    </div>
+  {% endif %}
+{% endwith %}
+{% block content %}{% endblock %}
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.1/dist/js/bootstrap.bundle.min.js"></script>
+<script>
+  /* Auto-inject CSRF token into every non-GET fetch() call */
+  (function () {
+    var _origFetch = window.fetch;
+    async function _refreshCsrfToken() {
+      try {
+        var res = await _origFetch.call(window, '/api/csrf-token', {
+          method: 'GET',
+          cache: 'no-store'
+        });
+        if (!res.ok) return null;
+        var data = await res.json();
+        var token = data && data.csrf_token;
+        if (!token) return null;
+
+        var meta = document.querySelector('meta[name="csrf-token"]');
+        if (!meta) {
+          meta = document.createElement('meta');
+          meta.setAttribute('name', 'csrf-token');
+          document.head.appendChild(meta);
+        }
+        meta.setAttribute('content', token);
+        return token;
+      } catch (e) {
+        return null;
+      }
+    }
+
+    window.fetch = async function (url, opts) {
+      opts = opts || {};
+      var method = (opts.method || 'GET').toUpperCase();
+      if (method !== 'GET' && method !== 'HEAD') {
+        var meta = document.querySelector('meta[name="csrf-token"]');
+        if (meta) {
+          opts.headers = opts.headers || {};
+          opts.headers['X-CSRFToken'] = meta.getAttribute('content');
+        }
+      }
+
+      var response = await _origFetch.call(this, url, opts);
+
+      // Retry once for CSRF-related failures (common after long-open tabs)
+      if (method !== 'GET' && method !== 'HEAD' && response && response.status === 400) {
+        try {
+          var bodyText = await response.clone().text();
+          if (/csrf/i.test(bodyText || '')) {
+            var refreshed = await _refreshCsrfToken();
+            if (refreshed) {
+              opts.headers = opts.headers || {};
+              opts.headers['X-CSRFToken'] = refreshed;
+              response = await _origFetch.call(this, url, opts);
+            }
+          }
+        } catch (e) {
+          // no-op: return original response below
+        }
+      }
+
+      return response;
+    };
+  })();
+</script>
+</body>
+</html>

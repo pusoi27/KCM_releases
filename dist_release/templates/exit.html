@@ -1,0 +1,119 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Stdytime - Shutting Down</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.0/font/bootstrap-icons.css">
+    <link href="{{ url_for('static', filename='css/style.css') }}" rel="stylesheet">
+    <style>
+        body {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+            background: linear-gradient(135deg, var(--brand-primary-dark) 0%, var(--brand-primary) 55%, #7cb342 100%);
+            margin: 0;
+            padding: 20px;
+        }
+        .exit-container {
+            background: white;
+            border-radius: 10px;
+            padding: 40px;
+            text-align: center;
+            box-shadow: 0 10px 40px rgba(0, 0, 0, 0.2);
+            max-width: 500px;
+            animation: slideIn 0.5s ease-out;
+        }
+        @keyframes slideIn {
+            from {
+                opacity: 0;
+                transform: translateY(-20px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+        .exit-icon {
+            font-size: 60px;
+            color: var(--brand-primary);
+            margin-bottom: 20px;
+            animation: bounce 1s ease-in-out infinite;
+        }
+        @keyframes bounce {
+            0%, 100% {
+                transform: translateY(0);
+            }
+            50% {
+                transform: translateY(-10px);
+            }
+        }
+        .exit-title {
+            color: #333;
+            margin-bottom: 15px;
+            font-weight: 600;
+        }
+        .exit-message {
+            color: #666;
+            margin-bottom: 30px;
+            font-size: 16px;
+        }
+        .spinner {
+            display: inline-block;
+            width: 20px;
+            height: 20px;
+            border: 3px solid #f3f3f3;
+            border-top: 3px solid var(--brand-primary);
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin-right: 10px;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        .shutdown-status {
+            color: var(--brand-primary);
+            font-weight: 500;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+    </style>
+</head>
+<body>
+    <div class="exit-container">
+        <div class="exit-icon">
+            <i class="bi bi-box-arrow-left"></i>
+        </div>
+        <h2 class="exit-title">Stdytime Shutting Down</h2>
+        <p class="exit-message">Thank you for using Stdytime!</p>
+        <div class="shutdown-status">
+            <div class="spinner"></div>
+            <span>Closing application...</span>
+        </div>
+    </div>
+
+    <script>
+        // Close the browser window after a brief delay
+        setTimeout(function() {
+            // Try to close the window
+            if (window.opener !== null) {
+                // If opened from another window, close it
+                window.close();
+            } else {
+                // If not opened from another window, try to close the tab
+                window.close();
+            }
+            
+            // Fallback: If window.close() doesn't work (which is common in modern browsers),
+            // show a message to the user
+            setTimeout(function() {
+                document.body.innerHTML = '<div class="exit-container"><h2 class="exit-title">Window closure not permitted</h2><p class="exit-message">Please close this window manually or use Alt+F4</p><p class="text-muted" style="font-size: 14px; margin-top: 20px;">The application has shut down successfully.</p></div>';
+            }, 1500);
+        }, 500);
+    </script>
+</body>
+</html>
