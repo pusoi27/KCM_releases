@@ -534,13 +534,14 @@ def inject_app_version():
 @app.context_processor
 def inject_branding():
     """Inject profile-based branding and shared theme values into templates."""
-    profile = None
     try:
+        from modules.email_manager import resolve_center_name
+
         profile = instructor_profile_manager.get_instructor_profile()
+        center_name = resolve_center_name()
     except Exception:
         profile = None
-
-    center_name = (profile.get('center_location') if profile else None) or 'Stdytime'
+        center_name = 'Stdytime Center'
     return dict(
         branding_profile=profile,
         branding_center_name=center_name,

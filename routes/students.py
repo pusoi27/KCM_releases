@@ -237,6 +237,7 @@ def register_student_routes(app, upload_folder):
                 subjects=subjects,
                 subject_minutes=subject_minutes,
                 schedule_json=_sched_json,
+                guardian=request.form.get("guardian", ""),
             )
             # Invalidate tenant-scoped list lane + this student's static profile lane.
             _invalidate_student_caches()
@@ -290,6 +291,7 @@ def register_student_routes(app, upload_folder):
                 subjects=subjects,
                 subject_minutes=subject_minutes,
                 schedule_json=_sched_json,
+                guardian=request.form.get("guardian", ""),
             )
             # Invalidate static profile/goals lane for this student + user-scoped list lane.
             _invalidate_student_caches()

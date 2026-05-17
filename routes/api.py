@@ -105,6 +105,7 @@ def _send_checkout_email(student_row, start_time: str, end_time: str):
             return {"status": "error", "message": "Student not found for checkout email"}
 
         student_name = student_row[1] if len(student_row) > 1 else "Student"
+        guardian_name = str(student_row[22] or '').strip() if len(student_row) > 22 else ''
         recipient_email = (student_row[3] if len(student_row) > 3 else "") or ""
         recipient_email = recipient_email.strip()
 
@@ -124,13 +125,16 @@ def _send_checkout_email(student_row, start_time: str, end_time: str):
         seconds = total_seconds % 60
         duration_display = f"{hours:02d}:{minutes:02d}:{seconds:02d}"
 
-        center_name = resolve_center_name()
+        profile = instructor_profile_manager.get_instructor_profile() or {}
+        center_name = str(profile.get('center_location') or '').strip() or resolve_center_name()
+        salutation = f"Dear {guardian_name}," if guardian_name else "Dear Parent/Guardian,"
 
-        email_subject = f"Class Checkout - {student_name}"
+        email_subject = f"{center_name} - Class Checkout - {student_name}"
 
         body = (
-            f"Dear Parent/Guardian,\n\n"
+            f"{salutation}\n\n"
             f"{student_name} has checked out from class.\n\n"
+            f"Guardian:       {guardian_name or 'Parent/Guardian'}\n"
             f"Start Time:       {start_display}\n"
             f"End Time:         {end_display}\n"
             f"Session Duration: {duration_display}\n\n"
@@ -139,14 +143,15 @@ def _send_checkout_email(student_row, start_time: str, end_time: str):
         )
 
         html_body = render_branded_email_shell(
-            title="Class Checkout Confirmation",
+            title=f"{center_name} Class Checkout Confirmation",
             center_name=center_name,
             subtitle=center_name,
             footer_note=f"This is an automated checkout message from {center_name}. Please do not reply to this email.",
             body_html=f"""
-                <p>Dear Parent/Guardian,</p>
+                <p>{salutation}</p>
                 <div class="highlight"><strong>{student_name}</strong> has checked out from class.</div>
                 <table class="report-table">
+                    <tr><th>Guardian</th><td>{guardian_name or 'Parent/Guardian'}</td></tr>
                     <tr><th>Start Time</th><td>{start_display}</td></tr>
                     <tr><th>End Time</th><td>{end_display}</td></tr>
                     <tr><th>Session Duration</th><td>{duration_display}</td></tr>
@@ -262,13 +267,15 @@ def register_api_routes(app):
                     "level": s[3],
                     "email": s[4],
                     "phone": s[5],
-                    "active": s[7] if len(s) > 7 else 0,
-                    "book_loaned": s[8] if len(s) > 8 else 0,
-                    "device_loaned": s[9] if len(s) > 9 else 0,
-                    "day1": s[13] if len(s) > 13 else None,
-                    "day1_time": s[14] if len(s) > 14 else None,
-                    "day2": s[15] if len(s) > 15 else None,
-                    "day2_time": s[16] if len(s) > 16 else None,
+                    "guardian": s[6] if len(s) > 6 else '',
+                    "active": s[8] if len(s) > 8 else 0,
+                    "book_loaned": s[9] if len(s) > 9 else 0,
+                    "device_loaned": s[10] if len(s) > 10 else 0,
+                    "day1": s[14] if len(s) > 14 else None,
+                    "day1_time": s[15] if len(s) > 15 else None,
+                    "day2": s[16] if len(s) > 16 else None,
+                    "day2_time": s[17] if len(s) > 17 else None,
+                    "subjects": json.loads(s[18] or '[]') if len(s) > 18 and s[18] else ([s[2]] if s[2] else []),
                     "status": status,
                     "start_time": start_time,
                     "total_seconds": total_seconds,
@@ -314,6 +321,7 @@ def register_api_routes(app):
                 "id": profile.get("id"),
                 "name": profile.get("name"),
                 "subject": profile.get("subject"),
+                "guardian": profile.get("guardian"),
                 "math_goal": profile.get("math_goal"),
                 "math_ws_per_week": profile.get("math_ws_per_week"),
                 "reading_goal": profile.get("reading_goal"),

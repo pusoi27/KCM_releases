@@ -239,7 +239,7 @@
     <a href="{{ url_for('qr_pdf_all') }}" class="btn btn-outline-dark btn-sm">Print QR Code (Avery 8160)</a>
   </div>
   <div class="small text-muted mb-2">
-    CSV format: <code>name,email,phone,M,R,W,classification</code>.
+    CSV format: <code>name,email,phone,guardian,M,R,W,classification</code>.
     Mark selected subjects with <code>x</code> under <code>M</code> (Math), <code>R</code> (Reading), and <code>W</code> (Writing).
     For classification use: <code>a</code> = Assisted, <code>m</code> = Monitored, <code>i</code> = Independent, <code>v</code> = Virtual.
   </div>
@@ -263,6 +263,7 @@
         <th class="col-day-flag" title="Saturday" aria-label="Saturday">Sa</th>
         <th>Email</th>
         <th>Phone</th>
+        <th>Guardian</th>
         <th class="col-qr">QR</th>
         <th class="col-checkbox">Loan</th>
         <th class="col-actions">Actions</th>
@@ -334,6 +335,7 @@
         <td class="col-day-flag"><input class="form-check-input subject-check" type="checkbox" {% if ds.sa %}checked{% endif %} disabled></td>
         <td>{{ s.email }}</td>
         <td>{{ s.phone }}</td>
+        <td>{{ s.guardian }}</td>
         <td class="col-qr">
           <img src="{{ url_for('serve_student_qr', sid=s.id) }}?v={{ date_str|replace(',', '')|replace(' ', '') }}{{ time_str|replace(':', '')|replace(' ', '') }}" alt="QR" width="48" height="48" loading="lazy" decoding="async" data-fallback-src="{{ url_for('static', filename='img/logo.png') }}" onerror="handleStudentQrError(this);">
         </td>
@@ -357,7 +359,7 @@
       <!-- Deleted Students Section -->
       {% if deleted_students %}
       <tr>
-        <td colspan="17" class="table-section-header bg-light px-3 py-2">
+        <td colspan="19" class="table-section-header bg-light px-3 py-2">
           <strong class="text-muted">Deleted Students</strong>
         </td>
       </tr>
@@ -423,6 +425,7 @@
         <td class="col-day-flag"><input class="form-check-input subject-check" type="checkbox" {% if ds.sa %}checked{% endif %} disabled style="opacity:0.6;"></td>
         <td class="text-muted">{{ s.email }}</td>
         <td class="text-muted">{{ s.phone }}</td>
+        <td class="text-muted">{{ s.guardian }}</td>
         <td class="col-qr">
           <img src="{{ url_for('serve_student_qr', sid=s.id) }}?v={{ date_str|replace(',', '')|replace(' ', '') }}{{ time_str|replace(':', '')|replace(' ', '') }}" alt="QR" width="48" height="48" loading="lazy" decoding="async" data-fallback-src="{{ url_for('static', filename='img/logo.png') }}" onerror="handleStudentQrError(this);" style="opacity: 0.5;">
         </td>

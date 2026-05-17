@@ -9,8 +9,13 @@ from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from email.mime.base import MIMEBase
 from email import encoders
+import json
 import os
 from typing import Optional, List, Dict
+
+
+_APP_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+_DB_CONFIG_PATH = os.path.join(_APP_ROOT, 'db_config.json')
 
 
 BRAND_PRIMARY = '#2e7d32'
@@ -28,17 +33,31 @@ def resolve_center_name(center_name: Optional[str] = None) -> str:
     if center_name and str(center_name).strip():
         return str(center_name).strip()
 
-        try:
-            from modules import instructor_profile_manager
+    # Prefer an explicit app-level center name if the launcher/config has one.
+    try:
+        if os.path.exists(_DB_CONFIG_PATH):
+            with open(_DB_CONFIG_PATH, encoding='utf-8') as fh:
+                cfg = json.load(fh)
+            cfg_center_name = str(cfg.get('center_name') or '').strip()
+            if cfg_center_name:
+                return cfg_center_name
+    except Exception:
+        pass
 
-            profile = instructor_profile_manager.get_instructor_profile()
-            value = (profile.get('center_location') if profile else None) or ''
-            if value.strip():
-                return value.strip()
-        except Exception:
-            pass
+    try:
+        from modules import instructor_profile_manager
 
-    return 'Stdytime'
+        profile = instructor_profile_manager.get_instructor_profile()
+        if profile:
+            # Prefer the explicit center name/location field used in the UI.
+            for key in ('center_location', 'name', 'center_address'):
+                value = str(profile.get(key) or '').strip()
+                if value:
+                    return value
+    except Exception:
+        pass
+
+    return 'Stdytime Center'
 
 
 def render_branded_email_shell(title: str, center_name: Optional[str], body_html: str,

@@ -35,6 +35,10 @@ def get_instructor_profile():
                    friday_start, friday_end, saturday_start, saturday_end,
                    sunday_start, sunday_end, created_at, updated_at
             FROM instructor_profile
+            ORDER BY
+                CASE WHEN TRIM(COALESCE(center_location, '')) <> '' THEN 0 ELSE 1 END,
+                COALESCE(updated_at, created_at, '') DESC,
+                id DESC
             LIMIT 1
         """, ())
         row = c.fetchone()

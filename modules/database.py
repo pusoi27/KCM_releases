@@ -613,6 +613,7 @@ def init_db():
             book_loaned INTEGER DEFAULT 0,
             email TEXT,
             phone TEXT,
+            guardian TEXT DEFAULT '',
             active INTEGER DEFAULT 1,
             math_goal TEXT DEFAULT '',
             math_ws_per_week INTEGER DEFAULT 0,
@@ -837,6 +838,8 @@ def init_db():
             cur.execute("ALTER TABLE students ADD COLUMN photo_filename TEXT DEFAULT ''")
         if "schedule_json" not in cols:
             cur.execute("ALTER TABLE students ADD COLUMN schedule_json TEXT DEFAULT ''")
+        if "guardian" not in cols:
+            cur.execute("ALTER TABLE students ADD COLUMN guardian TEXT DEFAULT ''")
         if "qr_code" not in cols:
             cur.execute("ALTER TABLE students ADD COLUMN qr_code BLOB")
         if "device_loaned" not in cols:
@@ -1051,8 +1054,8 @@ def init_db():
         tpl_path = os.path.join("templates", "student_template.csv")
         if not os.path.exists(tpl_path):
             with open(tpl_path, "w", encoding="utf-8") as f:
-                f.write("name,email,phone,M,R,W,classification\n")
-                f.write("Example Student,example@example.com,123456789,x,x,,Monitored\n")
+                f.write("name,email,phone,guardian,M,R,W,classification\n")
+                f.write("Example Student,example@example.com,123456789,Jane Doe,x,x,,Monitored\n")
 
 
 # ====================================================================

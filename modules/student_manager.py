@@ -102,6 +102,7 @@ def _build_student_database_row(row):
         'subject': row[2],
         'email': row[3],
         'phone': row[4],
+        'guardian': str(row[21] or '') if len(row) > 21 else '',
         'active': bool(row[5]),
         'book_loaned': bool(row[6]),
         'device_loaned': bool(row[7]),
@@ -146,7 +147,8 @@ def get_student_database_rows(active=1):
                 s.photo_blob,
                 COALESCE(s.photo_mime, ''),
                 COALESCE(s.photo_filename, ''),
-                COALESCE(s.photo, '')
+                COALESCE(s.photo, ''),
+                COALESCE(s.guardian, '')
             FROM students s
             WHERE s.active = ?
             ORDER BY s.name
@@ -398,7 +400,7 @@ def get_all_students():
         c = conn.cursor()
         # Get only active student data for this owner
         c.execute("""
-             SELECT s.id, s.name, s.subject, s.level, s.email, s.phone, '' AS legacy_contact, s.active, s.book_loaned, s.device_loaned,
+             SELECT s.id, s.name, s.subject, s.level, s.email, s.phone, COALESCE(s.guardian, '') AS guardian, '' AS legacy_contact, s.active, s.book_loaned, s.device_loaned,
                  s.el, s.pi, s.v, s.day1, s.day1_time, s.day2, s.day2_time, s.subjects_json, s.subject_minutes_json, s.total_study_minutes,
                   s.photo_blob,
                   COALESCE(s.photo_mime, '') AS photo_mime
@@ -422,7 +424,8 @@ def get_student(student_id):
                  el,pi,v,day1,day2,day1_time,day2_time,subjects_json,subject_minutes_json,total_study_minutes,
                  photo_blob,
                  COALESCE(photo_mime,'') AS photo_mime,
-                 COALESCE(schedule_json,'') AS schedule_json
+                 COALESCE(schedule_json,'') AS schedule_json,
+                 COALESCE(guardian,'') AS guardian
             FROM students WHERE id=?
         """, (student_id,)).fetchone()
         return row
@@ -454,6 +457,7 @@ def get_student_static_profile(student_id):
         'total_study_minutes': int(row[18] or 30) if len(row) > 18 else 30,
         'photo_blob': _coerce_blob(row[19] if len(row) > 19 else None),
         'photo_mime': str(row[20] or '') if len(row) > 20 else '',
+        'guardian': str(row[22] or '') if len(row) > 22 else '',
         'photo_url': _photo_url(row[0], bool(_coerce_blob(row[19] if len(row) > 19 else None))),
     }
 
@@ -518,7 +522,7 @@ def get_student_qr_code(student_id):
     return None
 
 
-def add_student(name, subject, email, phone, book_loaned=0, el=0, pi=0, v=0, day1="", day2="", day1_time="", day2_time="", subjects=None, subject_minutes=None, schedule_json=""):
+def add_student(name, subject, email, phone, book_loaned=0, el=0, pi=0, v=0, day1="", day2="", day1_time="", day2_time="", subjects=None, subject_minutes=None, schedule_json="", guardian=""):
     """Add a new student to the database and automatically generate QR code.
     
     Args:
@@ -532,8 +536,8 @@ def add_student(name, subject, email, phone, book_loaned=0, el=0, pi=0, v=0, day
     with sqlite3.connect(DB_PATH) as conn:
         c = conn.cursor()
         c.execute("""INSERT INTO students
-            (name,subject,subjects_json,subject_minutes_json,total_study_minutes,email,phone,active,book_loaned,el,pi,v,day1,day2,day1_time,day2_time,schedule_json)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (name,subject,subjects_json,subject_minutes_json,total_study_minutes,email,phone,guardian,active,book_loaned,el,pi,v,day1,day2,day1_time,day2_time,schedule_json)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             (
                 name,
                 primary_subject,
@@ -542,6 +546,7 @@ def add_student(name, subject, email, phone, book_loaned=0, el=0, pi=0, v=0, day
                 total_minutes,
                 email,
                 phone,
+                str(guardian or '').strip(),
                 1,
                 int(bool(book_loaned)),
                 int(bool(el)),
@@ -568,7 +573,7 @@ def add_student(name, subject, email, phone, book_loaned=0, el=0, pi=0, v=0, day
 
 
 
-def update_student(sid, name, email, phone, subject="", book_loaned=0, el=0, pi=0, v=0, day1="", day2="", day1_time="", day2_time="", subjects=None, subject_minutes=None, schedule_json=""):
+def update_student(sid, name, email, phone, subject="", book_loaned=0, el=0, pi=0, v=0, day1="", day2="", day1_time="", day2_time="", subjects=None, subject_minutes=None, schedule_json="", guardian=""):
     """Update an existing student's information with ownership check."""
     subjects_list, minutes_list, total_minutes = normalize_subject_entries(
         subjects if subjects is not None else [subject],
@@ -578,7 +583,7 @@ def update_student(sid, name, email, phone, subject="", book_loaned=0, el=0, pi=
 
     with sqlite3.connect(DB_PATH) as conn:
         c = conn.cursor()
-        c.execute("""UPDATE students SET name=?,subject=?,subjects_json=?,subject_minutes_json=?,total_study_minutes=?,email=?,phone=?,book_loaned=?,el=?,pi=?,v=?,day1=?,day2=?,day1_time=?,day2_time=?,schedule_json=? WHERE id=?""",
+        c.execute("""UPDATE students SET name=?,subject=?,subjects_json=?,subject_minutes_json=?,total_study_minutes=?,email=?,phone=?,guardian=?,book_loaned=?,el=?,pi=?,v=?,day1=?,day2=?,day1_time=?,day2_time=?,schedule_json=? WHERE id=?""",
                   (
                       name,
                       primary_subject,
@@ -587,6 +592,7 @@ def update_student(sid, name, email, phone, subject="", book_loaned=0, el=0, pi=
                       total_minutes,
                       email,
                       phone,
+                      str(guardian or '').strip(),
                       int(bool(book_loaned)),
                       int(bool(el)),
                       int(bool(pi)),
@@ -666,6 +672,7 @@ def import_csv(file_path):
             
             email = str(_csv_get(row, 'email', default='') or '').strip()
             phone = str(_csv_get(row, 'phone', default='') or '').strip()
+            guardian = str(_csv_get(row, 'guardian', 'guardian_name', 'parent', default='') or '').strip()
 
             subjects = _parse_subjects_from_csv(row)
             subject_minutes = [30] * len(subjects)
@@ -692,6 +699,7 @@ def import_csv(file_path):
                         total_study_minutes=?,
                         email=?,
                         phone=?,
+                        guardian=?,
                         active=1,
                         el=?,
                         pi=?,
@@ -706,6 +714,7 @@ def import_csv(file_path):
                         total_study_minutes,
                         email,
                         phone,
+                        guardian,
                         el,
                         pi,
                         v,
@@ -725,12 +734,13 @@ def import_csv(file_path):
                         total_study_minutes,
                         email,
                         phone,
+                        guardian,
                         active,
                         el,
                         pi,
                         v
                     )
-                    VALUES(?,?,?,?,?,?,?,1,?,?,?)
+                    VALUES(?,?,?,?,?,?,?,?,1,?,?,?)
                     """,
                     (
                         name,
@@ -740,6 +750,7 @@ def import_csv(file_path):
                         total_study_minutes,
                         email,
                         phone,
+                        guardian,
                         el,
                         pi,
                         v,
@@ -766,6 +777,7 @@ def export_csv(path):
                 name,
                 COALESCE(email, ''),
                 COALESCE(phone, ''),
+                COALESCE(guardian, ''),
                 COALESCE(subjects_json, '[]'),
                 COALESCE(subject, ''),
                 el,
@@ -781,6 +793,7 @@ def export_csv(path):
         "name",
         "email",
         "phone",
+        "guardian",
         "M",
         "R",
         "W",
@@ -791,9 +804,9 @@ def export_csv(path):
         writer = csv.writer(f)
         writer.writerow(headers)
         for row in rows:
-            name, email, phone = row[0], row[1], row[2]
-            subjects_json, legacy_subject = row[3], row[4]
-            el, pi, v = int(bool(row[5])), int(bool(row[6])), int(bool(row[7]))
+            name, email, phone, guardian = row[0], row[1], row[2], row[3]
+            subjects_json, legacy_subject = row[4], row[5]
+            el, pi, v = int(bool(row[6])), int(bool(row[7])), int(bool(row[8]))
 
             try:
                 subjects = [str(s).strip() for s in json.loads(subjects_json or '[]') if str(s or '').strip()]
@@ -813,6 +826,7 @@ def export_csv(path):
                 name,
                 email,
                 phone,
+                guardian,
                 m_flag,
                 r_flag,
                 w_flag,
