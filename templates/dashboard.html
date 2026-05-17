@@ -67,6 +67,7 @@
       <li class="list-group-item"><a href="{{ url_for('reports_assistants') }}" class="offcanvas-link"><i class="bi bi-clock-history me-2"></i>Payroll Staff Hours</a></li>
       <li class="list-group-item"><a href="{{ url_for('class_attendance_page') }}" class="offcanvas-link"><i class="bi bi-calendar-check me-2"></i>Class Attendance</a></li>
       <li class="list-group-item"><a href="{{ url_for('student_attendance_page') }}" class="offcanvas-link"><i class="bi bi-person-check me-2"></i>Student Attendance</a></li>
+      <li class="list-group-item"><a href="{{ url_for('reports_loans') }}" class="offcanvas-link"><i class="bi bi-journal-bookmark me-2"></i>Loans Report</a></li>
       {% endif %}
       {% if subscription_access.can_access_instructor_profile %}
       <li class="list-group-item offcanvas-section-header">Utilities</li>

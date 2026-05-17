@@ -7,7 +7,7 @@ from flask import render_template, request, send_file, redirect, url_for
 from reportlab.lib.pagesizes import letter
 from reportlab.lib.units import inch
 from reportlab.pdfgen import canvas
-from modules import reports, student_manager, book_manager, auth_manager
+from modules import reports, student_manager, book_manager, auth_manager, materials_manager
 from modules.database import DB_PATH
 from routes.auth import require_login, require_feature
 
@@ -557,4 +557,45 @@ def register_reports_routes(app):
             'reports_loaned_books.html',
             books_by_student=books_by_student,
             total_loans=len(loaned_books)
+        )
+
+    # ================================================================
+    # Loans Report (books + devices combined)
+    # ================================================================
+
+    @app.route('/reports/loans')
+    @require_login
+    @require_feature(auth_manager.FEATURE_INSTRUCTOR_REPORTS)
+    def reports_loans():
+        """Display active book and device loans."""
+        raw_books = book_manager.get_loaned_books_detailed()
+        raw_devices = materials_manager.get_loaned_materials_detailed()
+
+        def _fmt_date(d):
+            try:
+                return d[:10] if d else ''
+            except Exception:
+                return str(d) if d else ''
+
+        book_loans = [
+            {
+                'student_name': r['student_name'],
+                'book_title': r['book_title'],
+                'checkout_date': _fmt_date(r['checkout_date']),
+            }
+            for r in raw_books
+        ]
+        device_loans = [
+            {
+                'student_name': r['student_name'],
+                'material_title': r['material_title'],
+                'checkout_date': _fmt_date(r['checkout_date']),
+            }
+            for r in raw_devices
+        ]
+
+        return render_template(
+            'reports_loans.html',
+            book_loans=book_loans,
+            device_loans=device_loans,
         )

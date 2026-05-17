@@ -4,6 +4,7 @@
 
 import sqlite3, csv, os, json
 from modules.database import DB_PATH
+from modules import qr_generator
 
 MAX_SUBJECTS = 3
 MAX_SCHEDULE_DAYS = 7
@@ -36,14 +37,12 @@ def _loads_json_list(raw_value, default=None):
     return data if isinstance(data, list) else list(default)
 
 
-def _classification_label(el=0, pi=0, paper_ws=0, v=0):
+def _classification_label(el=0, pi=0, v=0, **_):
     """Return the primary classification label for a student."""
     if int(bool(el)):
         return "Assisted"
     if int(bool(pi)):
         return "Monitored"
-    if int(bool(paper_ws)):
-        return "Independent"
     if int(bool(v)):
         return "Virtual"
     return "Monitored"
@@ -105,14 +104,14 @@ def _build_student_database_row(row):
         'phone': row[4],
         'active': bool(row[5]),
         'book_loaned': bool(row[6]),
-        'paper_ws': bool(row[7]),
+        'device_loaned': bool(row[7]),
         'el': bool(row[8]),
         'pi': bool(row[9]),
         'subjects': subjects,
         'subject_slots': subject_slots,
         'photo_url': _photo_url(row[0], bool(photo_blob)),
         'has_photo': bool(photo_blob),
-        'classification': _classification_label(el=row[8], pi=row[9], paper_ws=row[7], v=row[16]),
+        'classification': _classification_label(el=row[8], pi=row[9], v=row[16]),
         'virtual': bool(row[16]),
         'schedule': schedule_entries,
         'schedule_slots': schedule_slots,
@@ -134,7 +133,7 @@ def get_student_database_rows(active=1):
                 COALESCE(s.phone, ''),
                 s.active,
                 s.book_loaned,
-                s.paper_ws,
+                s.device_loaned,
                 s.el,
                 s.pi,
                 COALESCE(s.subjects_json, '[]'),
@@ -166,6 +165,199 @@ def safe_int(value, default=0):
         return int(val)
     except (ValueError, TypeError):
         return default
+
+
+def _normalize_csv_key(key):
+    return str(key or '').strip().lower().replace(' ', '').replace('_', '').replace('-', '')
+
+
+def _csv_get(row, *aliases, default=''):
+    """Case/format-insensitive CSV field lookup."""
+    if not isinstance(row, dict):
+        return default
+    wanted = {_normalize_csv_key(a) for a in aliases if a}
+    for key, value in row.items():
+        if _normalize_csv_key(key) in wanted:
+            return value if value is not None else default
+    return default
+
+
+def _csv_bool(value):
+    return str(value or '').strip().lower() in {'1', 'true', 'yes', 'y', 'on'}
+
+
+def _csv_marked(value):
+    """Return True for marker-style CSV values (e.g., x)."""
+    token = str(value or '').strip().lower()
+    return token in {'x', '1', 'true', 'yes', 'y', 'on', '✓', '✔'}
+
+
+def _normalize_subject_name(raw_subject):
+    token = str(raw_subject or '').strip()
+    key = token.lower()
+    mapping = {
+        'm': 'Math',
+        'math': 'Math',
+        'mathematics': 'Math',
+        's2': 'Math',
+        'r': 'Reading',
+        'reading': 'Reading',
+        'read': 'Reading',
+        's1': 'Reading',
+        'w': 'Writing',
+        'writing': 'Writing',
+        'write': 'Writing',
+    }
+    return mapping.get(key, token)
+
+
+def _parse_subjects_from_csv(row):
+    """Parse subjects from CSV values (new and legacy formats)."""
+    subjects = []
+
+    # Preferred format: M/R/W columns, marker value means selected.
+    if _csv_marked(_csv_get(row, 'm', 'math', default='')):
+        subjects.append('Math')
+    if _csv_marked(_csv_get(row, 'r', 'reading', default='')):
+        subjects.append('Reading')
+    if _csv_marked(_csv_get(row, 'w', 'writing', default='')):
+        subjects.append('Writing')
+
+    raw_subjects = str(_csv_get(row, 'subjects', 'subjects_json', default='') or '').strip()
+    if raw_subjects and not subjects:
+        if '|' in raw_subjects:
+            tokens = raw_subjects.split('|')
+        elif ';' in raw_subjects:
+            tokens = raw_subjects.split(';')
+        else:
+            tokens = raw_subjects.split(',')
+        subjects.extend([t.strip() for t in tokens if t and t.strip()])
+
+    for key in ('subject_1', 'subject_2', 'subject_3'):
+        val = str(_csv_get(row, key, default='') or '').strip()
+        if val and not subjects:
+            subjects.append(val)
+
+    legacy_subject = str(_csv_get(row, 'subject', default='') or '').strip()
+    if legacy_subject and not subjects:
+        subjects = [legacy_subject]
+
+    deduped = []
+    seen = set()
+    for s in subjects:
+        normalized_subject = _normalize_subject_name(s)
+        k = normalized_subject.lower().strip()
+        if not k or k in seen:
+            continue
+        seen.add(k)
+        deduped.append(normalized_subject)
+
+    if not deduped:
+        deduped = ['Math']
+
+    return deduped[:MAX_SUBJECTS]
+
+
+def _parse_classification_from_csv(row):
+    """Parse classification into checkbox flags used by the edit form."""
+    el = int(_csv_bool(_csv_get(row, 'el', 'assisted', default='0')))
+    pi = int(_csv_bool(_csv_get(row, 'pi', 'monitored', default='0')))
+    v = int(_csv_bool(_csv_get(row, 'v', 'virtual', default='0')))
+
+    raw = str(_csv_get(row, 'classification', default='') or '').strip().lower()
+    if raw:
+        if raw in ('assisted', 'a'):
+            return 1, 0, 0
+        if raw in ('monitored', 'm'):
+            return 0, 1, 0
+        if raw in ('independent', 'i'):
+            return 0, 1, 0  # no independent field; map to monitored
+        if raw in ('virtual', 'v'):
+            return 0, 0, 1
+
+    # Enforce single primary classification (same model as edit form)
+    if el:
+        return 1, 0, 0
+    if pi:
+        return 0, 1, 0
+    if v:
+        return 0, 0, 1
+    return 0, 1, 0
+
+
+def _normalize_schedule_entries_from_json(raw_schedule_json):
+    entries = []
+    seen = set()
+    if not raw_schedule_json:
+        return entries
+    try:
+        data = json.loads(raw_schedule_json)
+    except (TypeError, ValueError):
+        return entries
+    if not isinstance(data, list):
+        return entries
+    for entry in data:
+        if not isinstance(entry, dict):
+            continue
+        day = str(entry.get('day') or '').strip()
+        time = str(entry.get('time') or '').strip()
+        if not day or day in seen:
+            continue
+        seen.add(day)
+        entries.append({'day': day, 'time': time})
+        if len(entries) >= MAX_SCHEDULE_DAYS:
+            break
+    return entries
+
+
+def _parse_schedule_from_csv(row):
+    """Parse schedule in one of these formats:
+    - schedule_json: JSON list of {day,time}
+    - schedule: Monday@15:00|Wednesday@16:00 (also accepts `Day Time`)
+    - legacy day1/day1_time/day2/day2_time columns
+    """
+    entries = _normalize_schedule_entries_from_json(_csv_get(row, 'schedule_json', default=''))
+
+    raw_schedule = str(_csv_get(row, 'schedule', default='') or '').strip()
+    if raw_schedule:
+        seen = {e['day'] for e in entries}
+        for chunk in raw_schedule.split('|'):
+            token = str(chunk or '').strip()
+            if not token:
+                continue
+            day = ''
+            time = ''
+            if '@' in token:
+                day, time = token.split('@', 1)
+            elif ':' in token and ' ' in token:
+                day, time = token.rsplit(' ', 1)
+            else:
+                day = token
+            day = str(day or '').strip()
+            time = str(time or '').strip()
+            if not day or day in seen:
+                continue
+            seen.add(day)
+            entries.append({'day': day, 'time': time})
+            if len(entries) >= MAX_SCHEDULE_DAYS:
+                break
+
+    if not entries:
+        seen = set()
+        for day_key, time_key in (('day1', 'day1_time'), ('day2', 'day2_time')):
+            day = str(_csv_get(row, day_key, default='') or '').strip()
+            time = str(_csv_get(row, time_key, default='') or '').strip()
+            if not day or day in seen:
+                continue
+            seen.add(day)
+            entries.append({'day': day, 'time': time})
+
+    entries = entries[:MAX_SCHEDULE_DAYS]
+    day1 = entries[0]['day'] if len(entries) > 0 else ''
+    day1_time = entries[0]['time'] if len(entries) > 0 else ''
+    day2 = entries[1]['day'] if len(entries) > 1 else ''
+    day2_time = entries[1]['time'] if len(entries) > 1 else ''
+    return day1, day1_time, day2, day2_time, json.dumps(entries)
 
 
 def normalize_subject_entries(subjects, minutes):
@@ -206,7 +398,7 @@ def get_all_students():
         c = conn.cursor()
         # Get only active student data for this owner
         c.execute("""
-             SELECT s.id, s.name, s.subject, s.level, s.email, s.phone, '' AS legacy_contact, s.active, s.book_loaned, s.paper_ws,
+             SELECT s.id, s.name, s.subject, s.level, s.email, s.phone, '' AS legacy_contact, s.active, s.book_loaned, s.device_loaned,
                  s.el, s.pi, s.v, s.day1, s.day1_time, s.day2, s.day2_time, s.subjects_json, s.subject_minutes_json, s.total_study_minutes,
                   s.photo_blob,
                   COALESCE(s.photo_mime, '') AS photo_mime
@@ -226,7 +418,7 @@ def get_student(student_id):
     with sqlite3.connect(DB_PATH) as conn:
         c = conn.cursor()
         row = c.execute("""
-             SELECT id,name,subject,email,phone,'' AS legacy_contact,active,book_loaned,paper_ws,
+             SELECT id,name,subject,email,phone,'' AS legacy_contact,active,book_loaned,device_loaned,
                  el,pi,v,day1,day2,day1_time,day2_time,subjects_json,subject_minutes_json,total_study_minutes,
                  photo_blob,
                  COALESCE(photo_mime,'') AS photo_mime,
@@ -249,7 +441,7 @@ def get_student_static_profile(student_id):
         'phone': row[4],
         'active': row[6],
         'book_loaned': row[7],
-        'paper_ws': row[8],
+        'device_loaned': row[8],
         'el': row[9],
         'pi': row[10],
         'v': row[11],
@@ -326,7 +518,7 @@ def get_student_qr_code(student_id):
     return None
 
 
-def add_student(name, subject, email, phone, book_loaned=0, paper_ws=0, el=0, pi=0, v=0, day1="", day2="", day1_time="", day2_time="", subjects=None, subject_minutes=None, schedule_json=""):
+def add_student(name, subject, email, phone, book_loaned=0, el=0, pi=0, v=0, day1="", day2="", day1_time="", day2_time="", subjects=None, subject_minutes=None, schedule_json=""):
     """Add a new student to the database and automatically generate QR code.
     
     Args:
@@ -340,8 +532,8 @@ def add_student(name, subject, email, phone, book_loaned=0, paper_ws=0, el=0, pi
     with sqlite3.connect(DB_PATH) as conn:
         c = conn.cursor()
         c.execute("""INSERT INTO students
-            (name,subject,subjects_json,subject_minutes_json,total_study_minutes,email,phone,active,book_loaned,paper_ws,el,pi,v,day1,day2,day1_time,day2_time,schedule_json)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (name,subject,subjects_json,subject_minutes_json,total_study_minutes,email,phone,active,book_loaned,el,pi,v,day1,day2,day1_time,day2_time,schedule_json)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             (
                 name,
                 primary_subject,
@@ -352,7 +544,6 @@ def add_student(name, subject, email, phone, book_loaned=0, paper_ws=0, el=0, pi
                 phone,
                 1,
                 int(bool(book_loaned)),
-                int(bool(paper_ws)),
                 int(bool(el)),
                 int(bool(pi)),
                 int(bool(v)),
@@ -367,7 +558,6 @@ def add_student(name, subject, email, phone, book_loaned=0, paper_ws=0, el=0, pi
     
     # Automatically generate QR code for the new student and store in DB
     try:
-        from modules import qr_generator
         qr_data = f"ID:{student_id}\nName:{name}"
         qr_blob = qr_generator.generate_qr_bytes(qr_data)
         set_student_qr_code(student_id, qr_blob)
@@ -378,7 +568,7 @@ def add_student(name, subject, email, phone, book_loaned=0, paper_ws=0, el=0, pi
 
 
 
-def update_student(sid, name, email, phone, subject="", book_loaned=0, paper_ws=0, el=0, pi=0, v=0, day1="", day2="", day1_time="", day2_time="", subjects=None, subject_minutes=None, schedule_json=""):
+def update_student(sid, name, email, phone, subject="", book_loaned=0, el=0, pi=0, v=0, day1="", day2="", day1_time="", day2_time="", subjects=None, subject_minutes=None, schedule_json=""):
     """Update an existing student's information with ownership check."""
     subjects_list, minutes_list, total_minutes = normalize_subject_entries(
         subjects if subjects is not None else [subject],
@@ -388,7 +578,7 @@ def update_student(sid, name, email, phone, subject="", book_loaned=0, paper_ws=
 
     with sqlite3.connect(DB_PATH) as conn:
         c = conn.cursor()
-        c.execute("""UPDATE students SET name=?,subject=?,subjects_json=?,subject_minutes_json=?,total_study_minutes=?,email=?,phone=?,book_loaned=?,paper_ws=?,el=?,pi=?,v=?,day1=?,day2=?,day1_time=?,day2_time=?,schedule_json=? WHERE id=?""",
+        c.execute("""UPDATE students SET name=?,subject=?,subjects_json=?,subject_minutes_json=?,total_study_minutes=?,email=?,phone=?,book_loaned=?,el=?,pi=?,v=?,day1=?,day2=?,day1_time=?,day2_time=?,schedule_json=? WHERE id=?""",
                   (
                       name,
                       primary_subject,
@@ -398,7 +588,6 @@ def update_student(sid, name, email, phone, subject="", book_loaned=0, paper_ws=
                       email,
                       phone,
                       int(bool(book_loaned)),
-                      int(bool(paper_ws)),
                       int(bool(el)),
                       int(bool(pi)),
                       int(bool(v)),
@@ -433,7 +622,7 @@ def get_deleted_students():
     with sqlite3.connect(DB_PATH) as conn:
         c = conn.cursor()
         c.execute("""
-            SELECT s.id, s.name, s.subject, s.level, s.email, s.phone, '' AS legacy_contact, s.active, s.book_loaned, s.paper_ws,
+            SELECT s.id, s.name, s.subject, s.level, s.email, s.phone, '' AS legacy_contact, s.active, s.book_loaned, s.device_loaned,
                    s.math_goal, s.math_ws_per_week, s.reading_goal, s.reading_ws_per_week,
                    s.el, s.pi, s.v, s.day1, s.day1_time, s.day2, s.day2_time
             FROM students s
@@ -461,8 +650,6 @@ def import_csv(file_path):
         return {"added": 0, "updated": 0, "deleted": 0}
     added=0
     updated=0
-    deleted=0
-    csv_names=set()  # Track names from CSV
     
     with sqlite3.connect(DB_PATH) as conn, open(file_path,newline="",encoding="utf-8-sig") as f:
         reader=csv.DictReader(f)
@@ -474,23 +661,18 @@ def import_csv(file_path):
                 print(f"CSV Columns: {list(row.keys())}")
                 first_row = False
             
-            name=row.get("name") or ""
+            name = str(_csv_get(row, 'name', 'student_name', default='') or '').strip()
             if not name.strip(): continue
-            csv_names.add(name.lower().strip())  # Store lowercase name for matching
             
-            email=row.get("email") or ""
-            phone=row.get("phone") or ""
-            subject=row.get("subject") or ""
-            math_goal=row.get("math_goal") or ""
-            # Map CSV column Math/WS to database column math_ws_per_week
-            math_ws=safe_int(row.get("Math/WS") or row.get("math/ws") or "0", default=0)
-            reading_goal=row.get("reading_goal") or ""
-            # Map CSV column Reading/WS to database column reading_ws_per_week
-            reading_ws=safe_int(row.get("Reading/WS") or row.get("reading/ws") or "0", default=0)
-            print(f"Student: {name}, Math/WS: {math_ws}, Reading/WS: {reading_ws}")
-            
-            if subject.strip() not in {"S1", "S2"}:
-                return {"error": "CSV import failed: subject must be S1 or S2 for every student."}
+            email = str(_csv_get(row, 'email', default='') or '').strip()
+            phone = str(_csv_get(row, 'phone', default='') or '').strip()
+
+            subjects = _parse_subjects_from_csv(row)
+            subject_minutes = [30] * len(subjects)
+            total_study_minutes = sum(subject_minutes)
+            primary_subject = subjects[0]
+
+            el, pi, v = _parse_classification_from_csv(row)
             
             # Check if student exists (owned by this user)
             student_record=conn.execute("SELECT id FROM students WHERE LOWER(TRIM(name))=LOWER(?)",(name.strip(),)).fetchone()
@@ -499,63 +681,143 @@ def import_csv(file_path):
                 # UPDATE existing student - set all fields from CSV
                 student_id = student_record[0]
                 print(f"UPDATING student ID {student_id}: {name}")
-                conn.execute("""UPDATE students SET name=?, subject=?, email=?, phone=?, math_goal=?, math_ws_per_week=?, reading_goal=?, reading_ws_per_week=?, active=1 WHERE id=?"""
-                             ,(name,subject,email,phone,math_goal,math_ws,reading_goal,reading_ws,student_id))
+                conn.execute(
+                    """
+                    UPDATE students
+                    SET
+                        name=?,
+                        subject=?,
+                        subjects_json=?,
+                        subject_minutes_json=?,
+                        total_study_minutes=?,
+                        email=?,
+                        phone=?,
+                        active=1,
+                        el=?,
+                        pi=?,
+                        v=?
+                    WHERE id=?
+                    """,
+                    (
+                        name,
+                        primary_subject,
+                        json.dumps(subjects),
+                        json.dumps(subject_minutes),
+                        total_study_minutes,
+                        email,
+                        phone,
+                        el,
+                        pi,
+                        v,
+                        student_id,
+                    ),
+                )
                 updated+=1
             else:
-                # INSERT new student with                print(f"INSERTING new student: {name}")
-                conn.execute("""INSERT INTO students(name,subject,email,phone,active,math_goal,math_ws_per_week,reading_goal,reading_ws_per_week)
-                                VALUES(?,?,?,?,1,?,?,?,?,?)""",(name,subject,email,phone,math_goal,math_ws,reading_goal,reading_ws))
+                print(f"INSERTING new student: {name}")
+                conn.execute(
+                    """
+                    INSERT INTO students(
+                        name,
+                        subject,
+                        subjects_json,
+                        subject_minutes_json,
+                        total_study_minutes,
+                        email,
+                        phone,
+                        active,
+                        el,
+                        pi,
+                        v
+                    )
+                    VALUES(?,?,?,?,?,?,?,1,?,?,?)
+                    """,
+                    (
+                        name,
+                        primary_subject,
+                        json.dumps(subjects),
+                        json.dumps(subject_minutes),
+                        total_study_minutes,
+                        email,
+                        phone,
+                        el,
+                        pi,
+                        v,
+                    ),
+                )
+                student_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+                try:
+                    qr_data = f"ID:{student_id}\nName:{name}"
+                    qr_blob = qr_generator.generate_qr_bytes(qr_data)
+                    conn.execute("UPDATE students SET qr_code=? WHERE id=?", (sqlite3.Binary(qr_blob), student_id))
+                except Exception as qr_err:
+                    print(f"Warning: Failed to generate QR for new student {student_id}: {qr_err}")
                 added+=1
         
-        # PERMANENTLY delete students not in CSV
-        cursor=conn.cursor()
-        cursor.execute("SELECT id, name FROM students WHERE active=1")
-        db_students=cursor.fetchall()
-        print(f"CSV names: {csv_names}")
-        for student_id, student_name in db_students:
-            student_name_lower = student_name.lower().strip()
-            if student_name_lower not in csv_names:
-                conn.execute("DELETE FROM students WHERE id=?", (student_id,))
-                deleted+=1
-                print(f"Permanently deleting: {student_name}")
-        
         conn.commit()
-    return {"added": added, "updated": updated, "deleted": deleted}
+    return {"added": added, "updated": updated}
 
 def export_csv(path):
-    """Export all active students to CSV with proper alignment of headers and data."""
-    data=get_all_students()
-    # Headers must match the order of columns returned by get_all_students()
-    # get_all_students returns: id, name, subject, level, email, phone, legacy_contact, active,
-    # book_loaned, paper_ws, math_goal, math_ws_per_week, reading_goal, reading_ws_per_week,
-    # el, pi, v, day1, day1_time, day2, day2_time
-    headers=[
-        "ID",
-        "Student Name",
-        "Subject",
-        "Level",
-        "Email",
-        "Phone",
-        "Active",
-        "Book Loaned",
-        "Paper Worksheets",
-        "Math Goal",
-        "Math Worksheets/Week",
-        "Reading Goal",
-        "Reading Worksheets/Week",
-        "Early Learner",
-        "Primary Instruction",
-        "Virtual",
-        "Day 1",
-        "Day 1 Time",
-        "Day 2",
-        "Day 2 Time"
+    """Export active students in the same shape used by the student edit form CSV import."""
+    with sqlite3.connect(DB_PATH) as conn:
+        rows = conn.execute(
+            """
+            SELECT
+                name,
+                COALESCE(email, ''),
+                COALESCE(phone, ''),
+                COALESCE(subjects_json, '[]'),
+                COALESCE(subject, ''),
+                el,
+                pi,
+                v
+            FROM students
+            WHERE active = 1
+            ORDER BY name
+            """
+        ).fetchall()
+
+    headers = [
+        "name",
+        "email",
+        "phone",
+        "M",
+        "R",
+        "W",
+        "classification",
     ]
-    with open(path,"w",newline="",encoding="utf-8") as f:
-        writer=csv.writer(f)
+
+    with open(path, "w", newline="", encoding="utf-8") as f:
+        writer = csv.writer(f)
         writer.writerow(headers)
-        writer.writerows([list(row[:6]) + list(row[7:]) for row in data])
+        for row in rows:
+            name, email, phone = row[0], row[1], row[2]
+            subjects_json, legacy_subject = row[3], row[4]
+            el, pi, v = int(bool(row[5])), int(bool(row[6])), int(bool(row[7]))
+
+            try:
+                subjects = [str(s).strip() for s in json.loads(subjects_json or '[]') if str(s or '').strip()]
+            except (TypeError, ValueError):
+                subjects = []
+            if not subjects and legacy_subject:
+                subjects = [str(legacy_subject).strip()]
+
+            normalized_subjects = {_normalize_subject_name(s).lower() for s in subjects}
+            m_flag = 'x' if 'math' in normalized_subjects else ''
+            r_flag = 'x' if 'reading' in normalized_subjects else ''
+            w_flag = 'x' if 'writing' in normalized_subjects else ''
+
+            classification = _classification_label(el=el, pi=pi, v=v)
+
+            writer.writerow([
+                name,
+                email,
+                phone,
+                m_flag,
+                r_flag,
+                w_flag,
+                classification,
+            ])
 
 
 def find_duplicates_by_name(name):

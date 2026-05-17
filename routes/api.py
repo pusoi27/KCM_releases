@@ -264,7 +264,7 @@ def register_api_routes(app):
                     "phone": s[5],
                     "active": s[7] if len(s) > 7 else 0,
                     "book_loaned": s[8] if len(s) > 8 else 0,
-                    "paper_ws": s[9] if len(s) > 9 else 0,
+                    "device_loaned": s[9] if len(s) > 9 else 0,
                     "day1": s[13] if len(s) > 13 else None,
                     "day1_time": s[14] if len(s) > 14 else None,
                     "day2": s[15] if len(s) > 15 else None,
@@ -497,7 +497,7 @@ def register_api_routes(app):
                 "subject": s[2],
                 "level": s[3],
                 "book_loaned": s[8] if len(s) > 8 else 0,
-                "paper_ws": s[9] if len(s) > 9 else 0,
+                "device_loaned": s[9] if len(s) > 9 else 0,
                 "start_time": start,
                 "subjects": json.loads(s[17] or '[]') if len(s) > 17 and s[17] else ([s[2]] if s[2] else []),
                 "photo_url": f"/students/photo/{sid}" if _has_photo_blob(s) else '',
@@ -612,7 +612,7 @@ def register_api_routes(app):
             else:
                 # Validate goals only when STARTING a new session.
                 # get_student tuple:
-                # (id,name,subject,email,phone,legacy_contact,active,book_loaned,paper_ws,math_goal,math_ws_per_week,reading_goal,reading_ws_per_week,...)
+                # (id,name,subject,email,phone,legacy_contact,active,book_loaned,device_loaned,math_goal,math_ws_per_week,reading_goal,reading_ws_per_week,...)
                 math_goal = student[9] if len(student) > 9 else None
                 reading_goal = student[11] if len(student) > 11 else None
 

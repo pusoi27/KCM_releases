@@ -253,15 +253,14 @@ def _db_summary(db_path: str) -> str:
     """
     try:
         size_kb = os.path.getsize(db_path) / 1024
-        conn = sqlite3.connect(db_path)
-        cur = conn.cursor()
         counts = {}
-        for table in ("students", "sessions", "staff", "books", "assistant_sessions"):
-            try:
-                counts[table] = cur.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
-            except Exception:
-                counts[table] = "?"
-        conn.close()
+        with sqlite3.connect(db_path) as conn:
+            cur = conn.cursor()
+            for table in ("students", "sessions", "staff", "books", "assistant_sessions"):
+                try:
+                    counts[table] = cur.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
+                except Exception:
+                    counts[table] = "?"
         return (
             f"students={counts['students']}  sessions={counts['sessions']}  "
             f"staff={counts['staff']}  books={counts['books']}  "
@@ -612,7 +611,6 @@ def init_db():
             total_study_minutes INTEGER DEFAULT 30,
             level TEXT,
             book_loaned INTEGER DEFAULT 0,
-            paper_ws INTEGER DEFAULT 0,
             email TEXT,
             phone TEXT,
             active INTEGER DEFAULT 1,
@@ -774,12 +772,12 @@ def init_db():
     # Sample data
     if not c.execute("SELECT COUNT(*) FROM students").fetchone()[0]:
         demo = [
-            ("Alice Johnson", "S1", "6A", 0, 1, "alice@demo.com", "111-222", 1),
-            ("Bob Smith", "S2", "5A", 1, 0, "bob@demo.com", "222-333", 1)
+            ("Alice Johnson", "S1", "6A", 0, "alice@demo.com", "111-222", 1),
+            ("Bob Smith", "S2", "5A", 1, "bob@demo.com", "222-333", 1)
         ]
         c.executemany("""INSERT INTO students
-            (name, subject, level, book_loaned, paper_ws, email, phone, active)
-            VALUES (?,?,?,?,?,?,?,?)""", demo)
+            (name, subject, level, book_loaned, email, phone, active)
+            VALUES (?,?,?,?,?,?,?)""", demo)
 
     if not c.execute("SELECT COUNT(*) FROM staff").fetchone()[0]:
         c.execute("INSERT INTO staff (name,role,email,phone) VALUES (?,?,?,?)",
@@ -841,6 +839,22 @@ def init_db():
             cur.execute("ALTER TABLE students ADD COLUMN schedule_json TEXT DEFAULT ''")
         if "qr_code" not in cols:
             cur.execute("ALTER TABLE students ADD COLUMN qr_code BLOB")
+        if "device_loaned" not in cols:
+            cur.execute("ALTER TABLE students ADD COLUMN device_loaned INTEGER DEFAULT 0")
+        # Sync device_loaned from active material loans (fixes pre-migration stale data)
+        cur.execute("UPDATE students SET device_loaned = 0 WHERE device_loaned IS NULL OR device_loaned = 0")
+        cur.execute("""
+            UPDATE students SET device_loaned = 1
+            WHERE id IN (
+                SELECT DISTINCT borrower_id FROM materials
+                WHERE borrower_id IS NOT NULL AND available = 0
+            )
+        """)
+        if "paper_ws" in cols:
+            try:
+                cur.execute("ALTER TABLE students DROP COLUMN paper_ws")
+            except Exception:
+                pass
         conn.commit()
 
     _migrate_student_photos_to_blob(DB_PATH)
@@ -1037,8 +1051,8 @@ def init_db():
         tpl_path = os.path.join("templates", "student_template.csv")
         if not os.path.exists(tpl_path):
             with open(tpl_path, "w", encoding="utf-8") as f:
-                f.write("name,subject,level,email,phone\n")
-                f.write("Example Student,S1,6A,example@example.com,123456789\n")
+                f.write("name,email,phone,M,R,W,classification\n")
+                f.write("Example Student,example@example.com,123456789,x,x,,Monitored\n")
 
 
 # ====================================================================

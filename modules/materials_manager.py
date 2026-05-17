@@ -70,11 +70,17 @@ def _coerce_blob(raw_value):
     return None
 
 
-def _ensure_material_qr_image(material_id: int, title: str, qr_code: str):
-    """Generate QR code and store in database (updated for database storage)."""
+def _ensure_material_qr_image(material_id: int, title: str, qr_code: str, cursor=None):
+    """Generate QR code and store in database. If cursor is provided, reuses the existing connection."""
     qr_data = f"MAT:{material_id}\nTitle:{title or ''}\nCode:{qr_code or ''}"
     qr_blob = qr_generator.generate_qr_bytes(qr_data)
-    set_material_qr_code_blob(material_id, qr_blob)
+    if cursor is not None:
+        cursor.execute(
+            "UPDATE materials SET qr_code_blob=? WHERE id=?",
+            (sqlite3.Binary(qr_blob) if qr_blob else None, material_id),
+        )
+    else:
+        set_material_qr_code_blob(material_id, qr_blob)
 
 
 def set_material_qr_code_blob(material_id: int, qr_blob):
@@ -148,7 +154,7 @@ def add_material(title, author, publisher, qr_code=None, available=1, reading_le
             qr_code = _build_material_qr_code(material_id)
             c.execute("UPDATE materials SET qr_code = ? WHERE id = ?", (qr_code, material_id))
 
-        _ensure_material_qr_image(material_id, title, qr_code)
+        _ensure_material_qr_image(material_id, title, qr_code, cursor=c)
         _sync_material_availability(c, material_id)
         conn.commit()
         return material_id
@@ -199,7 +205,7 @@ def update_material(material_id, title=None, author=None, publisher=None, qr_cod
             if not _has_qr_code(qr_code_value):
                 qr_code_value = _build_material_qr_code(material_id)
                 c.execute("UPDATE materials SET qr_code = ? WHERE id = ?", (qr_code_value, material_id))
-            _ensure_material_qr_image(material_id, title_value or '', qr_code_value)
+            _ensure_material_qr_image(material_id, title_value or '', qr_code_value, cursor=c)
             _sync_material_availability(c, material_id)
 
         conn.commit()
@@ -293,6 +299,7 @@ def loan_material(material_id: int, student_id: int):
         if c.rowcount == 0:
             return None
 
+        c.execute("UPDATE students SET device_loaned = 1 WHERE id = ?", (student_id,))
         c.execute(
             """
             INSERT INTO material_loans (material_id, student_id, checkout_date)
@@ -310,9 +317,16 @@ def return_material(material_id: int):
 
     with sqlite3.connect(DB_PATH) as conn:
         c = conn.cursor()
+        borrower_row = c.execute("SELECT borrower_id FROM materials WHERE id = ?", (material_id,)).fetchone()
+        borrower_id = borrower_row[0] if borrower_row else None
         c.execute("UPDATE materials SET borrower_id = NULL WHERE id = ?", (material_id,))
         _sync_material_availability(c, material_id)
-
+        if borrower_id:
+            remaining = c.execute(
+                "SELECT COUNT(*) FROM materials WHERE borrower_id = ?", (borrower_id,)
+            ).fetchone()[0]
+            if remaining == 0:
+                c.execute("UPDATE students SET device_loaned = 0 WHERE id = ?", (borrower_id,))
         c.execute(
             """
             UPDATE material_loans
@@ -357,6 +371,11 @@ def clear_active_material_loan(material_id: int, student_id: int):
         c.execute("UPDATE material_loans SET return_date = ? WHERE id = ?", (return_date, open_loan[0]))
         c.execute("UPDATE materials SET borrower_id = NULL WHERE id = ?", (material_id,))
         _sync_material_availability(c, material_id)
+        remaining = c.execute(
+            "SELECT COUNT(*) FROM materials WHERE borrower_id = ?", (student_id,)
+        ).fetchone()[0]
+        if remaining == 0:
+            c.execute("UPDATE students SET device_loaned = 0 WHERE id = ?", (student_id,))
         conn.commit()
         return return_date
 

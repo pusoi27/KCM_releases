@@ -2,9 +2,11 @@
 from io import BytesIO
 
 from flask import abort, render_template, request, redirect, url_for, flash, send_file
+from werkzeug.utils import secure_filename
 from modules import student_manager, instructor_profile_manager, server_cache, db_backup_recovery, auth_manager
 from routes.auth import require_login, require_admin
 from routes.operation_utils import flash_scoped_failure, invalidate_scoped_cache
+import os
 import sqlite3
 from modules.database import DB_PATH
 import json
@@ -225,7 +227,6 @@ def register_student_routes(app, upload_folder):
                 request.form.get("email", ""),
                 request.form.get("phone", ""),
                 book_loaned=int(bool(request.form.get("book_loaned"))),
-                paper_ws=int(bool(request.form.get("paper_ws"))),
                 el=int(bool(request.form.get("el"))),
                 pi=int(bool(request.form.get("pi"))),
                 v=int(bool(request.form.get("v"))),
@@ -279,7 +280,6 @@ def register_student_routes(app, upload_folder):
                 request.form.get("phone", ""),
                 subject=subjects[0],
                 book_loaned=int(bool(request.form.get("book_loaned"))),
-                paper_ws=int(bool(request.form.get("paper_ws"))),
                 el=int(bool(request.form.get("el"))),
                 pi=int(bool(request.form.get("pi"))),
                 v=int(bool(request.form.get("v"))),
@@ -402,9 +402,9 @@ def register_student_routes(app, upload_folder):
         path = os.path.join(upload_folder, secure_filename(file.filename))
         file.save(path)
         backup_path = db_backup_recovery.create_backup("students_import")
-        cache_invalidators = (
+        cache_invalidators = [
             lambda: _invalidate_student_caches()
-        )
+        ]
         try:
             result = student_manager.import_csv(path)
             if isinstance(result, dict) and result.get("error"):
@@ -413,7 +413,9 @@ def register_student_routes(app, upload_folder):
                     table_names=("students",),
                     error=result.get("error"),
                     invalidators=cache_invalidators,
+                    category="danger",
                 )
+                flash("Import failed. Please check the CSV file and try again.", "danger")
                 return redirect(url_for("students_list"))
         except Exception as e:
             flash_scoped_failure(
@@ -421,18 +423,16 @@ def register_student_routes(app, upload_folder):
                 table_names=("students",),
                 error=e,
                 invalidators=cache_invalidators,
+                category="danger",
             )
+            flash("Import failed. Please check the CSV file and try again.", "danger")
             return redirect(url_for("students_list"))
         added = result.get("added", 0) if isinstance(result, dict) else result
         updated = result.get("updated", 0) if isinstance(result, dict) else 0
-        deleted = result.get("deleted", 0) if isinstance(result, dict) else 0
-        
-        message = f"Imported {added} new student(s)"
-        if updated > 0:
-            message += f", Updated {updated} student(s)"
-        if deleted > 0:
-            message += f", Deleted {deleted} student(s)"
-        message += "."
+        parts = []
+        if added: parts.append(f"{added} added")
+        if updated: parts.append(f"{updated} updated")
+        message = "Import successful" + (f": {', '.join(parts)}" if parts else "") + "."
         invalidate_scoped_cache(*cache_invalidators)
         flash(message, "success")
         return redirect(url_for("students_list"))

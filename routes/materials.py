@@ -199,25 +199,24 @@ def register_material_routes(app):
 
         try:
             enforce_qr_availability_rule()
-            conn = sqlite3.connect(DB_PATH)
-            c = conn.cursor()
+            with sqlite3.connect(DB_PATH, timeout=10) as conn:
+                c = conn.cursor()
 
-            sql = "SELECT id, title, author, available, reading_level, qr_code, publisher, copies, borrower_id FROM materials WHERE 1=1"
-            params = []
+                sql = "SELECT id, title, author, available, reading_level, qr_code, publisher, copies, borrower_id FROM materials WHERE 1=1"
+                params = []
 
-            if query:
-                sql += " AND (title LIKE ? OR author LIKE ? OR publisher LIKE ? OR qr_code LIKE ?)"
-                search_term = f"%{query}%"
-                params.extend([search_term, search_term, search_term, search_term])
+                if query:
+                    sql += " AND (title LIKE ? OR author LIKE ? OR publisher LIKE ? OR qr_code LIKE ?)"
+                    search_term = f"%{query}%"
+                    params.extend([search_term, search_term, search_term, search_term])
 
-            if level:
-                sql += " AND reading_level = ?"
-                params.append(level)
+                if level:
+                    sql += " AND reading_level = ?"
+                    params.append(level)
 
-            sql += " ORDER BY title"
-            c.execute(sql, params)
-            rows = c.fetchall()
-            conn.close()
+                sql += " ORDER BY title"
+                c.execute(sql, params)
+                rows = c.fetchall()
 
             return jsonify({'materials': [_material_row_to_dict(row) for row in rows], 'count': len(rows)})
         except Exception as e:
@@ -228,11 +227,10 @@ def register_material_routes(app):
     @require_feature(auth_manager.FEATURE_BOOKS)
     def api_materials_levels():
         try:
-            conn = sqlite3.connect(DB_PATH)
-            c = conn.cursor()
-            c.execute('SELECT DISTINCT reading_level FROM materials WHERE reading_level IS NOT NULL ORDER BY reading_level')
-            levels = [row[0] for row in c.fetchall()]
-            conn.close()
+            with sqlite3.connect(DB_PATH, timeout=10) as conn:
+                c = conn.cursor()
+                c.execute('SELECT DISTINCT reading_level FROM materials WHERE reading_level IS NOT NULL ORDER BY reading_level')
+                levels = [row[0] for row in c.fetchall()]
             return jsonify({'levels': levels})
         except Exception as e:
             return jsonify({'error': str(e)}), 500
@@ -248,7 +246,7 @@ def register_material_routes(app):
         publisher = (payload.get('publisher') or '').strip()
         qr_code = _normalize_qr_value(payload.get('qr_code')) if payload.get('qr_code') else None
         level = (payload.get('reading_level') or '').strip()
-        copies = _parse_non_negative_int(payload.get('copies'), default=1)
+        copies = 1
         existing_id = payload.get('id')
 
         if not existing_id and qr_code:
@@ -281,8 +279,6 @@ def register_material_routes(app):
 
         if not title:
             return jsonify({'error': 'Title is required.'}), 400
-        if not level:
-            return jsonify({'error': 'Reading level is required for new materials.'}), 400
 
         try:
             new_id = add_material(

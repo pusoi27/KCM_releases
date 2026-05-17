@@ -43,15 +43,14 @@
       <table class="table table-hover mb-0" id="materialsTable">
         <thead class="table-light">
           <tr>
-            <th>Title</th>
-            <th>Author</th>
-            <th>Publisher</th>
+            <th>Name</th>
+            <th>Description</th>
+            <th>Location</th>
             <th class="text-center">Level</th>
-            <th class="text-center">Copies</th>
             <th class="text-center">Available</th>
             <th class="text-center">Borrower</th>
             <th class="text-center">QR Code</th>
-            <th width="140" class="text-center">Actions</th>
+            <th width="180" class="text-center">Actions</th>
           </tr>
         </thead>
         <tbody id="materialsTableBody">
@@ -59,10 +58,9 @@
             {% for material in materials %}
             <tr class="material-row" data-id="{{ material.id }}">
               <td class="fw-500">{{ material.title or 'Untitled' }}</td>
-              <td>{{ material.author or 'Unknown' }}</td>
+              <td>{{ material.author or '-' }}</td>
               <td class="text-muted small">{{ (material.publisher or '')[:40] }}{% if (material.publisher or '')|length > 40 %}...{% endif %}</td>
               <td class="text-center"><span class="badge bg-info">{{ material.reading_level or '-' }}</span></td>
-              <td class="text-center">{{ material.copies or 0 }}</td>
               <td class="text-center">
                 {% if material.available and material.qr_code %}
                   <span class="badge bg-success">Yes</span>
@@ -71,9 +69,16 @@
                 {% endif %}
               </td>
               <td class="text-center small">{{ material.borrower_name or '-' }}</td>
-              <td class="text-center small text-muted">{{ material.qr_code or '-' }}</td>
+              <td class="text-center">
+                {% if material.qr_code %}
+                  <img src="{{ url_for('serve_material_qr', mid=material.id) }}" alt="QR" style="width:48px;height:48px;cursor:pointer;" title="{{ material.qr_code }}" onclick="window.open(this.src)">
+                {% else %}
+                  <span class="text-muted small">-</span>
+                {% endif %}
+              </td>
               <td class="text-center">
                 <a href="{{ url_for('materials_edit', material_id=material.id) }}" class="btn btn-outline-info btn-sm">Edit</a>
+                <button type="button" class="btn btn-outline-secondary btn-sm" onclick="printDeviceQR({{ material.id }})"><i class="bi bi-printer"></i> Print QR</button>
                 {% if current_user and current_user.is_admin() %}
                 <button type="button" class="btn btn-outline-danger btn-sm" onclick="submitDeleteMaterial({{ material.id }})">Del</button>
                 {% endif %}
@@ -81,7 +86,7 @@
             </tr>
             {% endfor %}
           {% else %}
-            <tr><td colspan="9" class="text-center text-muted py-4">No materials found</td></tr>
+            <tr><td colspan="8" class="text-center text-muted py-4">No materials found</td></tr>
           {% endif %}
         </tbody>
       </table>
@@ -96,6 +101,11 @@ document.addEventListener('DOMContentLoaded', function() {
   const levelFilter = document.getElementById('levelFilter');
   const searchBtn = document.getElementById('searchBtn');
   const body = document.getElementById('materialsTableBody');
+
+  window.printDeviceQR = function(materialId) {
+    if (!confirm('Download QR label PDF for this device?')) return;
+    window.location.href = `/qr/materials/pdf/individual/${materialId}`;
+  };
 
   window.submitDeleteMaterial = function(materialId) {
     if (!confirm('Delete material?')) return;
@@ -133,15 +143,15 @@ document.addEventListener('DOMContentLoaded', function() {
             row.dataset.id = material.id;
             row.innerHTML = `
               <td class="fw-500">${escapeHtml(material.title)}</td>
-              <td>${escapeHtml(material.author || 'Unknown')}</td>
+              <td>${escapeHtml(material.author || '-')}</td>
               <td class="text-muted small">${escapeHtml((material.publisher || '').substring(0, 40))}</td>
               <td class="text-center"><span class="badge bg-info">${escapeHtml(material.reading_level || '-')}</span></td>
-              <td class="text-center">${material.copies || 0}</td>
               <td class="text-center"><span class="badge ${(material.available && material.qr_code) ? 'bg-success' : 'bg-danger'}">${(material.available && material.qr_code) ? 'Yes' : 'No'}</span></td>
               <td class="text-center small">${escapeHtml(material.borrower_name || '-')}</td>
-              <td class="text-center small text-muted">${escapeHtml(material.qr_code || '-')}</td>
+              <td class="text-center">${material.qr_code ? `<img src="/materials/qr/${material.id}" alt="QR" style="width:48px;height:48px;cursor:pointer;" title="${escapeHtml(material.qr_code)}" onclick="window.open(this.src)">` : '<span class="text-muted small">-</span>'}</td>
               <td class="text-center">
                 <a href="/materials/edit/${material.id}" class="btn btn-outline-info btn-sm">Edit</a>
+                <button type="button" class="btn btn-outline-secondary btn-sm" onclick="printDeviceQR(${material.id})"><i class="bi bi-printer"></i> Print QR</button>
                 {% if current_user and current_user.is_admin() %}
                 <button type="button" class="btn btn-outline-danger btn-sm" onclick="submitDeleteMaterial(${material.id})">Del</button>
                 {% endif %}
@@ -151,7 +161,7 @@ document.addEventListener('DOMContentLoaded', function() {
           });
         } else {
           const row = document.createElement('tr');
-          row.innerHTML = '<td colspan="9" class="text-center text-muted py-4">No materials found</td>';
+          row.innerHTML = '<td colspan="8" class="text-center text-muted py-4">No materials found</td>';
           body.appendChild(row);
         }
       })

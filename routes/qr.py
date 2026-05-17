@@ -8,6 +8,7 @@ from modules.database import DB_PATH
 from routes.auth import require_login, require_feature
 from reportlab.lib.pagesizes import letter
 from reportlab.lib.units import inch
+from reportlab.lib.utils import ImageReader
 from reportlab.pdfgen import canvas
 from reportlab.graphics.barcode import code128
 
@@ -111,6 +112,16 @@ def register_qr_routes(app):
             return "QR code not found", 404
         return send_file(io.BytesIO(qr_blob), mimetype='image/png')
 
+    @app.route('/materials/qr/<int:mid>')
+    @require_login
+    @require_feature(auth_manager.FEATURE_BOOKS)
+    def serve_material_qr(mid):
+        """Serve material/device QR code image from database."""
+        qr_blob = materials_manager.get_material_qr_code_blob(mid)
+        if not qr_blob:
+            return "QR code not found", 404
+        return send_file(io.BytesIO(qr_blob), mimetype='image/png')
+
     # ================================================================
     # QR Code Generation - Assistants
     # ================================================================
@@ -184,19 +195,20 @@ def register_qr_routes(app):
         with sqlite3.connect(DB_PATH) as conn:
             c = conn.cursor()
             c.execute("SELECT id, title FROM books")
-            for (bid, title) in c.fetchall():
-                try:
-                    # Check if QR code exists in database
-                    existing_qr = book_manager.get_book_qr_code(bid)
-                    if existing_qr:
-                        skipped.append(f"book_{bid}.png")
-                        continue
-                    qr_data = f"BOOK:{bid}\nTitle:{title or ''}"
-                    qr_blob = qr_generator.generate_qr_bytes(qr_data)
-                    book_manager.set_book_qr_code(bid, qr_blob)
-                    generated.append(f"book_{bid}.png")
-                except Exception as e:
-                    errors.append({'id': bid, 'error': str(e)})
+            books = c.fetchall()
+        # Connection closed before calling book_manager to avoid nested write locks
+        for (bid, title) in books:
+            try:
+                existing_qr = book_manager.get_book_qr_code(bid)
+                if existing_qr:
+                    skipped.append(f"book_{bid}.png")
+                    continue
+                qr_data = f"BOOK:{bid}\nTitle:{title or ''}"
+                qr_blob = qr_generator.generate_qr_bytes(qr_data)
+                book_manager.set_book_qr_code(bid, qr_blob)
+                generated.append(f"book_{bid}.png")
+            except Exception as e:
+                errors.append({'id': bid, 'error': str(e)})
         return jsonify({'generated': generated, 'skipped': skipped, 'errors': errors})
 
     @app.route("/qr/books/generate/<int:bid>", methods=["POST"])
@@ -360,6 +372,32 @@ def register_qr_routes(app):
         return send_file(pdf_buffer, as_attachment=True, download_name=f"book_{bid}_qr.pdf", mimetype='application/pdf')
 
     # ================================================================
+    # QR Print - Materials/Devices
+    # ================================================================
+
+    @app.route('/qr/materials/pdf/individual/<int:mid>')
+    @require_login
+    @require_feature(auth_manager.FEATURE_BOOKS)
+    def qr_material_pdf_individual(mid):
+        """Generate Avery 8160 PDF with QR code and device name for a single device."""
+        material = materials_manager.get_material(mid)
+        if not material:
+            return "Device not found", 404
+        device_name = material[1] or ''
+        qr_blob = materials_manager.get_material_qr_code_blob(mid)
+        if not qr_blob:
+            from modules.materials_manager import _build_material_qr_code, _ensure_material_qr_image
+            qr_code = material[5] or _build_material_qr_code(mid)
+            _ensure_material_qr_image(mid, device_name, qr_code)
+            qr_blob = materials_manager.get_material_qr_code_blob(mid)
+        if not qr_blob:
+            return "Failed to generate QR code", 500
+        qr_io = io.BytesIO(qr_blob)
+        labels = [{'name': device_name, 'qr_blob': qr_io}]
+        buf = _build_avery_pdf(labels)
+        return send_file(buf, mimetype='application/pdf', as_attachment=True, download_name=f'device_{mid}_qr.pdf')
+
+    # ================================================================
     # ISBN Print - Books
     # ================================================================
 
@@ -370,7 +408,7 @@ def register_qr_routes(app):
         """Generate Avery 8160 PDF with ISBN for a single book."""
         with sqlite3.connect(DB_PATH) as conn:
             c = conn.cursor()
-            row = c.execute("SELECT id, title, isbn13 FROM books WHERE id=?", (bid)).fetchone()
+            row = c.execute("SELECT id, title, isbn13 FROM books WHERE id=?", (bid,)).fetchone()
         if not row:
             return "Book not found", 404
         
@@ -378,7 +416,7 @@ def register_qr_routes(app):
         if not isbn13:
             return "ISBN13 not found for this book", 400
         
-        labels = [{'name': title, 'isbn': isbn13}]
+        labels = [{'isbn': isbn13}]
         buf = _build_isbn_pdf(labels)
         filename = f'book_{bid}_isbn_labels.pdf'
         return send_file(buf, mimetype='application/pdf', as_attachment=True, download_name=filename)
@@ -530,7 +568,7 @@ def _build_avery_pdf(labels):
                     # Try qr_blob first (database source), then qr_path (file source for backward compatibility)
                     qr_source = None
                     if lab.get('qr_blob'):
-                        qr_source = lab['qr_blob']
+                        qr_source = ImageReader(lab['qr_blob'])
                     elif lab.get('qr_path') and os.path.exists(lab['qr_path']):
                         qr_source = lab['qr_path']
                     
@@ -811,7 +849,7 @@ def _build_avery8163_pdf(labels):
                 # Try qr_blob first (database source), then qr_path (file source for backward compatibility)
                 qr_source = None
                 if label.get('qr_blob'):
-                    qr_source = label['qr_blob']
+                    qr_source = ImageReader(label['qr_blob'])
                 elif label.get("qr_path") and os.path.exists(label.get("qr_path")):
                     qr_source = label.get("qr_path")
                 
