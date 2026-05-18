@@ -64,12 +64,42 @@ def main():
         time.sleep(2)
         
         # Open browser
+
+        # Try to read center name from config or database
+        center_name = None
+        db_config_path = os.path.join(app_dir, 'db_config.json')
+        if os.path.exists(db_config_path):
+            import json
+            try:
+                with open(db_config_path, encoding='utf-8') as f:
+                    cfg = json.load(f)
+                    center_name = cfg.get('center_name')
+            except Exception:
+                pass
+        if not center_name:
+            # Try to read from instructor_profile if available
+            try:
+                import sqlite3
+                db_path = os.path.join(app_dir, 'data', 'Stdytime.db')
+                if os.path.exists(db_path):
+                    conn = sqlite3.connect(db_path)
+                    cur = conn.cursor()
+                    cur.execute("SELECT center_location FROM instructor_profile LIMIT 1")
+                    row = cur.fetchone()
+                    if row and row[0]:
+                        center_name = row[0]
+                    conn.close()
+            except Exception:
+                pass
+        if not center_name:
+            center_name = "Stdytime Center"
+
         url = "http://127.0.0.1:5000/"
         print(f"\nOpening {url} in your browser...")
         webbrowser.open(url)
-        
+
         print("\n" + "="*50)
-        print("Stdytime is running!")
+        print(f"Welcome to: {center_name}")
         print("="*50)
         print(f"\nAccess at: {url}")
         print("\nClose this window to stop the app.")

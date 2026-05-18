@@ -1,0 +1,122 @@
+[trace] Development trace enabled: C:\Users\octav\AppData\Local\Programs\Python\Python312\stdytime\trace_logs\trace_20260516_141133_23400.txt
+[startup] Database initialized at: C:/Users/octav/OneDrive/ADOCTA TECH LLC/StdyTime/DB/Stdytime.db
+[startup] closed open DB sessions: 0
+[version] Bumped: 00.08.010 -> 00.08.011
+[startup] Stdytime version: 00.08.011
+DEBUG:urllib3.connectionpool:Starting new HTTPS connection (1): api.lemonsqueezy.com:443
+DEBUG:urllib3.connectionpool:https://api.lemonsqueezy.com:443 "POST /v1/licenses/validate HTTP/1.1" 200 None
+[startup] LS license: License is active (verified with LemonSqueezy).
+WARNING:werkzeug: * Debugger is active!
+INFO:werkzeug: * Debugger PIN: 304-138-232
+DEBUG:app:[request] -> GET /
+[READ] GET    /                                        200
+DEBUG:app:[request] <- GET / 200
+INFO:werkzeug:127.0.0.1 - - [16/May/2026 14:11:44] "GET / HTTP/1.1" 200 -
+DEBUG:app:[request] -> GET /static/css/style.css
+DEBUG:app:[request] -> GET /static/img/logo.png
+[READ] GET    /static/img/logo.png                     200
+DEBUG:app:[request] <- GET /static/img/logo.png 200
+INFO:werkzeug:127.0.0.1 - - [16/May/2026 14:11:45] "GET /static/img/logo.png HTTP/1.1" 200 -
+[READ] GET    /static/css/style.css                    200
+DEBUG:app:[request] <- GET /static/css/style.css 200
+INFO:werkzeug:127.0.0.1 - - [16/May/2026 14:11:45] "GET /static/css/style.css HTTP/1.1" 200 -
+DEBUG:app:[request] -> GET /static/css/style.css
+[READ] GET    /static/css/style.css                    200
+DEBUG:app:[request] <- GET /static/css/style.css 200
+INFO:werkzeug:127.0.0.1 - - [16/May/2026 14:11:45] "GET /static/css/style.css HTTP/1.1" 200 -
+DEBUG:app:[request] -> GET /api/students/list
+[column3-trace] students_list_build_source active_rows=0 checked_rows=0 latest_rows=0 today='2026-05-16' total_students=2
+[column3-trace] students_list_payload_built cache_key='students:list:v1' checked_count=0 checked_ids=[]
+[column3-trace] students_list_response cache_key='students:list:v1' checked_count=0 total=2
+[READ] GET    /api/students/list                       200
+DEBUG:app:[request] <- GET /api/students/list 200
+INFO:werkzeug:127.0.0.1 - - [16/May/2026 14:11:45] "GET /api/students/list HTTP/1.1" 200 -
+DEBUG:app:[request] -> GET /api/sessions/active
+DEBUG:app:[request] -> GET /favicon.ico
+[READ] GET    /api/sessions/active                     200
+DEBUG:app:[request] <- GET /api/sessions/active 200
+INFO:werkzeug:127.0.0.1 - - [16/May/2026 14:11:45] "GET /api/sessions/active HTTP/1.1" 200 -
+DEBUG:app:[request] -> GET /api/assistants/list
+[READ] GET    /favicon.ico                             404
+DEBUG:app:[request] <- GET /favicon.ico 404
+INFO:werkzeug:127.0.0.1 - - [16/May/2026 14:11:45] "[33mGET /favicon.ico HTTP/1.1[0m" 404 -
+[staff-duty-trace] list_request method='GET' path='/api/assistants/list'
+[staff-duty-trace] list_build_begin
+[staff-duty-trace] list_build_source assistants_count=1 open_rows_count=0
+[staff-duty-trace] list_build_done payload_count=1
+[staff-duty-trace] list_response_ok payload_count=1 payload_type='list'
+[READ] GET    /api/assistants/list                     200
+DEBUG:app:[request] <- GET /api/assistants/list 200
+INFO:werkzeug:127.0.0.1 - - [16/May/2026 14:11:45] "GET /api/assistants/list HTTP/1.1" 200 -
+DEBUG:app:[request] -> GET /students
+[READ] GET    /students                                200
+DEBUG:app:[request] <- GET /students 200
+INFO:werkzeug:127.0.0.1 - - [16/May/2026 14:11:49] "GET /students HTTP/1.1" 200 -
+DEBUG:app:[request] -> GET /static/css/style.css
+[READ] GET    /static/css/style.css                    200
+DEBUG:app:[request] <- GET /static/css/style.css 200
+DEBUG:app:[request] -> GET /static/img/logo.png
+INFO:werkzeug:127.0.0.1 - - [16/May/2026 14:11:49] "GET /static/css/style.css HTTP/1.1" 200 -
+[READ] GET    /static/img/logo.png                     200
+DEBUG:app:[request] <- GET /static/img/logo.png 200
+INFO:werkzeug:127.0.0.1 - - [16/May/2026 14:11:49] "GET /static/img/logo.png HTTP/1.1" 200 -
+DEBUG:app:[request] -> GET /students/qr/1
+DEBUG:app:[request] -> GET /students/qr/2
+[READ] GET    /students/qr/1                           302
+DEBUG:app:[request] <- GET /students/qr/1 302
+INFO:werkzeug:127.0.0.1 - - [16/May/2026 14:11:49] "[32mGET /students/qr/1?v=SaturdayMay162026021149PM HTTP/1.1[0m" 302 -
+[READ] GET    /students/qr/2                           200
+DEBUG:app:[request] <- GET /students/qr/2 200
+INFO:werkzeug:127.0.0.1 - - [16/May/2026 14:11:49] "GET /students/qr/2?v=SaturdayMay162026021149PM HTTP/1.1" 200 -
+DEBUG:app:[request] -> GET /setup
+[READ] GET    /setup                                   302
+DEBUG:app:[request] <- GET /setup 302
+INFO:werkzeug:127.0.0.1 - - [16/May/2026 14:11:49] "[32mGET /setup HTTP/1.1[0m" 302 -
+DEBUG:app:[request] -> GET /
+[READ] GET    /                                        200
+DEBUG:app:[request] <- GET / 200
+INFO:werkzeug:127.0.0.1 - - [16/May/2026 14:11:49] "GET / HTTP/1.1" 200 -
+DEBUG:app:[request] -> GET /students/qr/1
+[READ] GET    /students/qr/1                           200
+DEBUG:app:[request] <- GET /students/qr/1 200
+INFO:werkzeug:127.0.0.1 - - [16/May/2026 14:11:49] "GET /students/qr/1?v=SaturdayMay162026021149PM&retry=1778955109390 HTTP/1.1" 200 -
+DEBUG:urllib3.connectionpool:Starting new HTTPS connection (1): api.lemonsqueezy.com:443
+DEBUG:urllib3.connectionpool:https://api.lemonsqueezy.com:443 "POST /v1/licenses/validate HTTP/1.1" 200 None
+DEBUG:app:[request] -> POST /students/import
+INFO:db_backup_recovery:[backup] created data\backups\students_import_20260516_141156_933640.db
+CSV Columns: ['Student Name', 'Email', 'Phone', 'M', 'R', 'W', 'Classification']
+INSERTING new student: Ace S.
+INSERTING new student: Aiden Ha N.
+INSERTING new student: Akshar K.
+CSV names: {'aiden ha n.', 'ace s.', 'akshar k.'}
+Permanently deleting: Alice Johnson
+Permanently deleting: Bob Smith
+INFO:werkzeug:127.0.0.1 - - [16/May/2026 14:11:57] "[35m[1mPOST /students/import HTTP/1.1[0m" 500 -
+Traceback (most recent call last):
+  File "c:\Users\octav\AppData\Local\Programs\Python\Python312\stdytime\.venv\Lib\site-packages\flask\app.py", line 1536, in __call__
+    return self.wsgi_app(environ, start_response)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "c:\Users\octav\AppData\Local\Programs\Python\Python312\stdytime\.venv\Lib\site-packages\flask\app.py", line 1514, in wsgi_app
+    response = self.handle_exception(e)
+               ^^^^^^^^^^^^^^^^^^^^^^^^
+  File "c:\Users\octav\AppData\Local\Programs\Python\Python312\stdytime\.venv\Lib\site-packages\flask\app.py", line 1511, in wsgi_app
+    response = self.full_dispatch_request()
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "c:\Users\octav\AppData\Local\Programs\Python\Python312\stdytime\.venv\Lib\site-packages\flask\app.py", line 919, in full_dispatch_request
+    rv = self.handle_user_exception(e)
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "c:\Users\octav\AppData\Local\Programs\Python\Python312\stdytime\.venv\Lib\site-packages\flask\app.py", line 917, in full_dispatch_request
+    rv = self.dispatch_request()
+         ^^^^^^^^^^^^^^^^^^^^^^^
+  File "c:\Users\octav\AppData\Local\Programs\Python\Python312\stdytime\.venv\Lib\site-packages\flask\app.py", line 902, in dispatch_request
+    return self.ensure_sync(self.view_functions[rule.endpoint])(**view_args)  # type: ignore[no-any-return]
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\octav\AppData\Local\Programs\Python\Python312\stdytime\routes\auth.py", line 27, in decorated_function
+    return f(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^
+  File "C:\Users\octav\AppData\Local\Programs\Python\Python312\stdytime\routes\students.py", line 438, in students_import
+    invalidate_scoped_cache(*cache_invalidators)
+TypeError: routes.operation_utils.invalidate_scoped_cache() argument after * must be an iterable, not function
+INFO:werkzeug:127.0.0.1 - - [16/May/2026 14:11:57] "[36mGET /students/import?__debugger__=yes&cmd=resource&f=style.css HTTP/1.1[0m" 304 -
+INFO:werkzeug:127.0.0.1 - - [16/May/2026 14:11:57] "[36mGET /students/import?__debugger__=yes&cmd=resource&f=debugger.js HTTP/1.1[0m" 304 -
+INFO:werkzeug:127.0.0.1 - - [16/May/2026 14:11:57] "GET /students/import?__debugger__=yes&cmd=resource&f=console.png&s=Nz4ivmYZRymHf2emlViL HTTP/1.1" 200 -

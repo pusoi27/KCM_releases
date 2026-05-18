@@ -1,0 +1,315 @@
+[trace] Development trace enabled: C:\Users\octav\AppData\Local\Programs\Python\Python312\stdytime\trace_logs\trace_20260516_142004_24880.txt
+[startup] Database initialized at: C:/Users/octav/OneDrive/ADOCTA TECH LLC/StdyTime/DB/Stdytime.db
+[startup] closed open DB sessions: 0
+[version] Bumped: 00.08.014 -> 00.08.015
+[startup] Stdytime version: 00.08.015
+DEBUG:urllib3.connectionpool:Starting new HTTPS connection (1): api.lemonsqueezy.com:443
+DEBUG:urllib3.connectionpool:https://api.lemonsqueezy.com:443 "POST /v1/licenses/validate HTTP/1.1" 200 None
+[startup] LS license: License is active (verified with LemonSqueezy).
+WARNING:werkzeug: * Debugger is active!
+INFO:werkzeug: * Debugger PIN: 304-138-232
+DEBUG:urllib3.connectionpool:Starting new HTTPS connection (1): api.lemonsqueezy.com:443
+DEBUG:urllib3.connectionpool:https://api.lemonsqueezy.com:443 "POST /v1/licenses/validate HTTP/1.1" 200 None
+DEBUG:app:[request] -> POST /students/import
+INFO:db_backup_recovery:[backup] created data\backups\students_import_20260516_142158_008869.db
+CSV Columns: ['Student Name', 'Email', 'Phone', 'M', 'R', 'W', 'Classification']
+UPDATING student ID 6: Darah G.
+UPDATING student ID 7: Demi T.
+UPDATING student ID 8: Deniz K.
+INSERTING new student: Den R.
+INSERTING new student: Niz K.
+[WRITE] POST   /students/import                         302
+DEBUG:app:[request] <- POST /students/import 302
+INFO:werkzeug:127.0.0.1 - - [16/May/2026 14:21:58] "[32mPOST /students/import HTTP/1.1[0m" 302 -
+DEBUG:app:[request] -> GET /students
+[READ] GET    /students                                200
+DEBUG:app:[request] <- GET /students 200
+INFO:werkzeug:127.0.0.1 - - [16/May/2026 14:21:58] "GET /students HTTP/1.1" 200 -
+DEBUG:app:[request] -> GET /static/css/style.css
+DEBUG:app:[request] -> GET /static/img/logo.png
+[READ] GET    /static/css/style.css                    200
+[READ] GET    /static/img/logo.png                     200
+DEBUG:app:[request] <- GET /static/css/style.css 200
+INFO:werkzeug:127.0.0.1 - - [16/May/2026 14:21:59] "GET /static/css/style.css HTTP/1.1" 200 -
+DEBUG:app:[request] <- GET /static/img/logo.png 200
+INFO:werkzeug:127.0.0.1 - - [16/May/2026 14:21:59] "GET /static/img/logo.png HTTP/1.1" 200 -
+DEBUG:app:[request] -> GET /students/qr/6
+DEBUG:app:[request] -> GET /students/qr/7
+DEBUG:app:[request] -> GET /students/qr/9
+DEBUG:app:[request] -> GET /students/qr/8
+DEBUG:app:[request] -> GET /students/qr/10
+[READ] GET    /students/qr/6                           200
+DEBUG:app:[request] <- GET /students/qr/6 200
+INFO:werkzeug:127.0.0.1 - - [16/May/2026 14:21:59] "GET /students/qr/6?v=SaturdayMay162026022158PM HTTP/1.1" 200 -
+[READ] GET    /students/qr/7                           200[READ] GET    /students/qr/9                           404
+[READ] GET    /students/qr/8                           200
+
+DEBUG:app:[request] <- GET /students/qr/9 404
+INFO:werkzeug:127.0.0.1 - - [16/May/2026 14:21:59] "[33mGET /students/qr/9?v=SaturdayMay162026022158PM HTTP/1.1[0m" 404 -
+DEBUG:app:[request] <- GET /students/qr/8 200
+DEBUG:app:[request] <- GET /students/qr/7 200
+INFO:werkzeug:127.0.0.1 - - [16/May/2026 14:21:59] "GET /students/qr/8?v=SaturdayMay162026022158PM HTTP/1.1" 200 -
+INFO:werkzeug:127.0.0.1 - - [16/May/2026 14:21:59] "GET /students/qr/7?v=SaturdayMay162026022158PM HTTP/1.1" 200 -
+[READ] GET    /students/qr/10                          404
+DEBUG:app:[request] <- GET /students/qr/10 404
+INFO:werkzeug:127.0.0.1 - - [16/May/2026 14:21:59] "[33mGET /students/qr/10?v=SaturdayMay162026022158PM HTTP/1.1[0m" 404 -
+DEBUG:app:[request] -> GET /students/qr/9
+DEBUG:app:[request] -> GET /students/qr/10
+[READ] GET    /students/qr/9                           404
+DEBUG:app:[request] <- GET /students/qr/9 404
+INFO:werkzeug:127.0.0.1 - - [16/May/2026 14:21:59] "[33mGET /students/qr/9?v=SaturdayMay162026022158PM&retry=1778955719159 HTTP/1.1[0m" 404 -
+[READ] GET    /students/qr/10                          404
+DEBUG:app:[request] <- GET /students/qr/10 404
+INFO:werkzeug:127.0.0.1 - - [16/May/2026 14:21:59] "[33mGET /students/qr/10?v=SaturdayMay162026022158PM&retry=1778955719179 HTTP/1.1[0m" 404 -
+DEBUG:urllib3.connectionpool:Starting new HTTPS connection (1): api.lemonsqueezy.com:443
+DEBUG:urllib3.connectionpool:https://api.lemonsqueezy.com:443 "POST /v1/licenses/validate HTTP/1.1" 200 None
+DEBUG:app:[request] -> POST /qr/students/generate_all
+[WRITE] POST   /qr/students/generate_all                302
+DEBUG:app:[request] <- POST /qr/students/generate_all 302
+INFO:werkzeug:127.0.0.1 - - [16/May/2026 14:22:05] "[32mPOST /qr/students/generate_all HTTP/1.1[0m" 302 -
+DEBUG:app:[request] -> GET /students
+[READ] GET    /students                                200
+DEBUG:app:[request] <- GET /students 200
+INFO:werkzeug:127.0.0.1 - - [16/May/2026 14:22:05] "GET /students HTTP/1.1" 200 -
+DEBUG:app:[request] -> GET /static/css/style.css
+DEBUG:app:[request] -> GET /static/img/logo.png
+[READ] GET    /static/css/style.css                    200
+[READ] GET    /static/img/logo.png                     200
+DEBUG:app:[request] <- GET /static/css/style.css 200
+DEBUG:app:[request] <- GET /static/img/logo.png 200
+INFO:werkzeug:127.0.0.1 - - [16/May/2026 14:22:05] "GET /static/css/style.css HTTP/1.1" 200 -
+INFO:werkzeug:127.0.0.1 - - [16/May/2026 14:22:05] "GET /static/img/logo.png HTTP/1.1" 200 -
+DEBUG:app:[request] -> GET /students/qr/7
+DEBUG:app:[request] -> GET /students/qr/6
+DEBUG:app:[request] -> GET /students/qr/8
+DEBUG:app:[request] -> GET /students/qr/10
+DEBUG:app:[request] -> GET /students/qr/9
+[READ] GET    /students/qr/7                           302
+[READ] GET    /students/qr/6                           200
+DEBUG:app:[request] <- GET /students/qr/6 200
+DEBUG:app:[request] <- GET /students/qr/7 302
+INFO:werkzeug:127.0.0.1 - - [16/May/2026 14:22:05] "GET /students/qr/6?v=SaturdayMay162026022205PM HTTP/1.1" 200 -
+[READ] GET    /students/qr/8                           200
+INFO:werkzeug:127.0.0.1 - - [16/May/2026 14:22:05] "[32mGET /students/qr/7?v=SaturdayMay162026022205PM HTTP/1.1[0m" 302 -
+[READ] GET    /students/qr/10                          200
+DEBUG:app:[request] <- GET /students/qr/8 200
+INFO:werkzeug:127.0.0.1 - - [16/May/2026 14:22:05] "GET /students/qr/8?v=SaturdayMay162026022205PM HTTP/1.1" 200 -
+DEBUG:app:[request] <- GET /students/qr/10 200
+INFO:werkzeug:127.0.0.1 - - [16/May/2026 14:22:05] "GET /students/qr/10?v=SaturdayMay162026022205PM HTTP/1.1" 200 -
+[READ] GET    /students/qr/9                           200
+DEBUG:app:[request] <- GET /students/qr/9 200
+INFO:werkzeug:127.0.0.1 - - [16/May/2026 14:22:05] "GET /students/qr/9?v=SaturdayMay162026022205PM HTTP/1.1" 200 -
+DEBUG:app:[request] -> GET /setup
+[READ] GET    /setup                                   302
+DEBUG:app:[request] <- GET /setup 302
+INFO:werkzeug:127.0.0.1 - - [16/May/2026 14:22:05] "[32mGET /setup HTTP/1.1[0m" 302 -
+DEBUG:app:[request] -> GET /
+[READ] GET    /                                        200
+DEBUG:app:[request] <- GET / 200
+INFO:werkzeug:127.0.0.1 - - [16/May/2026 14:22:05] "GET / HTTP/1.1" 200 -
+DEBUG:app:[request] -> GET /students/qr/7
+[READ] GET    /students/qr/7                           200
+DEBUG:app:[request] <- GET /students/qr/7 200
+INFO:werkzeug:127.0.0.1 - - [16/May/2026 14:22:05] "GET /students/qr/7?v=SaturdayMay162026022205PM&retry=1778955725669 HTTP/1.1" 200 -
+DEBUG:urllib3.connectionpool:Starting new HTTPS connection (1): api.lemonsqueezy.com:443
+DEBUG:urllib3.connectionpool:https://api.lemonsqueezy.com:443 "POST /v1/licenses/validate HTTP/1.1" 200 None
+DEBUG:app:[request] -> POST /students/delete/10
+[WRITE] POST   /students/delete/10                      302
+DEBUG:app:[request] <- POST /students/delete/10 302
+INFO:werkzeug:127.0.0.1 - - [16/May/2026 14:24:37] "[32mPOST /students/delete/10 HTTP/1.1[0m" 302 -
+DEBUG:app:[request] -> GET /students
+[READ] GET    /students                                200
+DEBUG:app:[request] <- GET /students 200
+INFO:werkzeug:127.0.0.1 - - [16/May/2026 14:24:37] "GET /students HTTP/1.1" 200 -
+DEBUG:app:[request] -> GET /static/css/style.css
+[READ] GET    /static/css/style.css                    200
+DEBUG:app:[request] <- GET /static/css/style.css 200
+INFO:werkzeug:127.0.0.1 - - [16/May/2026 14:24:37] "GET /static/css/style.css HTTP/1.1" 200 -
+DEBUG:app:[request] -> GET /static/img/logo.png
+[READ] GET    /static/img/logo.png                     200
+DEBUG:app:[request] <- GET /static/img/logo.png 200
+INFO:werkzeug:127.0.0.1 - - [16/May/2026 14:24:37] "GET /static/img/logo.png HTTP/1.1" 200 -
+DEBUG:app:[request] -> GET /students/qr/6
+DEBUG:app:[request] -> GET /students/qr/7
+DEBUG:app:[request] -> GET /students/qr/9
+DEBUG:app:[request] -> GET /students/qr/8
+DEBUG:app:[request] -> GET /students/qr/10
+[READ] GET    /students/qr/9                           302
+DEBUG:app:[request] <- GET /students/qr/9 302
+INFO:werkzeug:127.0.0.1 - - [16/May/2026 14:24:37] "[32mGET /students/qr/9?v=SaturdayMay162026022437PM HTTP/1.1[0m" 302 -
+[READ] GET    /students/qr/6                           302
+[READ] GET    /students/qr/7                           200
+[READ] GET    /students/qr/8                           200
+DEBUG:app:[request] <- GET /students/qr/6 302
+DEBUG:app:[request] <- GET /students/qr/7 200
+DEBUG:app:[request] <- GET /students/qr/8 200
+INFO:werkzeug:127.0.0.1 - - [16/May/2026 14:24:37] "[32mGET /students/qr/6?v=SaturdayMay162026022437PM HTTP/1.1[0m" 302 -
+DEBUG:app:[request] -> GET /setup
+INFO:werkzeug:127.0.0.1 - - [16/May/2026 14:24:37] "GET /students/qr/7?v=SaturdayMay162026022437PM HTTP/1.1" 200 -
+INFO:werkzeug:127.0.0.1 - - [16/May/2026 14:24:37] "GET /students/qr/8?v=SaturdayMay162026022437PM HTTP/1.1" 200 -
+[READ] GET    /students/qr/10                          200
+DEBUG:app:[request] <- GET /students/qr/10 200
+INFO:werkzeug:127.0.0.1 - - [16/May/2026 14:24:37] "GET /students/qr/10?v=SaturdayMay162026022437PM HTTP/1.1" 200 -
+[READ] GET    /setup                                   302
+DEBUG:app:[request] <- GET /setup 302
+INFO:werkzeug:127.0.0.1 - - [16/May/2026 14:24:37] "[32mGET /setup HTTP/1.1[0m" 302 -
+DEBUG:app:[request] -> GET /setup
+DEBUG:app:[request] -> GET /
+[READ] GET    /setup                                   302
+DEBUG:app:[request] <- GET /setup 302
+INFO:werkzeug:127.0.0.1 - - [16/May/2026 14:24:37] "[32mGET /setup HTTP/1.1[0m" 302 -
+[READ] GET    /                                        200
+DEBUG:app:[request] <- GET / 200
+INFO:werkzeug:127.0.0.1 - - [16/May/2026 14:24:37] "GET / HTTP/1.1" 200 -
+DEBUG:app:[request] -> GET /
+DEBUG:app:[request] -> GET /students/qr/9
+[READ] GET    /students/qr/9                           200
+DEBUG:app:[request] <- GET /students/qr/9 200
+INFO:werkzeug:127.0.0.1 - - [16/May/2026 14:24:37] "GET /students/qr/9?v=SaturdayMay162026022437PM&retry=1778955877484 HTTP/1.1" 200 -
+[READ] GET    /                                        200
+DEBUG:app:[request] <- GET / 200
+INFO:werkzeug:127.0.0.1 - - [16/May/2026 14:24:37] "GET / HTTP/1.1" 200 -
+DEBUG:app:[request] -> GET /students/qr/6
+[READ] GET    /students/qr/6                           200
+DEBUG:app:[request] <- GET /students/qr/6 200
+INFO:werkzeug:127.0.0.1 - - [16/May/2026 14:24:37] "GET /students/qr/6?v=SaturdayMay162026022437PM&retry=1778955877565 HTTP/1.1" 200 -
+DEBUG:app:[request] -> GET /students/add
+[READ] GET    /students/add                            200
+DEBUG:app:[request] <- GET /students/add 200
+INFO:werkzeug:127.0.0.1 - - [16/May/2026 14:25:02] "GET /students/add HTTP/1.1" 200 -
+DEBUG:app:[request] -> GET /static/css/style.css
+[READ] GET    /static/css/style.css                    200
+DEBUG:app:[request] -> GET /static/img/logo.png
+DEBUG:app:[request] <- GET /static/css/style.css 200
+[READ] GET    /static/img/logo.png                     200
+INFO:werkzeug:127.0.0.1 - - [16/May/2026 14:25:02] "GET /static/css/style.css HTTP/1.1" 200 -
+DEBUG:app:[request] <- GET /static/img/logo.png 200
+INFO:werkzeug:127.0.0.1 - - [16/May/2026 14:25:02] "GET /static/img/logo.png HTTP/1.1" 200 -
+DEBUG:app:[request] -> GET /students
+[READ] GET    /students                                200
+DEBUG:app:[request] <- GET /students 200
+INFO:werkzeug:127.0.0.1 - - [16/May/2026 14:25:29] "GET /students HTTP/1.1" 200 -
+DEBUG:app:[request] -> GET /static/css/style.css
+DEBUG:app:[request] -> GET /static/img/logo.png
+[READ] GET    /static/css/style.css                    200
+[READ] GET    /static/img/logo.png                     200
+DEBUG:app:[request] <- GET /static/css/style.css 200
+DEBUG:app:[request] <- GET /static/img/logo.png 200
+INFO:werkzeug:127.0.0.1 - - [16/May/2026 14:25:29] "GET /static/css/style.css HTTP/1.1" 200 -
+INFO:werkzeug:127.0.0.1 - - [16/May/2026 14:25:29] "GET /static/img/logo.png HTTP/1.1" 200 -
+DEBUG:app:[request] -> GET /students/qr/6
+DEBUG:app:[request] -> GET /students/qr/7
+DEBUG:app:[request] -> GET /students/qr/9
+[READ] GET    /students/qr/6                           200
+DEBUG:app:[request] -> GET /students/qr/8
+DEBUG:app:[request] -> GET /students/qr/10
+DEBUG:app:[request] <- GET /students/qr/6 200
+INFO:werkzeug:127.0.0.1 - - [16/May/2026 14:25:29] "GET /students/qr/6?v=SaturdayMay162026022529PM HTTP/1.1" 200 -
+[READ] GET    /students/qr/7                           200
+DEBUG:app:[request] <- GET /students/qr/7 200
+INFO:werkzeug:127.0.0.1 - - [16/May/2026 14:25:29] "GET /students/qr/7?v=SaturdayMay162026022529PM HTTP/1.1" 200 -
+[READ] GET    /students/qr/9                           200
+[READ] GET    /students/qr/10                          302
+DEBUG:app:[request] <- GET /students/qr/9 200
+INFO:werkzeug:127.0.0.1 - - [16/May/2026 14:25:29] "GET /students/qr/9?v=SaturdayMay162026022529PM HTTP/1.1" 200 -
+DEBUG:app:[request] <- GET /students/qr/10 302
+[READ] GET    /students/qr/8                           200
+INFO:werkzeug:127.0.0.1 - - [16/May/2026 14:25:29] "[32mGET /students/qr/10?v=SaturdayMay162026022529PM HTTP/1.1[0m" 302 -
+DEBUG:app:[request] <- GET /students/qr/8 200
+INFO:werkzeug:127.0.0.1 - - [16/May/2026 14:25:29] "GET /students/qr/8?v=SaturdayMay162026022529PM HTTP/1.1" 200 -
+DEBUG:app:[request] -> GET /setup
+[READ] GET    /setup                                   302
+DEBUG:app:[request] <- GET /setup 302
+INFO:werkzeug:127.0.0.1 - - [16/May/2026 14:25:29] "[32mGET /setup HTTP/1.1[0m" 302 -
+DEBUG:app:[request] -> GET /
+[READ] GET    /                                        200
+DEBUG:app:[request] <- GET / 200
+INFO:werkzeug:127.0.0.1 - - [16/May/2026 14:25:29] "GET / HTTP/1.1" 200 -
+DEBUG:app:[request] -> GET /students/qr/10
+[READ] GET    /students/qr/10                          200
+DEBUG:app:[request] <- GET /students/qr/10 200
+INFO:werkzeug:127.0.0.1 - - [16/May/2026 14:25:29] "GET /students/qr/10?v=SaturdayMay162026022529PM&retry=1778955929821 HTTP/1.1" 200 -
+DEBUG:app:[request] -> GET /students/edit/6
+[READ] GET    /students/edit/6                         200
+DEBUG:app:[request] <- GET /students/edit/6 200
+INFO:werkzeug:127.0.0.1 - - [16/May/2026 14:25:31] "GET /students/edit/6 HTTP/1.1" 200 -
+DEBUG:app:[request] -> GET /static/css/style.css
+[READ] GET    /static/css/style.css                    200
+DEBUG:app:[request] -> GET /static/img/logo.png
+DEBUG:app:[request] <- GET /static/css/style.css 200
+INFO:werkzeug:127.0.0.1 - - [16/May/2026 14:25:31] "GET /static/css/style.css HTTP/1.1" 200 -
+[READ] GET    /static/img/logo.png                     200
+DEBUG:app:[request] <- GET /static/img/logo.png 200
+INFO:werkzeug:127.0.0.1 - - [16/May/2026 14:25:31] "GET /static/img/logo.png HTTP/1.1" 200 -
+DEBUG:urllib3.connectionpool:Starting new HTTPS connection (1): api.lemonsqueezy.com:443
+DEBUG:urllib3.connectionpool:https://api.lemonsqueezy.com:443 "POST /v1/licenses/validate HTTP/1.1" 200 None
+DEBUG:app:[request] -> POST /students/edit/6
+[WRITE] POST   /students/edit/6                         302
+DEBUG:app:[request] <- POST /students/edit/6 302
+INFO:werkzeug:127.0.0.1 - - [16/May/2026 14:26:05] "[32mPOST /students/edit/6 HTTP/1.1[0m" 302 -
+DEBUG:app:[request] -> GET /students
+[READ] GET    /students                                200
+DEBUG:app:[request] <- GET /students 200
+INFO:werkzeug:127.0.0.1 - - [16/May/2026 14:26:05] "GET /students HTTP/1.1" 200 -
+DEBUG:app:[request] -> GET /static/css/style.css
+[READ] GET    /static/css/style.css                    200
+DEBUG:app:[request] -> GET /static/img/logo.png
+DEBUG:app:[request] <- GET /static/css/style.css 200
+[READ] GET    /static/img/logo.png                     200
+INFO:werkzeug:127.0.0.1 - - [16/May/2026 14:26:05] "GET /static/css/style.css HTTP/1.1" 200 -
+DEBUG:app:[request] <- GET /static/img/logo.png 200
+INFO:werkzeug:127.0.0.1 - - [16/May/2026 14:26:05] "GET /static/img/logo.png HTTP/1.1" 200 -
+DEBUG:app:[request] -> GET /students/qr/6
+DEBUG:app:[request] -> GET /students/qr/7
+DEBUG:app:[request] -> GET /students/qr/8
+DEBUG:app:[request] -> GET /students/qr/10
+DEBUG:app:[request] -> GET /students/qr/9
+[READ] GET    /students/qr/7                           200
+DEBUG:app:[request] <- GET /students/qr/7 200
+[READ] GET    /students/qr/6                           200
+INFO:werkzeug:127.0.0.1 - - [16/May/2026 14:26:05] "GET /students/qr/7?v=SaturdayMay162026022605PM HTTP/1.1" 200 -
+DEBUG:app:[request] <- GET /students/qr/6 200
+INFO:werkzeug:127.0.0.1 - - [16/May/2026 14:26:05] "GET /students/qr/6?v=SaturdayMay162026022605PM HTTP/1.1" 200 -
+[READ] GET    /students/qr/8                           200
+DEBUG:app:[request] <- GET /students/qr/8 200
+INFO:werkzeug:127.0.0.1 - - [16/May/2026 14:26:05] "GET /students/qr/8?v=SaturdayMay162026022605PM HTTP/1.1" 200 -
+[READ] GET    /students/qr/10                          200
+DEBUG:app:[request] <- GET /students/qr/10 200
+INFO:werkzeug:127.0.0.1 - - [16/May/2026 14:26:05] "GET /students/qr/10?v=SaturdayMay162026022605PM HTTP/1.1" 200 -
+[READ] GET    /students/qr/9                           200
+DEBUG:app:[request] <- GET /students/qr/9 200
+INFO:werkzeug:127.0.0.1 - - [16/May/2026 14:26:05] "GET /students/qr/9?v=SaturdayMay162026022605PM HTTP/1.1" 200 -
+DEBUG:urllib3.connectionpool:Starting new HTTPS connection (1): api.lemonsqueezy.com:443
+DEBUG:urllib3.connectionpool:https://api.lemonsqueezy.com:443 "POST /v1/licenses/validate HTTP/1.1" 200 None
+DEBUG:app:[request] -> GET /students/export
+[READ] GET    /students/export                         200
+DEBUG:app:[request] <- GET /students/export 200
+INFO:werkzeug:127.0.0.1 - - [16/May/2026 14:30:06] "GET /students/export HTTP/1.1" 200 -
+DEBUG:urllib3.connectionpool:Starting new HTTPS connection (1): api.lemonsqueezy.com:443
+DEBUG:urllib3.connectionpool:https://api.lemonsqueezy.com:443 "POST /v1/licenses/validate HTTP/1.1" 200 None
+DEBUG:app:[request] -> GET /instructor/profile
+[READ] GET    /instructor/profile                      200
+DEBUG:app:[request] <- GET /instructor/profile 200
+INFO:werkzeug:127.0.0.1 - - [16/May/2026 14:32:44] "GET /instructor/profile HTTP/1.1" 200 -
+DEBUG:app:[request] -> GET /static/css/style.css
+DEBUG:app:[request] -> GET /static/img/logo.png
+[READ] GET    /static/css/style.css                    200
+[READ] GET    /static/img/logo.png                     200
+DEBUG:app:[request] <- GET /static/css/style.css 200
+DEBUG:app:[request] <- GET /static/img/logo.png 200
+INFO:werkzeug:127.0.0.1 - - [16/May/2026 14:32:44] "GET /static/css/style.css HTTP/1.1" 200 -
+INFO:werkzeug:127.0.0.1 - - [16/May/2026 14:32:44] "GET /static/img/logo.png HTTP/1.1" 200 -
+DEBUG:urllib3.connectionpool:Starting new HTTPS connection (1): api.lemonsqueezy.com:443
+DEBUG:urllib3.connectionpool:https://api.lemonsqueezy.com:443 "POST /v1/licenses/validate HTTP/1.1" 200 None
+DEBUG:app:[request] -> GET /instructor/profile/edit
+[READ] GET    /instructor/profile/edit                 200
+DEBUG:app:[request] <- GET /instructor/profile/edit 200
+INFO:werkzeug:127.0.0.1 - - [16/May/2026 14:32:49] "GET /instructor/profile/edit HTTP/1.1" 200 -
+DEBUG:app:[request] -> GET /static/css/style.css
+DEBUG:app:[request] -> GET /static/img/logo.png
+[READ] GET    /static/css/style.css                    200
+[READ] GET    /static/img/logo.png                     200
+DEBUG:app:[request] <- GET /static/css/style.css 200
+DEBUG:app:[request] <- GET /static/img/logo.png 200
+INFO:werkzeug:127.0.0.1 - - [16/May/2026 14:32:49] "GET /static/css/style.css HTTP/1.1" 200 -
+INFO:werkzeug:127.0.0.1 - - [16/May/2026 14:32:49] "GET /static/img/logo.png HTTP/1.1" 200 -

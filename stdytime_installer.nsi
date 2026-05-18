@@ -23,7 +23,7 @@ Unicode true
 
 Name "${APP_NAME} ${APP_VERSION}"
 OutFile "stdytime_installer_v${APP_VERSION_SAFE}.exe"
-InstallDir "$LOCALAPPDATA\\${APP_NAME}"
+InstallDir "$LOCALAPPDATA\\${APP_NAME}_${APP_VERSION_SAFE}"
 InstallDirRegKey HKCU "${APP_REG_KEY}" "InstallDir"
 RequestExecutionLevel user
 
@@ -49,11 +49,22 @@ RequestExecutionLevel user
 Section "Stdytime (required)" SecMain
   SectionIn RO
 
+  ; Check if this exact version is already installed
+  ReadRegStr $0 HKCU "${UNINSTALL_KEY}" "DisplayVersion"
+  ${If} $0 == "${APP_VERSION}"
+    MessageBox MB_OK|MB_ICONINFORMATION "Stdytime version ${APP_VERSION} is already installed.$\r$\nInstallation will now stop."
+    Abort
+  ${EndIf}
+
   SetOutPath "$INSTDIR"
   File /r "dist_release\*.*"
+  ; Archive old codebase folders except current
+  nsExec::ExecToLog 'cmd /c for /d %F in ("$LOCALAPPDATA\Stdytime_*") do if /I not "%F"=="$INSTDIR" move "%F" "$LOCALAPPDATA\Stdytime_archive" >nul'
 
   ; App location registry
   WriteRegStr HKCU "${APP_REG_KEY}" "InstallDir" "$INSTDIR"
+  ; Ensure database folder exists
+  CreateDirectory "$LOCALAPPDATA\Stdytime"
 
   ; Start menu shortcuts
   CreateDirectory "$SMPROGRAMS\\${STARTMENU_FOLDER}"

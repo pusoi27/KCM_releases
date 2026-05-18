@@ -123,43 +123,21 @@
                                 <label class="form-label small mb-0">{{ day }}</label>
                             </div>
                             <div class="col-md-4">
-                                <div class="input-group input-group-sm">
-                                    <select class="form-select form-select-sm" name="{{ day_key }}_start_hour">
-                                        <option value="">--</option>
-                                        {% for h in range(1, 13) %}
-                                        {% set h24 = h + 12 if h != 12 else 12 %}
-                                        <option value="{{ '%02d'|format(h24) }}" {% if profile and profile[day_key + '_start'] and profile[day_key + '_start'][:2] == '%02d'|format(h24) %}selected{% endif %}>{{ h }}</option>
-                                        {% endfor %}
-                                    </select>
-                                    <span class="input-group-text">:</span>
-                                    <select class="form-select form-select-sm" name="{{ day_key }}_start_min">
-                                        <option value="">--</option>
-                                        <option value="00" {% if profile and profile[day_key + '_start'] and profile[day_key + '_start'][3:5] == '00' %}selected{% endif %}>00</option>
-                                        <option value="30" {% if profile and profile[day_key + '_start'] and profile[day_key + '_start'][3:5] == '30' %}selected{% endif %}>30</option>
-                                    </select>
-                                    <span class="input-group-text">PM</span>
-                                </div>
+                                <select class="form-select form-select-sm time-slot-select"
+                                    name="{{ day_key }}_start"
+                                    data-saved="{{ profile[day_key + '_start'] if profile and profile[day_key + '_start'] else '' }}">
+                                    <option value="">-- Start --</option>
+                                </select>
                             </div>
                             <div class="col-md-1 text-center">
                                 <span class="text-muted">to</span>
                             </div>
                             <div class="col-md-4">
-                                <div class="input-group input-group-sm">
-                                    <select class="form-select form-select-sm" name="{{ day_key }}_end_hour">
-                                        <option value="">--</option>
-                                        {% for h in range(1, 13) %}
-                                        {% set h24 = h + 12 if h != 12 else 12 %}
-                                        <option value="{{ '%02d'|format(h24) }}" {% if profile and profile[day_key + '_end'] and profile[day_key + '_end'][:2] == '%02d'|format(h24) %}selected{% endif %}>{{ h }}</option>
-                                        {% endfor %}
-                                    </select>
-                                    <span class="input-group-text">:</span>
-                                    <select class="form-select form-select-sm" name="{{ day_key }}_end_min">
-                                        <option value="">--</option>
-                                        <option value="00" {% if profile and profile[day_key + '_end'] and profile[day_key + '_end'][3:5] == '00' %}selected{% endif %}>00</option>
-                                        <option value="30" {% if profile and profile[day_key + '_end'] and profile[day_key + '_end'][3:5] == '30' %}selected{% endif %}>30</option>
-                                    </select>
-                                    <span class="input-group-text">PM</span>
-                                </div>
+                                <select class="form-select form-select-sm time-slot-select"
+                                    name="{{ day_key }}_end"
+                                    data-saved="{{ profile[day_key + '_end'] if profile and profile[day_key + '_end'] else '' }}">
+                                    <option value="">-- End --</option>
+                                </select>
                             </div>
                         </div>
                         {% endfor %}
@@ -178,4 +156,42 @@
         </div>
     </div>
 </div>
+
+<script>
+  function to12Hour(minutesSinceMidnight) {
+    const h24 = Math.floor(minutesSinceMidnight / 60);
+    const min = minutesSinceMidnight % 60;
+    const ampm = h24 >= 12 ? 'PM' : 'AM';
+    const h12 = h24 % 12 || 12;
+    return h12 + ':' + String(min).padStart(2, '0') + ' ' + ampm;
+  }
+
+  function generateTimeSlots(startTime, endTime) {
+    const slots = [];
+    const startParts = startTime.split(':').map(Number);
+    const endParts = endTime.split(':').map(Number);
+    let current = startParts[0] * 60 + startParts[1];
+    const end = endParts[0] * 60 + endParts[1];
+    while (current <= end) {
+      const h = Math.floor(current / 60);
+      const m = current % 60;
+      const value = String(h).padStart(2, '0') + ':' + String(m).padStart(2, '0');
+      slots.push({ value: value, display: to12Hour(current) });
+      current += 30;
+    }
+    return slots;
+  }
+
+  document.querySelectorAll('.time-slot-select').forEach(function(sel) {
+    const saved = sel.dataset.saved || '';
+    const slots = generateTimeSlots('06:00', '22:00');
+    slots.forEach(function(slot) {
+      const opt = document.createElement('option');
+      opt.value = slot.value;
+      opt.textContent = slot.display;
+      if (slot.value === saved) opt.selected = true;
+      sel.appendChild(opt);
+    });
+  });
+</script>
 {% endblock %}

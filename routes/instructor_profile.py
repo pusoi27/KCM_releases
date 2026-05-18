@@ -59,25 +59,14 @@ def register_instructor_profile_routes(app):
             center_time_zone = request.form.get("center_time_zone", "").strip()
             center_hours = request.form.get("center_hours", "").strip()
             
-            # Collect weekly hours from separate hour and minute dropdowns
+            # Collect weekly hours from single time dropdowns (HH:MM format)
             weekly_hours = {}
             days = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday']
             for day in days:
-                # Combine hour and minute for start time
-                start_hour = request.form.get(f'{day}_start_hour', '').strip()
-                start_min = request.form.get(f'{day}_start_min', '').strip()
-                if start_hour and start_min:
-                    weekly_hours[f'{day}_start'] = f"{start_hour}:{start_min}"
-                else:
-                    weekly_hours[f'{day}_start'] = ''
-                
-                # Combine hour and minute for end time
-                end_hour = request.form.get(f'{day}_end_hour', '').strip()
-                end_min = request.form.get(f'{day}_end_min', '').strip()
-                if end_hour and end_min:
-                    weekly_hours[f'{day}_end'] = f"{end_hour}:{end_min}"
-                else:
-                    weekly_hours[f'{day}_end'] = ''
+                start = request.form.get(f'{day}_start', '').strip()
+                end = request.form.get(f'{day}_end', '').strip()
+                weekly_hours[f'{day}_start'] = start
+                weekly_hours[f'{day}_end'] = end
             
             if not name:
                 flash("Instructor name is required.", "error")

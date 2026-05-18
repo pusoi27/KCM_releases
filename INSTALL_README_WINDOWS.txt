@@ -1,3 +1,4 @@
+
 STDYTIME FOR WINDOWS - QUICK START
 ==================================
 
@@ -6,14 +7,24 @@ Thank you for installing Stdytime.
 This application runs entirely on your local Windows machine.
 No cloud account or web hosting is required.
 
+INSTALL LOCATION & VERSIONING
+============================
+Each new version of Stdytime is installed in its own folder, e.g.:
+  C:\Users\octav\AppData\Local\Stdytime_0007062
+The database is always stored at:
+  C:\Users\octav\AppData\Local\Stdytime\Stdytime.db
+When you update, all previous Stdytime_* folders are moved to:
+  C:\Users\octav\AppData\Local\Stdytime_archive
+Only the latest versioned folder remains active.
+
 LOCAL BROWSER ACCESS (Simplest)
-================================
-Just double-click "Stdytime.exe" - it starts the server and opens your browser automatically.
+==============================
+Just double-click "Stdytime.exe" in the latest versioned folder - it starts the server and opens your browser automatically.
 Perfect for single-computer use or testing.
 
 LOCAL-ONLY DEPLOYMENT
-=====================
-For a true local install, just extract the package and double-click "Stdytime.exe".
+====================
+For a true local install, just extract the package and double-click "Stdytime.exe" in the versioned folder.
 The app runs only on this Windows PC and listens on localhost by default.
 
 If you want to create a shortcut, pin the executable, or place it in a Start Menu folder, those are optional Windows conveniences only.

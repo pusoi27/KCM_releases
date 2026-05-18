@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Stdytime{% if branding_center_name and branding_center_name != 'Stdytime' %} · {{ branding_center_name }}{% endif %}</title>
+<title>{% if branding_center_name and branding_center_name != 'Stdytime' %}{{ branding_center_name }}{% else %}Stdytime{% endif %}{% block title %}{% endblock %}</title>
 <meta name="csrf-token" content="{{ csrf_token() }}">
 <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.1/dist/css/bootstrap.min.css" rel="stylesheet">
 <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css" rel="stylesheet">
@@ -26,7 +26,7 @@
   {% if messages %}
     <div class="container mt-2">
       {% for cat,msg in messages %}
-        <div class="alert alert-{{ cat }} alert-dismissible fade show" role="alert">
+        <div class="alert alert-{{ cat }} alert-dismissible fade show{% if cat == 'success' %} auto-dismiss{% endif %}" role="alert">
           {{ msg }}
           <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
         </div>
@@ -36,6 +36,14 @@
 {% endwith %}
 {% block content %}{% endblock %}
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.1/dist/js/bootstrap.bundle.min.js"></script>
+<script>
+  document.querySelectorAll('.auto-dismiss').forEach(function(el) {
+    setTimeout(function() {
+      var bsAlert = bootstrap.Alert.getOrCreateInstance(el);
+      bsAlert.close();
+    }, 3000);
+  });
+</script>
 <script>
   /* Auto-inject CSRF token into every non-GET fetch() call */
   (function () {

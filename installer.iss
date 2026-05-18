@@ -51,8 +51,22 @@ end;
 
 
 function InitializeSetup(): Boolean;
+var
+  InstalledVersion: String;
 begin
   CloseRunningStdytimeInstances();
+
+  // Check if this exact version is already installed
+  if RegQueryStringValue(HKCU, 'Software\Microsoft\Windows\CurrentVersion\Uninstall\Stdytime', 'DisplayVersion', InstalledVersion) then
+  begin
+    if InstalledVersion = '{#AppVersion}' then
+    begin
+      MsgBox('Stdytime version ' + InstalledVersion + ' is already installed.' + #13#10 + 'Installation will now stop.', mbInformation, MB_OK);
+      Result := False;
+      Exit;
+    end;
+  end;
+
   Result := True;
 end;
 

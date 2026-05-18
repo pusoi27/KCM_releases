@@ -5,5 +5,6 @@
             "path": "C:\\Program Files\\PowerShell\\7\\pwsh.exe"
         }
     },
-    "terminal.integrated.defaultProfile.windows": "PowerShell 7"
+    "terminal.integrated.defaultProfile.windows": "PowerShell 7",
+    "chat.permissions.default": "autoApprove"
 }

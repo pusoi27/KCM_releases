@@ -228,6 +228,7 @@
     <a href="{{ url_for('students_add') }}" class="btn btn-success btn-sm">Add Student</a>
     <a href="{{ url_for('students_export') }}" class="btn btn-outline-primary btn-sm">Export CSV</a>
     <form action="{{ url_for('students_import') }}" method="post" enctype="multipart/form-data" id="importForm">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
       <input type="file" name="csvfile" accept=".csv" required style="display:none;" id="csvFileInput" onchange="this.form.submit()">
       <button type="button" class="btn btn-outline-secondary btn-sm" onclick="document.getElementById('csvFileInput').click()">Import CSV</button>
     </form>
@@ -236,6 +237,11 @@
       <button type="submit" class="btn btn-outline-primary btn-sm">Generate All QRs</button>
     </form>
     <a href="{{ url_for('qr_pdf_all') }}" class="btn btn-outline-dark btn-sm">Print QR Code (Avery 8160)</a>
+  </div>
+  <div class="small text-muted mb-2">
+    CSV format: <code>name,email,phone,M,R,W,classification</code>.
+    Mark selected subjects with <code>x</code> under <code>M</code> (Math), <code>R</code> (Reading), and <code>W</code> (Writing).
+    For classification use: <code>a</code> = Assisted, <code>m</code> = Monitored, <code>i</code> = Independent, <code>v</code> = Virtual.
   </div>
 
   <div class="table-container">

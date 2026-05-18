@@ -15,6 +15,42 @@ MAX_SUBJECTS = 3
 MAX_SCHEDULE_DAYS = 7
 
 
+def _vcf_escape(value: str) -> str:
+    """Escape VCF text values per RFC-style expectations."""
+    text = str(value or "")
+    return (
+        text.replace('\\', '\\\\')
+        .replace('\n', '\\n')
+        .replace(';', '\\;')
+        .replace(',', '\\,')
+    )
+
+
+def _build_student_vcf(student_row) -> str:
+    """Build a single-contact VCF payload for a student."""
+    student_name = str(student_row[1] or '').strip() if len(student_row) > 1 else 'Student'
+    email = str(student_row[3] or '').strip() if len(student_row) > 3 else ''
+    phone = str(student_row[4] or '').strip() if len(student_row) > 4 else ''
+    guardian = str(student_row[22] or '').strip() if len(student_row) > 22 else ''
+
+    first_name_field = f"{student_name} ({guardian})" if guardian else student_name
+    fn_value = first_name_field
+
+    lines = [
+        "BEGIN:VCARD",
+        "VERSION:3.0",
+        f"N:;{_vcf_escape(first_name_field)};;;",
+        f"FN:{_vcf_escape(fn_value)}",
+    ]
+    if phone:
+        lines.append(f"TEL;TYPE=CELL:{_vcf_escape(phone)}")
+    if email:
+        lines.append(f"EMAIL;TYPE=INTERNET:{_vcf_escape(email)}")
+    lines.append("END:VCARD")
+
+    return "\r\n".join(lines) + "\r\n"
+
+
 def _read_student_photo(file_storage, student_id):
     """Validate and read an uploaded photo as raw bytes plus mime type."""
     if not file_storage or not file_storage.filename:
@@ -448,3 +484,24 @@ def register_student_routes(app, upload_folder):
         # Export only this user's students
         student_manager.export_csv(export_path)
         return send_file(export_path, as_attachment=True)
+
+    @app.route("/students/export-vcf/<int:sid>")
+    @require_login
+    def students_export_vcf(sid):
+        """Download one student contact card in VCF format."""
+        student = student_manager.get_student(sid)
+        if not student:
+            abort(404)
+
+        vcf_payload = _build_student_vcf(student)
+        student_name = str(student[1] or 'student').strip() if len(student) > 1 else 'student'
+        suggested_name = secure_filename(student_name) or f"student_{sid}"
+        download_name = f"{suggested_name}_contact.vcf"
+
+        return send_file(
+            BytesIO(vcf_payload.encode('utf-8')),
+            mimetype='text/vcard; charset=utf-8',
+            as_attachment=True,
+            download_name=download_name,
+            max_age=0,
+        )

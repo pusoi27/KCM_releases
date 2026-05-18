@@ -1,0 +1,335 @@
+[trace] Development trace enabled: C:\Users\octav\AppData\Local\Programs\Python\Python312\stdytime\trace_logs\trace_20260516_134441_25020.txt
+[startup] Database initialized at: C:/Users/octav/OneDrive/ADOCTA TECH LLC/StdyTime/DB/Stdytime.db
+[startup] closed open DB sessions: 0
+[version] Bumped: 00.08.006 -> 00.08.007
+[startup] Stdytime version: 00.08.007
+[startup] LS license: No LemonSqueezy license activated on this machine.
+WARNING:werkzeug: * Debugger is active!
+INFO:werkzeug: * Debugger PIN: 304-138-232
+[READ] GET    /                                        302
+DEBUG:app:[request] <- GET / 302
+INFO:werkzeug:127.0.0.1 - - [16/May/2026 13:45:11] "[32mGET / HTTP/1.1[0m" 302 -
+DEBUG:app:[request] -> GET /license
+[READ] GET    /                                        302
+DEBUG:app:[request] <- GET / 302
+INFO:werkzeug:127.0.0.1 - - [16/May/2026 13:45:12] "[32mGET / HTTP/1.1[0m" 302 -
+DEBUG:app:[request] -> GET /license
+[READ] GET    /license                                 200
+DEBUG:app:[request] <- GET /license 200
+INFO:werkzeug:127.0.0.1 - - [16/May/2026 13:45:12] "GET /license HTTP/1.1" 200 -
+[READ] GET    /license                                 200
+DEBUG:app:[request] <- GET /license 200
+INFO:werkzeug:127.0.0.1 - - [16/May/2026 13:45:12] "GET /license HTTP/1.1" 200 -
+[READ] GET    /favicon.ico                             302
+DEBUG:app:[request] <- GET /favicon.ico 302
+INFO:werkzeug:127.0.0.1 - - [16/May/2026 13:45:12] "[32mGET /favicon.ico HTTP/1.1[0m" 302 -
+DEBUG:app:[request] -> GET /license
+[READ] GET    /license                                 200
+DEBUG:app:[request] <- GET /license 200
+INFO:werkzeug:127.0.0.1 - - [16/May/2026 13:45:12] "GET /license HTTP/1.1" 200 -
+DEBUG:app:[request] -> POST /license/activate
+DEBUG:urllib3.connectionpool:Starting new HTTPS connection (1): api.lemonsqueezy.com:443
+DEBUG:urllib3.connectionpool:https://api.lemonsqueezy.com:443 "POST /v1/licenses/activate HTTP/1.1" 200 None
+[WRITE] POST   /license/activate                        302
+DEBUG:app:[request] <- POST /license/activate 302
+INFO:werkzeug:127.0.0.1 - - [16/May/2026 13:47:20] "[32mPOST /license/activate HTTP/1.1[0m" 302 -
+DEBUG:app:[request] -> GET /
+[READ] GET    /                                        302
+DEBUG:app:[request] <- GET / 302
+INFO:werkzeug:127.0.0.1 - - [16/May/2026 13:47:20] "[32mGET / HTTP/1.1[0m" 302 -
+DEBUG:app:[request] -> GET /login/email
+[READ] GET    /login/email                             200
+DEBUG:app:[request] <- GET /login/email 200
+INFO:werkzeug:127.0.0.1 - - [16/May/2026 13:47:20] "GET /login/email?next=/ HTTP/1.1" 200 -
+DEBUG:app:[request] -> GET /static/css/style.css
+[READ] GET    /static/css/style.css                    200
+DEBUG:app:[request] <- GET /static/css/style.css 200
+INFO:werkzeug:127.0.0.1 - - [16/May/2026 13:47:21] "GET /static/css/style.css HTTP/1.1" 200 -
+DEBUG:app:[request] -> GET /favicon.ico
+[READ] GET    /favicon.ico                             302
+DEBUG:app:[request] <- GET /favicon.ico 302
+INFO:werkzeug:127.0.0.1 - - [16/May/2026 13:47:21] "[32mGET /favicon.ico HTTP/1.1[0m" 302 -
+DEBUG:app:[request] -> GET /login/email
+[READ] GET    /login/email                             200
+DEBUG:app:[request] <- GET /login/email 200
+INFO:werkzeug:127.0.0.1 - - [16/May/2026 13:47:21] "GET /login/email?next=/favicon.ico HTTP/1.1" 200 -
+DEBUG:urllib3.connectionpool:Starting new HTTPS connection (1): api.lemonsqueezy.com:443
+DEBUG:urllib3.connectionpool:https://api.lemonsqueezy.com:443 "POST /v1/licenses/validate HTTP/1.1" 200 None
+DEBUG:app:[request] -> POST /login/email
+[WRITE] POST   /login/email                             302
+DEBUG:app:[request] <- POST /login/email 302
+INFO:werkzeug:127.0.0.1 - - [16/May/2026 13:48:15] "[32mPOST /login/email HTTP/1.1[0m" 302 -
+DEBUG:app:[request] -> GET /
+[READ] GET    /                                        302
+DEBUG:app:[request] <- GET / 302
+INFO:werkzeug:127.0.0.1 - - [16/May/2026 13:48:15] "[32mGET / HTTP/1.1[0m" 302 -
+DEBUG:app:[request] -> GET /setup
+[READ] GET    /setup                                   200
+DEBUG:app:[request] <- GET /setup 200
+INFO:werkzeug:127.0.0.1 - - [16/May/2026 13:48:15] "GET /setup HTTP/1.1" 200 -
+DEBUG:app:[request] -> GET /static/css/style.css
+[READ] GET    /static/css/style.css                    200
+DEBUG:app:[request] -> GET /static/img/logo.png
+DEBUG:app:[request] <- GET /static/css/style.css 200
+[READ] GET    /static/img/logo.png                     200
+INFO:werkzeug:127.0.0.1 - - [16/May/2026 13:48:15] "GET /static/css/style.css HTTP/1.1" 200 -
+DEBUG:app:[request] <- GET /static/img/logo.png 200
+INFO:werkzeug:127.0.0.1 - - [16/May/2026 13:48:15] "GET /static/img/logo.png HTTP/1.1" 200 -
+DEBUG:app:[request] -> GET /favicon.ico
+[READ] GET    /favicon.ico                             302
+DEBUG:app:[request] <- GET /favicon.ico 302
+INFO:werkzeug:127.0.0.1 - - [16/May/2026 13:48:16] "[32mGET /favicon.ico HTTP/1.1[0m" 302 -
+DEBUG:app:[request] -> GET /setup
+[READ] GET    /setup                                   200
+DEBUG:app:[request] <- GET /setup 200
+INFO:werkzeug:127.0.0.1 - - [16/May/2026 13:48:16] "GET /setup HTTP/1.1" 200 -
+DEBUG:app:[request] -> GET /setup/storage
+[READ] GET    /setup/storage                           200
+DEBUG:app:[request] <- GET /setup/storage 200
+INFO:werkzeug:127.0.0.1 - - [16/May/2026 13:48:19] "GET /setup/storage HTTP/1.1" 200 -
+DEBUG:app:[request] -> GET /static/css/style.css
+[READ] GET    /static/css/style.css                    200
+DEBUG:app:[request] -> GET /static/img/logo.png
+[READ] GET    /static/img/logo.png                     200
+DEBUG:app:[request] <- GET /static/css/style.css 200
+DEBUG:app:[request] <- GET /static/img/logo.png 200
+INFO:werkzeug:127.0.0.1 - - [16/May/2026 13:48:19] "GET /static/css/style.css HTTP/1.1" 200 -
+INFO:werkzeug:127.0.0.1 - - [16/May/2026 13:48:19] "GET /static/img/logo.png HTTP/1.1" 200 -
+DEBUG:app:[request] -> GET /favicon.ico
+[READ] GET    /favicon.ico                             302
+DEBUG:app:[request] <- GET /favicon.ico 302
+INFO:werkzeug:127.0.0.1 - - [16/May/2026 13:48:19] "[32mGET /favicon.ico HTTP/1.1[0m" 302 -
+DEBUG:app:[request] -> GET /setup
+[READ] GET    /setup                                   200
+DEBUG:app:[request] <- GET /setup 200
+INFO:werkzeug:127.0.0.1 - - [16/May/2026 13:48:19] "GET /setup HTTP/1.1" 200 -
+DEBUG:urllib3.connectionpool:Starting new HTTPS connection (1): api.lemonsqueezy.com:443
+DEBUG:urllib3.connectionpool:https://api.lemonsqueezy.com:443 "POST /v1/licenses/validate HTTP/1.1" 200 None
+DEBUG:app:[request] -> POST /setup/storage
+[WRITE] POST   /setup/storage                           302
+DEBUG:app:[request] <- POST /setup/storage 302
+INFO:werkzeug:127.0.0.1 - - [16/May/2026 13:49:17] "[32mPOST /setup/storage HTTP/1.1[0m" 302 -
+DEBUG:app:[request] -> GET /setup
+[READ] GET    /setup                                   200
+DEBUG:app:[request] <- GET /setup 200
+INFO:werkzeug:127.0.0.1 - - [16/May/2026 13:49:17] "GET /setup HTTP/1.1" 200 -
+DEBUG:app:[request] -> GET /static/css/style.css
+[READ] GET    /static/css/style.css                    200
+DEBUG:app:[request] -> GET /static/img/logo.png
+[READ] GET    /static/img/logo.png                     200
+DEBUG:app:[request] <- GET /static/css/style.css 200
+INFO:werkzeug:127.0.0.1 - - [16/May/2026 13:49:17] "GET /static/css/style.css HTTP/1.1" 200 -
+DEBUG:app:[request] <- GET /static/img/logo.png 200
+INFO:werkzeug:127.0.0.1 - - [16/May/2026 13:49:17] "GET /static/img/logo.png HTTP/1.1" 200 -
+DEBUG:app:[request] -> GET /favicon.ico
+[READ] GET    /favicon.ico                             302
+DEBUG:app:[request] <- GET /favicon.ico 302
+INFO:werkzeug:127.0.0.1 - - [16/May/2026 13:49:17] "[32mGET /favicon.ico HTTP/1.1[0m" 302 -
+DEBUG:app:[request] -> GET /setup
+[READ] GET    /setup                                   200
+DEBUG:app:[request] <- GET /setup 200
+INFO:werkzeug:127.0.0.1 - - [16/May/2026 13:49:17] "GET /setup HTTP/1.1" 200 -
+DEBUG:urllib3.connectionpool:Starting new HTTPS connection (1): api.lemonsqueezy.com:443
+DEBUG:urllib3.connectionpool:https://api.lemonsqueezy.com:443 "POST /v1/licenses/validate HTTP/1.1" 200 None
+DEBUG:app:[request] -> GET /instructor/profile/edit
+[READ] GET    /instructor/profile/edit                 200
+DEBUG:app:[request] <- GET /instructor/profile/edit 200
+INFO:werkzeug:127.0.0.1 - - [16/May/2026 13:49:23] "GET /instructor/profile/edit?setup=1 HTTP/1.1" 200 -
+DEBUG:app:[request] -> GET /static/css/style.css
+DEBUG:app:[request] -> GET /static/img/logo.png
+[READ] GET    /static/css/style.css                    200
+[READ] GET    /static/img/logo.png                     200
+DEBUG:app:[request] <- GET /static/css/style.css 200
+DEBUG:app:[request] <- GET /static/img/logo.png 200
+INFO:werkzeug:127.0.0.1 - - [16/May/2026 13:49:23] "GET /static/css/style.css HTTP/1.1" 200 -
+INFO:werkzeug:127.0.0.1 - - [16/May/2026 13:49:23] "GET /static/img/logo.png HTTP/1.1" 200 -
+DEBUG:app:[request] -> GET /favicon.ico
+[READ] GET    /favicon.ico                             302
+DEBUG:app:[request] <- GET /favicon.ico 302
+INFO:werkzeug:127.0.0.1 - - [16/May/2026 13:49:23] "[32mGET /favicon.ico HTTP/1.1[0m" 302 -
+DEBUG:app:[request] -> GET /setup
+[READ] GET    /setup                                   200
+DEBUG:app:[request] <- GET /setup 200
+INFO:werkzeug:127.0.0.1 - - [16/May/2026 13:49:23] "GET /setup HTTP/1.1" 200 -
+DEBUG:urllib3.connectionpool:Starting new HTTPS connection (1): api.lemonsqueezy.com:443
+DEBUG:urllib3.connectionpool:https://api.lemonsqueezy.com:443 "POST /v1/licenses/validate HTTP/1.1" 200 None
+DEBUG:app:[request] -> POST /instructor/profile/edit
+[WRITE] POST   /instructor/profile/edit                 302
+DEBUG:app:[request] <- POST /instructor/profile/edit 302
+INFO:werkzeug:127.0.0.1 - - [16/May/2026 13:51:58] "[32mPOST /instructor/profile/edit HTTP/1.1[0m" 302 -
+DEBUG:app:[request] -> GET /setup
+[READ] GET    /setup                                   200
+DEBUG:app:[request] <- GET /setup 200
+INFO:werkzeug:127.0.0.1 - - [16/May/2026 13:51:59] "GET /setup HTTP/1.1" 200 -
+DEBUG:app:[request] -> GET /static/css/style.css
+[READ] GET    /static/css/style.css                    200
+DEBUG:app:[request] -> GET /static/img/logo.png
+[READ] GET    /static/img/logo.png                     200
+DEBUG:app:[request] <- GET /static/css/style.css 200
+INFO:werkzeug:127.0.0.1 - - [16/May/2026 13:51:59] "GET /static/css/style.css HTTP/1.1" 200 -
+DEBUG:app:[request] <- GET /static/img/logo.png 200
+INFO:werkzeug:127.0.0.1 - - [16/May/2026 13:51:59] "GET /static/img/logo.png HTTP/1.1" 200 -
+DEBUG:app:[request] -> GET /favicon.ico
+[READ] GET    /favicon.ico                             404
+DEBUG:app:[request] <- GET /favicon.ico 404
+INFO:werkzeug:127.0.0.1 - - [16/May/2026 13:51:59] "[33mGET /favicon.ico HTTP/1.1[0m" 404 -
+DEBUG:app:[request] -> GET /
+[READ] GET    /                                        200
+DEBUG:app:[request] <- GET / 200
+INFO:werkzeug:127.0.0.1 - - [16/May/2026 13:52:02] "GET / HTTP/1.1" 200 -
+DEBUG:app:[request] -> GET /static/css/style.css
+[READ] GET    /static/css/style.css                    200
+DEBUG:app:[request] -> GET /static/img/logo.png
+[READ] GET    /static/img/logo.png                     200
+DEBUG:app:[request] <- GET /static/css/style.css 200
+INFO:werkzeug:127.0.0.1 - - [16/May/2026 13:52:02] "GET /static/css/style.css HTTP/1.1" 200 -
+DEBUG:app:[request] <- GET /static/img/logo.png 200
+INFO:werkzeug:127.0.0.1 - - [16/May/2026 13:52:02] "GET /static/img/logo.png HTTP/1.1" 200 -
+DEBUG:app:[request] -> GET /api/students/list
+[column3-trace] students_list_build_source active_rows=0 checked_rows=0 latest_rows=0 today='2026-05-16' total_students=2
+[column3-trace] students_list_payload_built cache_key='students:list:v1' checked_count=0 checked_ids=[]
+[column3-trace] students_list_response cache_key='students:list:v1' checked_count=0 total=2
+[READ] GET    /api/students/list                       200
+DEBUG:app:[request] <- GET /api/students/list 200
+INFO:werkzeug:127.0.0.1 - - [16/May/2026 13:52:02] "GET /api/students/list HTTP/1.1" 200 -
+DEBUG:app:[request] -> GET /api/sessions/active
+[READ] GET    /api/sessions/active                     200
+DEBUG:app:[request] <- GET /api/sessions/active 200
+INFO:werkzeug:127.0.0.1 - - [16/May/2026 13:52:02] "GET /api/sessions/active HTTP/1.1" 200 -
+DEBUG:app:[request] -> GET /api/assistants/list
+[staff-duty-trace] list_request method='GET' path='/api/assistants/list'
+[staff-duty-trace] list_build_begin
+[staff-duty-trace] list_build_source assistants_count=1 open_rows_count=0
+[staff-duty-trace] list_build_done payload_count=1
+[staff-duty-trace] list_response_ok payload_count=1 payload_type='list'
+[READ] GET    /api/assistants/list                     200
+DEBUG:app:[request] <- GET /api/assistants/list 200
+INFO:werkzeug:127.0.0.1 - - [16/May/2026 13:52:02] "GET /api/assistants/list HTTP/1.1" 200 -
+DEBUG:app:[request] -> GET /students
+[READ] GET    /students                                200
+DEBUG:app:[request] <- GET /students 200
+INFO:werkzeug:127.0.0.1 - - [16/May/2026 13:52:07] "GET /students HTTP/1.1" 200 -
+DEBUG:app:[request] -> GET /static/css/style.css
+[READ] GET    /static/css/style.css                    200
+DEBUG:app:[request] -> GET /static/img/logo.png
+[READ] GET    /static/img/logo.png                     200
+DEBUG:app:[request] <- GET /static/css/style.css 200
+INFO:werkzeug:127.0.0.1 - - [16/May/2026 13:52:07] "GET /static/css/style.css HTTP/1.1" 200 -
+DEBUG:app:[request] <- GET /static/img/logo.png 200
+INFO:werkzeug:127.0.0.1 - - [16/May/2026 13:52:07] "GET /static/img/logo.png HTTP/1.1" 200 -
+DEBUG:app:[request] -> GET /students/qr/1
+DEBUG:app:[request] -> GET /students/qr/2
+[READ] GET    /students/qr/1                           200
+[READ] GET    /students/qr/2                           200
+DEBUG:app:[request] <- GET /students/qr/1 200
+INFO:werkzeug:127.0.0.1 - - [16/May/2026 13:52:07] "GET /students/qr/1?v=SaturdayMay162026015207PM HTTP/1.1" 200 -
+DEBUG:app:[request] <- GET /students/qr/2 200
+INFO:werkzeug:127.0.0.1 - - [16/May/2026 13:52:07] "GET /students/qr/2?v=SaturdayMay162026015207PM HTTP/1.1" 200 -
+DEBUG:urllib3.connectionpool:Starting new HTTPS connection (1): api.lemonsqueezy.com:443
+DEBUG:urllib3.connectionpool:https://api.lemonsqueezy.com:443 "POST /v1/licenses/validate HTTP/1.1" 200 None
+DEBUG:app:[request] -> POST /students/import
+INFO:werkzeug:127.0.0.1 - - [16/May/2026 13:52:15] "[35m[1mPOST /students/import HTTP/1.1[0m" 500 -
+Traceback (most recent call last):
+  File "c:\Users\octav\AppData\Local\Programs\Python\Python312\stdytime\.venv\Lib\site-packages\flask\app.py", line 1536, in __call__
+    return self.wsgi_app(environ, start_response)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "c:\Users\octav\AppData\Local\Programs\Python\Python312\stdytime\.venv\Lib\site-packages\flask\app.py", line 1514, in wsgi_app
+    response = self.handle_exception(e)
+               ^^^^^^^^^^^^^^^^^^^^^^^^
+  File "c:\Users\octav\AppData\Local\Programs\Python\Python312\stdytime\.venv\Lib\site-packages\flask\app.py", line 1511, in wsgi_app
+    response = self.full_dispatch_request()
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "c:\Users\octav\AppData\Local\Programs\Python\Python312\stdytime\.venv\Lib\site-packages\flask\app.py", line 919, in full_dispatch_request
+    rv = self.handle_user_exception(e)
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "c:\Users\octav\AppData\Local\Programs\Python\Python312\stdytime\.venv\Lib\site-packages\flask\app.py", line 917, in full_dispatch_request
+    rv = self.dispatch_request()
+         ^^^^^^^^^^^^^^^^^^^^^^^
+  File "c:\Users\octav\AppData\Local\Programs\Python\Python312\stdytime\.venv\Lib\site-packages\flask\app.py", line 902, in dispatch_request
+    return self.ensure_sync(self.view_functions[rule.endpoint])(**view_args)  # type: ignore[no-any-return]
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\octav\AppData\Local\Programs\Python\Python312\stdytime\routes\auth.py", line 27, in decorated_function
+    return f(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^
+  File "C:\Users\octav\AppData\Local\Programs\Python\Python312\stdytime\routes\students.py", line 402, in students_import
+    path = os.path.join(upload_folder, secure_filename(file.filename))
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+NameError: name 'os' is not defined. Did you forget to import 'os'
+INFO:werkzeug:127.0.0.1 - - [16/May/2026 13:52:15] "GET /students/import?__debugger__=yes&cmd=resource&f=style.css HTTP/1.1" 200 -
+INFO:werkzeug:127.0.0.1 - - [16/May/2026 13:52:15] "GET /students/import?__debugger__=yes&cmd=resource&f=debugger.js HTTP/1.1" 200 -
+INFO:werkzeug:127.0.0.1 - - [16/May/2026 13:52:15] "GET /students/import?__debugger__=yes&cmd=resource&f=console.png&s=K8DohCcZFHqKQ65dGxrZ HTTP/1.1" 200 -
+INFO:werkzeug:127.0.0.1 - - [16/May/2026 13:52:15] "GET /students/import?__debugger__=yes&cmd=resource&f=console.png HTTP/1.1" 200 -
+DEBUG:app:[request] -> GET /students
+[READ] GET    /students                                200
+DEBUG:app:[request] <- GET /students 200
+INFO:werkzeug:127.0.0.1 - - [16/May/2026 14:07:58] "GET /students HTTP/1.1" 200 -
+DEBUG:app:[request] -> GET /static/css/style.css
+[READ] GET    /static/css/style.css                    200
+DEBUG:app:[request] -> GET /static/img/logo.png
+DEBUG:app:[request] <- GET /static/css/style.css 200
+[READ] GET    /static/img/logo.png                     200
+INFO:werkzeug:127.0.0.1 - - [16/May/2026 14:07:58] "GET /static/css/style.css HTTP/1.1" 200 -
+DEBUG:app:[request] <- GET /static/img/logo.png 200
+INFO:werkzeug:127.0.0.1 - - [16/May/2026 14:07:58] "GET /static/img/logo.png HTTP/1.1" 200 -
+DEBUG:app:[request] -> GET /students/qr/1
+DEBUG:app:[request] -> GET /students/qr/2
+[READ] GET    /students/qr/2                           200
+DEBUG:app:[request] <- GET /students/qr/2 200
+INFO:werkzeug:127.0.0.1 - - [16/May/2026 14:07:58] "GET /students/qr/2?v=SaturdayMay162026020758PM HTTP/1.1" 200 -
+[READ] GET    /students/qr/1                           200
+DEBUG:app:[request] <- GET /students/qr/1 200
+INFO:werkzeug:127.0.0.1 - - [16/May/2026 14:07:58] "GET /students/qr/1?v=SaturdayMay162026020758PM HTTP/1.1" 200 -
+DEBUG:app:[request] -> GET /students
+[version] Bumped: 00.08.008 -> 00.08.009
+[READ] GET    /students                                200
+DEBUG:app:[request] <- GET /students 200
+INFO:werkzeug:127.0.0.1 - - [16/May/2026 14:09:08] "GET /students HTTP/1.1" 200 -
+DEBUG:app:[request] -> GET /static/css/style.css
+DEBUG:app:[request] -> GET /static/img/logo.png
+[READ] GET    /static/css/style.css                    200
+[READ] GET    /static/img/logo.png                     200
+DEBUG:app:[request] <- GET /static/css/style.css 200
+DEBUG:app:[request] <- GET /static/img/logo.png 200
+INFO:werkzeug:127.0.0.1 - - [16/May/2026 14:09:08] "GET /static/css/style.css HTTP/1.1" 200 -
+INFO:werkzeug:127.0.0.1 - - [16/May/2026 14:09:08] "GET /static/img/logo.png HTTP/1.1" 200 -
+DEBUG:app:[request] -> GET /students/qr/1
+DEBUG:app:[request] -> GET /students/qr/2
+[READ] GET    /students/qr/1                           200
+DEBUG:app:[request] <- GET /students/qr/1 200
+INFO:werkzeug:127.0.0.1 - - [16/May/2026 14:09:08] "GET /students/qr/1?v=SaturdayMay162026020908PM HTTP/1.1" 200 -
+[READ] GET    /students/qr/2                           200
+DEBUG:app:[request] <- GET /students/qr/2 200
+INFO:werkzeug:127.0.0.1 - - [16/May/2026 14:09:08] "GET /students/qr/2?v=SaturdayMay162026020908PM HTTP/1.1" 200 -
+DEBUG:urllib3.connectionpool:Starting new HTTPS connection (1): api.lemonsqueezy.com:443
+DEBUG:urllib3.connectionpool:https://api.lemonsqueezy.com:443 "POST /v1/licenses/validate HTTP/1.1" 200 None
+DEBUG:app:[request] -> POST /students/import
+INFO:werkzeug:127.0.0.1 - - [16/May/2026 14:09:17] "[35m[1mPOST /students/import HTTP/1.1[0m" 500 -
+Traceback (most recent call last):
+  File "c:\Users\octav\AppData\Local\Programs\Python\Python312\stdytime\.venv\Lib\site-packages\flask\app.py", line 1536, in __call__
+    return self.wsgi_app(environ, start_response)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "c:\Users\octav\AppData\Local\Programs\Python\Python312\stdytime\.venv\Lib\site-packages\flask\app.py", line 1514, in wsgi_app
+    response = self.handle_exception(e)
+               ^^^^^^^^^^^^^^^^^^^^^^^^
+  File "c:\Users\octav\AppData\Local\Programs\Python\Python312\stdytime\.venv\Lib\site-packages\flask\app.py", line 1511, in wsgi_app
+    response = self.full_dispatch_request()
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "c:\Users\octav\AppData\Local\Programs\Python\Python312\stdytime\.venv\Lib\site-packages\flask\app.py", line 919, in full_dispatch_request
+    rv = self.handle_user_exception(e)
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "c:\Users\octav\AppData\Local\Programs\Python\Python312\stdytime\.venv\Lib\site-packages\flask\app.py", line 917, in full_dispatch_request
+    rv = self.dispatch_request()
+         ^^^^^^^^^^^^^^^^^^^^^^^
+  File "c:\Users\octav\AppData\Local\Programs\Python\Python312\stdytime\.venv\Lib\site-packages\flask\app.py", line 902, in dispatch_request
+    return self.ensure_sync(self.view_functions[rule.endpoint])(**view_args)  # type: ignore[no-any-return]
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\octav\AppData\Local\Programs\Python\Python312\stdytime\routes\auth.py", line 27, in decorated_function
+    return f(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^
+  File "C:\Users\octav\AppData\Local\Programs\Python\Python312\stdytime\routes\students.py", line 402, in students_import
+    return redirect(url_for("students_list"))
+       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+NameError: name 'os' is not defined. Did you forget to import 'os'
+INFO:werkzeug:127.0.0.1 - - [16/May/2026 14:09:17] "[36mGET /students/import?__debugger__=yes&cmd=resource&f=style.css HTTP/1.1[0m" 304 -
+INFO:werkzeug:127.0.0.1 - - [16/May/2026 14:09:17] "[36mGET /students/import?__debugger__=yes&cmd=resource&f=debugger.js HTTP/1.1[0m" 304 -
+INFO:werkzeug:127.0.0.1 - - [16/May/2026 14:09:17] "[36mGET /students/import?__debugger__=yes&cmd=resource&f=console.png&s=K8DohCcZFHqKQ65dGxrZ HTTP/1.1[0m" 304 -

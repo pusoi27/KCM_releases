@@ -71,14 +71,16 @@
       {% endif %}
       {% if subscription_access.can_access_instructor_profile %}
       <li class="list-group-item offcanvas-section-header">Utilities</li>
-      <li class="list-group-item"><a href="{{ url_for('instructor_profile') }}" class="offcanvas-link"><i class="bi bi-building me-2"></i>Center Profile</a></li>
-      <li class="list-group-item"><a href="{{ url_for('center_calendar') }}" class="offcanvas-link"><i class="bi bi-calendar-week me-2"></i>Students Calendar</a></li>
+      <li class="list-group-item"><a href="{{ url_for('instructor_profile') }}" class="offcanvas-link">Center Profile</a></li>
+      <li class="list-group-item"><a href="{{ url_for('center_calendar') }}" class="offcanvas-link">Students Calendar</a></li>
       {% if subscription_access.can_access_assistants %}
-      <li class="list-group-item"><a href="{{ url_for('assistants_list') }}" class="offcanvas-link"><i class="bi bi-person-badge me-2"></i>Manage Staff</a></li>
-      <li class="list-group-item"><a href="{{ url_for('schedule_assistants') }}" class="offcanvas-link"><i class="bi bi-calendar3 me-2"></i>Staff Calendar</a></li>
+      <li class="list-group-item"><a href="{{ url_for('assistants_list') }}" class="offcanvas-link">Manage Staff</a></li>
+      <li class="list-group-item"><a href="{{ url_for('schedule_assistants') }}" class="offcanvas-link">Staff Calendar</a></li>
       {% endif %}
       {% if subscription_access.can_access_instructor_settings %}
-      <li class="list-group-item"><a href="{{ url_for('qr_scanner') }}" class="offcanvas-link"><i class="bi bi-qr-code-scan me-2"></i>Scanner</a></li>
+      <li class="list-group-item offcanvas-section-header ps-4 text-muted small">Settings</li>
+      <li class="list-group-item"><a href="{{ url_for('qr_scanner') }}" class="offcanvas-link ps-4">Scanner</a></li>
+      <li class="list-group-item"><a href="{{ url_for('setup_storage') }}" class="offcanvas-link ps-4">DB Backup</a></li>
       {% endif %}
       {% endif %}
       <li class="list-group-item offcanvas-section-header">License</li>

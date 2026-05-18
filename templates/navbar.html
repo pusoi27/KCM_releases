@@ -76,27 +76,27 @@
 <!-- Utilities menu -->
 {% if subscription_access.can_access_instructor_profile %}
 <li class="nav-item dropdown">
-  <a class="nav-link dropdown-toggle text-white" href="#" id="instMenu" role="button" data-bs-toggle="dropdown"><i class="bi bi-tools"></i> Utilities</a>
+  <a class="nav-link dropdown-toggle text-white" href="#" id="instMenu" role="button" data-bs-toggle="dropdown">Utilities</a>
   <ul class="dropdown-menu" aria-labelledby="instMenu">
     <li><a class="dropdown-item" href="{{ url_for('instructor_profile') }}">Center Profile</a></li>
-    <li><a class="dropdown-item" href="{{ url_for('center_calendar') }}"><i class="bi bi-calendar-week"></i> Students Calendar</a></li>
+    <li><a class="dropdown-item" href="{{ url_for('center_calendar') }}">Students Calendar</a></li>
     {% if subscription_access.can_access_assistants %}
     <li><a class="dropdown-item" href="{{ url_for('assistants_list') }}">Manage Staff</a></li>
     <li><a class="dropdown-item" href="{{ url_for('schedule_assistants') }}">Staff Calendar</a></li>
     {% endif %}
     {% if subscription_access.can_access_instructor_settings %}
-    <li><a class="dropdown-item" href="{{ url_for('qr_scanner') }}"><i class="bi bi-qr-code-scan"></i> Scanner</a></li>
+    <li><hr class="dropdown-divider"></li>
+    <li><span class="dropdown-item-text text-muted small px-3">Settings</span></li>
+    <li><a class="dropdown-item ps-4" href="{{ url_for('qr_scanner') }}">Scanner</a></li>
+    <li><a class="dropdown-item ps-4" href="{{ url_for('setup_storage') }}">DB Backup</a></li>
     {% endif %}
     {% if dev_trace_enabled %}
+    <li><hr class="dropdown-divider"></li>
     <li>
-      <a class="dropdown-item" href="{{ url_for('instructor_dev_trace') }}">
-        <i class="bi bi-file-earmark-text"></i> Dev Trace{% if dev_trace_filename %} ({{ dev_trace_filename }}){% endif %}
-      </a>
+      <a class="dropdown-item" href="{{ url_for('instructor_dev_trace') }}">Dev Trace{% if dev_trace_filename %} ({{ dev_trace_filename }}){% endif %}</a>
     </li>
     <li>
-      <a class="dropdown-item small py-1" href="{{ url_for('instructor_dev_trace_folder') }}">
-        <i class="bi bi-folder2-open"></i> Open trace folder
-      </a>
+      <a class="dropdown-item small py-1" href="{{ url_for('instructor_dev_trace_folder') }}">Open trace folder</a>
     </li>
     {% endif %}
   </ul>
