@@ -81,6 +81,7 @@ IS_PRODUCTION = (
 _DEV_TRACE_HANDLE = None
 _ORIGINAL_STDOUT = sys.stdout
 _ORIGINAL_STDERR = sys.stderr
+_EXIT_SHUTDOWN_IN_PROGRESS = False
 
 
 def _is_debugger_attached():
@@ -886,23 +887,50 @@ _startup_verify_ls_license()
 @app.route("/exit", methods=["GET", "POST"])
 def exit_app():
     """Handle application exit/shutdown with graceful browser window closure."""
-    import sys
     import threading
+    import time
+
+    global _EXIT_SHUTDOWN_IN_PROGRESS
 
     if os.getenv('ENABLE_PUBLIC_EXIT_ROUTE', 'false').lower() != 'true':
         return render_template("404.html"), 404
+
+    # Prevent duplicate shutdown attempts from rapid repeated requests.
+    if _EXIT_SHUTDOWN_IN_PROGRESS:
+        return render_template("exit.html")
+    _EXIT_SHUTDOWN_IN_PROGRESS = True
     
     print("\n[EXIT] User initiated application shutdown...")
     profiler.print_summary()
+
+    werkzeug_shutdown = request.environ.get('werkzeug.server.shutdown')
     
-    # Schedule shutdown after response is sent (1 second delay)
-    def delayed_shutdown():
-        import time
-        time.sleep(1)
-        print("[EXIT] Closing application...")
-        sys.exit(0)
+    # Schedule shutdown after response is sent.
+    # 1) Attempt graceful server stop when available (Werkzeug dev server).
+    # 2) Force process exit as a reliability fallback (Waitress/other servers).
+    def delayed_shutdown(shutdown_callable):
+        time.sleep(0.8)
+
+        # Hard-stop guard in case graceful shutdown hangs.
+        def hard_stop_guard():
+            time.sleep(4)
+            print("[EXIT] Force-stopping application process...")
+            os._exit(0)
+
+        threading.Thread(target=hard_stop_guard, daemon=True, name="exit-hard-stop").start()
+
+        if callable(shutdown_callable):
+            try:
+                print("[EXIT] Attempting graceful Werkzeug shutdown...")
+                shutdown_callable()
+                return
+            except Exception as exc:
+                print(f"[EXIT] Graceful shutdown failed: {exc}", file=sys.stderr)
+
+        print("[EXIT] No graceful shutdown hook available; forcing process exit.")
+        os._exit(0)
     
-    shutdown_thread = threading.Thread(target=delayed_shutdown, daemon=True)
+    shutdown_thread = threading.Thread(target=delayed_shutdown, args=(werkzeug_shutdown,), daemon=True, name="exit-shutdown")
     shutdown_thread.start()
     
     # Return exit page with JavaScript to close the window

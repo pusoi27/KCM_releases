@@ -14,7 +14,15 @@ ${StrRep}
 !define APP_NAME "Stdytime"
 !define COMPANY_NAME "Stdytime"
 !ifndef APP_VERSION
-  !define /file APP_VERSION "VERSION"
+  !if /FileExists "Version"
+    !define /file APP_VERSION "Version"
+  !else
+    !if /FileExists "VERSION"
+      !define /file APP_VERSION "VERSION"
+    !else
+      !error "Neither Version nor VERSION file was found."
+    !endif
+  !endif
 !endif
 !ifndef APP_VERSION_SAFE
   !searchreplace APP_VERSION_SAFE "${APP_VERSION}" "." "_"
@@ -24,10 +32,6 @@ ${StrRep}
 !define STARTMENU_FOLDER "${APP_NAME}"
 
 Var PreviousConfigPath
-Var SelectedGDrivePath
-Var PromptForGDrivePath
-Var GDrivePageDialog
-Var GDrivePathInput
 
 !if /FileExists "dist_release\Stdytime.exe"
 !else
@@ -36,7 +40,7 @@ Var GDrivePathInput
 
 Name "${APP_NAME} ${APP_VERSION}"
 OutFile "stdytime_installer_v${APP_VERSION_SAFE}.exe"
-InstallDir "$LOCALAPPDATA\\${APP_NAME}_${APP_VERSION_SAFE}"
+InstallDir "$LOCALAPPDATA\\${APP_NAME}"
 RequestExecutionLevel user
 
 ; --- Modern UI ---
@@ -49,7 +53,6 @@ RequestExecutionLevel user
 
 !insertmacro MUI_PAGE_WELCOME
 !insertmacro MUI_PAGE_DIRECTORY
-Page Custom GDrivePathPageCreate GDrivePathPageLeave
 !insertmacro MUI_PAGE_INSTFILES
 !insertmacro MUI_PAGE_FINISH
 
@@ -61,68 +64,39 @@ Page Custom GDrivePathPageCreate GDrivePathPageLeave
 
 Function .onInit
   StrCpy $PreviousConfigPath ""
-  StrCpy $SelectedGDrivePath ""
-  StrCpy $PromptForGDrivePath "1"
 
-  ; Keep each version in its own folder by default.
-  StrCpy $INSTDIR "$LOCALAPPDATA\\${APP_NAME}_${APP_VERSION_SAFE}"
+  ; Keep a single stable install folder for first install and all updates.
+  StrCpy $INSTDIR "$LOCALAPPDATA\\${APP_NAME}"
 
-  ; Detect previous install config so upgrades can reuse existing Google Drive path.
+  ; If this exact version is already installed, prompt and fully exit installer.
+  ReadRegStr $0 HKCU "${UNINSTALL_KEY}" "DisplayVersion"
+  ${If} $0 == "${APP_VERSION}"
+    MessageBox MB_OK|MB_ICONINFORMATION "Stdytime version ${APP_VERSION} is already installed.$\r$\nSetup will now close."
+    Quit
+  ${EndIf}
+
+  ; Prefer current stable install config if it already exists.
+  IfFileExists "$INSTDIR\\db_config.json" 0 +3
+    StrCpy $PreviousConfigPath "$INSTDIR\\db_config.json"
+
+  ; Detect legacy versioned install config so upgrades can migrate Google Drive path once.
+  ${If} $PreviousConfigPath == ""
   FindFirst $0 $1 "$LOCALAPPDATA\\Stdytime_*"
   loop_search_previous:
     IfErrors done_search_previous
     StrCmp $1 "" done_search_previous
     IfFileExists "$LOCALAPPDATA\\$1\\db_config.json" 0 +3
       StrCpy $PreviousConfigPath "$LOCALAPPDATA\\$1\\db_config.json"
-      StrCpy $PromptForGDrivePath "0"
       Goto done_search_previous
     FindNext $0 $1
     Goto loop_search_previous
   done_search_previous:
   FindClose $0
-FunctionEnd
-
-Function GDrivePathPageCreate
-  ${If} $PromptForGDrivePath != "1"
-    Abort
   ${EndIf}
-
-  nsDialogs::Create 1018
-  Pop $GDrivePageDialog
-  ${If} $GDrivePageDialog == error
-    Abort
-  ${EndIf}
-
-  ${NSD_CreateLabel} 0 0 100% 28u "No previous Stdytime install was detected on this machine.$\r$\nChoose your Google Drive backup folder (for example: G:\\My Drive\\StdyTime)."
-  Pop $0
-
-  ${NSD_CreateDirRequest} 0 36u 100% 12u "$SelectedGDrivePath"
-  Pop $GDrivePathInput
-
-  nsDialogs::Show
-FunctionEnd
-
-Function GDrivePathPageLeave
-  ${If} $PromptForGDrivePath != "1"
-    Return
-  ${EndIf}
-
-  ${NSD_GetText} $GDrivePathInput $SelectedGDrivePath
-  StrCmp $SelectedGDrivePath "" 0 +3
-    MessageBox MB_OK|MB_ICONEXCLAMATION "Please choose your Google Drive backup folder to continue."
-    Abort
-
-  ; Basic location check to reduce accidental wrong folder selections.
-  IfFileExists "$SelectedGDrivePath\\*.*" valid_path +3
-    MessageBox MB_OK|MB_ICONEXCLAMATION "Selected folder does not exist. Please choose an existing Google Drive folder."
-    Abort
-
-valid_path:
 FunctionEnd
 
 Function WriteFreshDbConfig
   ${StrRep} $0 $LOCALAPPDATA "\\" "/"
-  ${StrRep} $1 $SelectedGDrivePath "\\" "/"
 
   FileOpen $2 "$INSTDIR\\db_config.json" w
   FileWrite $2 "{$\r$\n"
@@ -130,7 +104,7 @@ Function WriteFreshDbConfig
   FileWrite $2 "  $\"_comment2$\": $\"gdrive_sync_path = Google Drive folder path used only for background sync; Stdytime.db is created there automatically.$\",$\r$\n"
   FileWrite $2 "  $\"_comment3$\": $\"sync_interval_minutes = how often local DB is pushed to Google Drive (0 = disable).$\",$\r$\n"
   FileWrite $2 "  $\"db_path$\": $\"$0/StdyTime/Stdytime.db$\",$\r$\n"
-  FileWrite $2 "  $\"gdrive_sync_path$\": $\"$1$\",$\r$\n"
+  FileWrite $2 "  $\"gdrive_sync_path$\": $\"G:/My Drive/StdyTime$\",$\r$\n"
   FileWrite $2 "  $\"sync_interval_minutes$\": 7,$\r$\n"
   FileWrite $2 "  $\"startup_pull_from_gdrive$\": false$\r$\n"
   FileWrite $2 "}$\r$\n"
@@ -140,30 +114,29 @@ FunctionEnd
 Section "Stdytime (required)" SecMain
   SectionIn RO
 
-  ; Check if this exact version is already installed
-  ReadRegStr $0 HKCU "${UNINSTALL_KEY}" "DisplayVersion"
-  ${If} $0 == "${APP_VERSION}"
-    MessageBox MB_OK|MB_ICONINFORMATION "Stdytime version ${APP_VERSION} is already installed.$\r$\nInstallation will now stop."
-    Abort
-  ${EndIf}
-
-  ; Always install new versions into their own versioned folder.
-  StrCpy $INSTDIR "$LOCALAPPDATA\\${APP_NAME}_${APP_VERSION_SAFE}"
+  ; Always install/update in one stable folder.
+  StrCpy $INSTDIR "$LOCALAPPDATA\\${APP_NAME}"
 
   SetOutPath "$INSTDIR"
-  File /r "dist_release\*.*"
+  ; Never overwrite user local DB/config/backup artifacts during update.
+  File /r /x "*.db" /x "db_config.json" /x "data\\backups\\*.*" "dist_release\*.*"
 
-  ; Upgrade behavior: copy previous install config into the new version folder.
+  ; Preserve existing config in-place. Only migrate/create when missing.
+  IfFileExists "$INSTDIR\\db_config.json" 0 +3
+    DetailPrint "Keeping existing db_config.json in install folder."
+    Goto done_config
+
   ${If} $PreviousConfigPath != ""
     CopyFiles /SILENT "$PreviousConfigPath" "$INSTDIR\\db_config.json"
     DetailPrint "Reused Google Drive config from previous install: $PreviousConfigPath"
   ${Else}
-    ; Fresh install behavior: create config from installer prompt.
+    ; Fresh install behavior: create config with default sync path.
     Call WriteFreshDbConfig
-    DetailPrint "Created db_config.json from installer Google Drive path."
+    DetailPrint "Created db_config.json with default Google Drive sync path."
   ${EndIf}
+done_config:
 
-  ; Archive old codebase folders except current
+  ; Archive old legacy versioned codebase folders except current
   nsExec::ExecToLog 'cmd /c for /d %F in ("$LOCALAPPDATA\Stdytime_*") do if /I not "%F"=="$INSTDIR" move "%F" "$LOCALAPPDATA\Stdytime_archive" >nul'
 
   ; App location registry

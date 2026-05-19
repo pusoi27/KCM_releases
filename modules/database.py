@@ -654,7 +654,8 @@ def _sync_on_exit():
     """
     release_gdrive_lock(GDRIVE_SYNC_PATH)
 
-    if not GDRIVE_SYNC_PATH or not os.path.exists(DB_PATH):
+    gdrive_target = _resolve_gdrive_sync_target(GDRIVE_SYNC_PATH or "")
+    if not gdrive_target or not os.path.exists(DB_PATH):
         return
 
     _MAX_ATTEMPTS = 12
@@ -662,10 +663,10 @@ def _sync_on_exit():
 
     for attempt in range(1, _MAX_ATTEMPTS + 1):
         try:
-            _sqlite_backup(DB_PATH, GDRIVE_SYNC_PATH)
+            _sqlite_backup(DB_PATH, gdrive_target)
             summary = _db_summary(DB_PATH)
             print(
-                f"[sync] Final exit push to Google Drive complete: {GDRIVE_SYNC_PATH}\n"
+                f"[sync] Final exit push to Google Drive complete: {gdrive_target}\n"
                 f"[sync] Snapshot -> {summary}"
             )
             return
@@ -1163,6 +1164,17 @@ def init_db():
             with open(tpl_path, "w", encoding="utf-8") as f:
                 f.write("name,email,phone,guardian,M,R,W,classification\n")
                 f.write("Example Student,example@example.com,123456789,Jane Doe,x,x,,Monitored\n")
+
+    # Ensure an initial sync exists right after DB init/migrations complete.
+    # This avoids waiting for the background interval before the first backup appears.
+    if GDRIVE_SYNC_PATH:
+        pushed = sync_to_gdrive(DB_PATH, GDRIVE_SYNC_PATH)
+        if not pushed:
+            print(
+                "[sync] WARNING: initial post-init push to Google Drive did not complete. "
+                "Background sync/exit sync will retry.",
+                file=sys.stderr,
+            )
 
 
 # ====================================================================
