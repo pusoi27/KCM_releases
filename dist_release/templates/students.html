@@ -129,6 +129,7 @@
   }
   .col-qr { width: 45px; text-align: center; }
   .col-checkbox { width: 32px; text-align: center; padding: 3px 2px !important; }
+  .col-notify { width: 36px; text-align: center; padding: 3px 2px !important; }
   .col-actions { min-width: 220px; }
 
   .subject-check {
@@ -208,6 +209,41 @@
       text-align: center;
     }
   }
+  .notify-bar {
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    z-index: 1050;
+    background: #1b5e20;
+    color: #fff;
+    padding: 0.55rem 1rem;
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    box-shadow: 0 -2px 8px rgba(0,0,0,0.18);
+    transform: translateY(100%);
+    transition: transform 0.22s ease;
+  }
+  .notify-bar.visible { transform: translateY(0); }
+  .notify-bar .notify-count { font-weight: 700; white-space: nowrap; flex-shrink: 0; }
+  .notify-bar .notify-spacer { flex: 1; }
+  .notify-checkbox {
+    width: 16px;
+    height: 16px;
+    accent-color: #2e7d32;
+    cursor: pointer;
+  }
+  .notify-checkbox:disabled {
+    opacity: 0.35;
+    cursor: not-allowed;
+  }
+  .notify-select-all {
+    width: 16px;
+    height: 16px;
+    accent-color: #fdd835;
+    cursor: pointer;
+  }
 </style>
 <div class="container-fluid mt-3 px-2 px-md-3">
   <h4 class="mb-2 text-primary">Student Database</h4>
@@ -266,6 +302,12 @@
         <th>Guardian</th>
         <th class="col-qr">QR</th>
         <th class="col-checkbox">Loan</th>
+        <th class="col-notify" title="Allow class checkout email notification" aria-label="Checkout Email Notification">
+          <div class="d-flex flex-column align-items-center justify-content-center gap-1">
+            <input type="checkbox" class="notify-select-all" id="notifySelectAll" title="Enable checkout email notification for all students with email" aria-label="Enable checkout email notification for all students with email">
+            <small class="fw-semibold" style="line-height:1; font-size:0.62rem;">Checkout Email</small>
+          </div>
+        </th>
         <th class="col-actions">Actions</th>
       </tr>
     </thead>
@@ -343,6 +385,13 @@
           {% if s.book_loaned %}<span class="badge bg-primary">B</span>{% endif %}
           {% if s.device_loaned %}<span class="badge bg-success">D</span>{% endif %}
         </td>
+        <td class="col-notify text-center">
+          {% if s.email %}
+            <input type="checkbox" class="notify-checkbox" data-id="{{ s.id }}" {% if s.checkout_notify_enabled %}checked{% endif %} title="Send checkout email for {{ s.name }}" aria-label="Checkout email enabled for {{ s.name }}">
+          {% else %}
+            <input type="checkbox" class="notify-checkbox" disabled title="No email on file" aria-label="No email on file for {{ s.name }}">
+          {% endif %}
+        </td>
         <td class="col-actions">
           <a href="{{ url_for('students_edit',sid=s.id) }}" class="btn btn-outline-info btn-sm">Edit</a>
           <a href="{{ url_for('students_export_vcf', sid=s.id) }}" class="btn btn-outline-success btn-sm" title="Download VCF contact file (browser save dialog)">VCF</a>
@@ -360,7 +409,7 @@
       <!-- Deleted Students Section -->
       {% if deleted_students %}
       <tr>
-        <td colspan="19" class="table-section-header bg-light px-3 py-2">
+        <td colspan="20" class="table-section-header bg-light px-3 py-2">
           <strong class="text-muted">Deleted Students</strong>
         </td>
       </tr>
@@ -434,6 +483,7 @@
           {% if s.book_loaned %}<span class="badge bg-secondary">B</span>{% endif %}
           {% if s.device_loaned %}<span class="badge bg-secondary">D</span>{% endif %}
         </td>
+        <td class="col-notify"></td>
         <td class="col-actions">
           {% if current_user and current_user.is_admin() %}
           <form method="POST" action="{{ url_for('students_reactivate',sid=s.id) }}" class="d-inline">
@@ -511,5 +561,69 @@
       sessionStorage.setItem(TABLE_CONTAINER_KEY, tableContainer.scrollTop);
     }
   });
+
+  // ── Checkout email notification preference logic ────────────────────────
+  (function () {
+    const selectAll   = document.getElementById('notifySelectAll');
+    const checkboxes  = Array.from(document.querySelectorAll('.notify-checkbox'));
+
+    function getAllEnabled() {
+      return checkboxes.filter(cb => !cb.disabled);
+    }
+
+    function updateSelectAllState() {
+      const allEnabled = getAllEnabled();
+      const n = allEnabled.filter(cb => cb.checked).length;
+      selectAll.indeterminate = n > 0 && n < allEnabled.length;
+      selectAll.checked = allEnabled.length > 0 && n === allEnabled.length;
+    }
+
+    async function persistPreference(cb) {
+      const studentId = Number(cb.dataset.id);
+      const desiredState = cb.checked;
+      const priorState = !desiredState;
+      if (!studentId) return;
+
+      cb.disabled = true;
+      try {
+        const res = await fetch('{{ url_for("students_checkout_notify_update") }}', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ student_id: studentId, enabled: desiredState }),
+        });
+        const payload = await res.json().catch(() => ({}));
+        if (!res.ok || !payload.success) {
+          cb.checked = priorState;
+          alert(payload.error || 'Failed to save checkout email setting.');
+        }
+      } catch (err) {
+        cb.checked = priorState;
+        alert('Failed to save checkout email setting.');
+      } finally {
+        cb.disabled = false;
+        updateSelectAllState();
+      }
+    }
+
+    checkboxes.forEach(function (cb) {
+      if (cb.disabled) return;
+      cb.addEventListener('change', function () {
+        persistPreference(cb);
+      });
+    });
+
+    selectAll.addEventListener('change', function () {
+      const allEnabled = getAllEnabled();
+      allEnabled.forEach(function (cb) {
+        if (cb.checked !== selectAll.checked) {
+          cb.checked = selectAll.checked;
+          persistPreference(cb);
+        }
+      });
+      updateSelectAllState();
+    });
+
+    updateSelectAllState();
+  })();
 </script>
 {% endblock %}

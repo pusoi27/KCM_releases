@@ -18,6 +18,43 @@ from flask_wtf.csrf import CSRFProtect, generate_csrf
 import logging
 import atexit
 
+# Ensure only one instance runs on port 5000 (Windows-specific)
+import subprocess
+import re
+
+def kill_processes_on_port(port):
+    """Kill all processes using the specified TCP port (Windows only)."""
+    try:
+        # Run netstat to find PIDs using the port
+        result = subprocess.run(
+            ["netstat", "-ano"], capture_output=True, text=True, check=True
+        )
+        lines = result.stdout.splitlines()
+        pids = set()
+        port_pattern = re.compile(rf"^\s*TCP\s+[^\s]+:{port}\s+")
+        for line in lines:
+            if port_pattern.match(line):
+                parts = line.split()
+                if len(parts) >= 5:
+                    pid = parts[-1]
+                    if pid.isdigit():
+                        pids.add(pid)
+        # Kill each PID
+        for pid in pids:
+            if int(pid) == os.getpid():
+                continue  # Don't kill self
+            try:
+                subprocess.run(["taskkill", "/PID", pid, "/F"], check=True, capture_output=True)
+                print(f"[startup] Killed process on port {port}: PID {pid}")
+            except Exception as e:
+                print(f"[startup] Failed to kill PID {pid}: {e}")
+    except Exception as e:
+        print(f"[startup] Error checking/killing processes on port {port}: {e}")
+
+# Only kill processes on port 5000 if not running in Flask reloader child
+if os.getenv("WERKZEUG_RUN_MAIN") != "true":
+    kill_processes_on_port(5000)
+
 # Load environment variables from .env file
 load_dotenv()
 
@@ -44,6 +81,12 @@ IS_PRODUCTION = (
 _DEV_TRACE_HANDLE = None
 _ORIGINAL_STDOUT = sys.stdout
 _ORIGINAL_STDERR = sys.stderr
+
+
+def _is_debugger_attached():
+    """Return True when the current process is running under a debugger."""
+    gettrace = getattr(sys, 'gettrace', None)
+    return bool(callable(gettrace) and gettrace())
 
 
 class _TeeStream:
@@ -616,11 +659,10 @@ def _find_latest_source_mtime(base_dir):
     return latest
 
 
+
 def _ensure_version_up_to_date():
-    """Read version from VERSION file, check if source files changed, and auto-bump if needed."""
+    """Always bump version in VERSION file on every app start."""
     vpath = os.path.join(os.path.dirname(__file__), 'VERSION')
-    
-    # Try to read from VERSION file first
     version = None
     try:
         if os.path.exists(vpath):
@@ -628,30 +670,16 @@ def _ensure_version_up_to_date():
                 version = (vf.read().strip() or None)
     except Exception:
         pass
-    
-    # Fallback: if no VERSION file or empty, create default
     if not version:
         version = "00.00.01"
-        try:
-            with open(vpath, 'w', encoding='utf-8') as vf:
-                vf.write(version)
-        except Exception:
-            pass
-    
+    old_version = version
+    version = _bump_patch_version(version)
     try:
-        latest_mtime = _find_latest_source_mtime(os.path.dirname(__file__))
-        v_mtime = os.path.getmtime(vpath) if os.path.exists(vpath) else 0
-        if latest_mtime > v_mtime:
-            old_version = version
-            version = _bump_patch_version(version)
-            try:
-                with open(vpath, 'w', encoding='utf-8') as vf:
-                    vf.write(version)
-                print(f"[version] Bumped: {old_version} -> {version}")
-            except Exception as e:
-                print(f"[version] Failed to write VERSION file: {e}")
+        with open(vpath, 'w', encoding='utf-8') as vf:
+            vf.write(version)
+        print(f"[version] Bumped: {old_version} -> {version}")
     except Exception as e:
-        print(f"[version] Error checking version: {e}")
+        print(f"[version] Failed to write VERSION file: {e}")
     return version
 
 
@@ -780,9 +808,10 @@ _clear_state_on_startup()
 # ================================================================
 #  Auto-bump version on startup if source files changed
 # ================================================================
+
 def _check_version_on_startup():
-    """Log startup app version as read directly from VERSION file."""
-    current_version = get_app_version(force_refresh=True)
+    """Bump and log app version on every startup."""
+    current_version = _ensure_version_up_to_date()
     print(f"[startup] Stdytime version: {current_version}")
 
 _check_version_on_startup()
@@ -912,7 +941,13 @@ if __name__ == "__main__":
         serve(app, host=host, port=port, threads=8)
     else:
         # Development: Flask dev server with reloader for fast iteration
-        use_reloader = os.getenv("FLASK_USE_RELOADER", "true").lower() == "true"
+        debugger_attached = _is_debugger_attached()
+        if debugger_attached:
+            print("[startup] Debugger detected; disabling Flask auto-reloader for a clean VS Code debug session.")
+        use_reloader = (
+            os.getenv("FLASK_USE_RELOADER", "true").lower() == "true"
+            and not debugger_attached
+        )
         app.run(
             host=host,
             port=port,

@@ -9,7 +9,90 @@ import sys
 import time
 import webbrowser
 import subprocess
+import shutil
+import atexit
+import tempfile
 from pathlib import Path
+
+
+_PORT_TO_CLEANUP = 5000
+_BROWSER_PROCESS = None
+
+
+def _kill_processes_on_port(port):
+    """Kill all processes listening on a TCP port (Windows only)."""
+    try:
+        result = subprocess.run(
+            ["netstat", "-ano"], capture_output=True, text=True, check=True
+        )
+        pids = set()
+        for line in result.stdout.splitlines():
+            if f":{port} " not in line or "LISTENING" not in line:
+                continue
+            parts = line.split()
+            if len(parts) >= 5 and parts[-1].isdigit():
+                pids.add(parts[-1])
+
+        for pid in pids:
+            if int(pid) == os.getpid():
+                continue
+            try:
+                subprocess.run(["taskkill", "/PID", pid, "/F"], check=True, capture_output=True)
+                print(f"[launcher] Killed process on port {port}: PID {pid}")
+            except Exception as exc:
+                print(f"[launcher] Failed to kill PID {pid}: {exc}")
+    except Exception as exc:
+        print(f"[launcher] Error checking/killing processes on port {port}: {exc}")
+
+
+def _cleanup_on_exit():
+    _kill_processes_on_port(_PORT_TO_CLEANUP)
+
+
+atexit.register(_cleanup_on_exit)
+
+
+def _find_browser_executable():
+    """Prefer a browser executable we can monitor as a process."""
+    candidates = [
+        shutil.which("msedge"),
+        r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
+        r"C:\Program Files\Microsoft\Edge\Application\msedge.exe",
+        shutil.which("chrome"),
+        r"C:\Program Files\Google\Chrome\Application\chrome.exe",
+        r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
+        shutil.which("firefox"),
+        r"C:\Program Files\Mozilla Firefox\firefox.exe",
+        r"C:\Program Files (x86)\Mozilla Firefox\firefox.exe",
+    ]
+    for candidate in candidates:
+        if candidate and os.path.isfile(candidate):
+            return candidate
+    return None
+
+
+def _launch_browser(url):
+    """Launch a dedicated browser process when possible."""
+    browser_exe = _find_browser_executable()
+    if not browser_exe:
+        webbrowser.open(url)
+        return None
+
+    browser_name = Path(browser_exe).stem.lower()
+    profile_dir = os.path.join(tempfile.gettempdir(), "stdytime_browser_profile")
+    os.makedirs(profile_dir, exist_ok=True)
+
+    if "firefox" in browser_name:
+        cmd = [browser_exe, "-new-instance", "-profile", profile_dir, "-new-window", url]
+    else:
+        # Chrome/Edge: keep a dedicated process we can wait on.
+        cmd = [browser_exe, f"--user-data-dir={profile_dir}", "--new-window", url]
+
+    try:
+        return subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, stdin=subprocess.DEVNULL)
+    except Exception:
+        webbrowser.open(url)
+        return None
 
 def main():
     # Set environment for local development
@@ -96,21 +179,32 @@ def main():
 
         url = "http://127.0.0.1:5000/"
         print(f"\nOpening {url} in your browser...")
-        webbrowser.open(url)
+        browser_proc = _launch_browser(url)
 
         print("\n" + "="*50)
         print(f"Welcome to: {center_name}")
         print("="*50)
         print(f"\nAccess at: {url}")
-        print("\nClose this window to stop the app.")
+        if browser_proc:
+            print("\nClose the browser window to stop the app and free port 5000.")
+        else:
+            print("\nClose this window to stop the app and free port 5000.")
         print("\n" + "="*50 + "\n")
         
-        # Keep the script running
+        # Keep the script running until the dedicated browser process exits.
+        # If we couldn't get a process handle (fallback browser), stay alive until Ctrl+C.
         try:
-            while True:
-                time.sleep(1)
+            if browser_proc:
+                browser_proc.wait()
+                print("\nBrowser closed; cleaning up port 5000 listeners...")
+                _kill_processes_on_port(_PORT_TO_CLEANUP)
+            else:
+                while True:
+                    time.sleep(1)
         except KeyboardInterrupt:
             print("\nShutting down...")
+        finally:
+            _kill_processes_on_port(_PORT_TO_CLEANUP)
             sys.exit(0)
             
     except Exception as e:

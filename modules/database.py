@@ -35,6 +35,7 @@ def _default_local_db_path_for_runtime() -> str:
 # ---------------------------------------------------------------------------
 _APP_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 _DB_CONFIG_FILE = os.path.join(_APP_ROOT, "db_config.json")
+_GDRIVE_DISCOVERY_ATTEMPTED = False
 
 
 def _read_db_config() -> dict:
@@ -47,6 +48,12 @@ def _read_db_config() -> dict:
     except Exception as exc:
         print(f"[startup] WARNING: could not read {_DB_CONFIG_FILE}: {exc}", file=sys.stderr)
         return {}
+
+
+def _write_db_config(cfg: dict) -> None:
+    """Persist the config dict to db_config.json."""
+    with open(_DB_CONFIG_FILE, "w", encoding="utf-8") as fh:
+        json.dump(cfg, fh, indent=2)
 
 
 def _read_db_config_path() -> str | None:
@@ -87,6 +94,99 @@ def _resolve_gdrive_sync_target(gdrive_sync_path: str) -> str:
     return path
 
 
+def _gdrive_path_exists(gdrive_sync_path: str) -> bool:
+    """Return True when the configured Google Drive folder/DB path exists."""
+    raw = _normalize_path(gdrive_sync_path)
+    if not raw:
+        return False
+    target = _resolve_gdrive_sync_target(raw)
+    return os.path.isdir(raw) or os.path.exists(target)
+
+
+def _extract_valid_gdrive_path_from_config_file(config_file: str) -> tuple[float, str] | None:
+    """Return (mtime, gdrive_sync_path) when a config file contains a usable path."""
+    try:
+        with open(config_file, encoding="utf-8") as fh:
+            cfg = json.load(fh)
+        candidate = _normalize_path(str(cfg.get("gdrive_sync_path", "") or ""))
+        if not candidate:
+            return None
+        if not _is_google_drive_location(candidate):
+            return None
+        if not _gdrive_path_exists(candidate):
+            return None
+        return (os.path.getmtime(config_file), candidate)
+    except Exception:
+        return None
+
+
+def _discover_existing_gdrive_sync_path() -> str:
+    """Find an already-configured Google Drive path from previous local installs."""
+    candidates: list[tuple[float, str]] = []
+
+    # 1) Same install folder (if current config exists but was read before rewrite)
+    if os.path.exists(_DB_CONFIG_FILE):
+        found = _extract_valid_gdrive_path_from_config_file(_DB_CONFIG_FILE)
+        if found:
+            candidates.append(found)
+
+    # 2) Previous per-version app folders under LOCALAPPDATA
+    local_appdata = (os.getenv("LOCALAPPDATA", "") or "").strip()
+    if local_appdata and os.path.isdir(local_appdata):
+        try:
+            for entry in os.listdir(local_appdata):
+                lowered = entry.lower()
+                if not lowered.startswith("stdytime"):
+                    continue
+                folder = os.path.join(local_appdata, entry)
+                if not os.path.isdir(folder):
+                    continue
+                config_file = os.path.join(folder, "db_config.json")
+                if not os.path.isfile(config_file):
+                    continue
+                found = _extract_valid_gdrive_path_from_config_file(config_file)
+                if found:
+                    candidates.append(found)
+        except Exception:
+            pass
+
+    if not candidates:
+        return ""
+
+    # Prefer most recently modified config as the canonical machine setting.
+    candidates.sort(key=lambda item: item[0], reverse=True)
+    return candidates[0][1]
+
+
+def _hydrate_missing_gdrive_sync_path(cfg: dict, db_path: str) -> str:
+    """Auto-fill gdrive_sync_path for upgrades, then persist to current config."""
+    global _GDRIVE_DISCOVERY_ATTEMPTED
+
+    if _GDRIVE_DISCOVERY_ATTEMPTED:
+        return ""
+    _GDRIVE_DISCOVERY_ATTEMPTED = True
+
+    discovered = _discover_existing_gdrive_sync_path()
+    if not discovered:
+        return ""
+
+    cfg.setdefault("_comment", "db_path = local machine path (fast, all session reads/writes go here).")
+    cfg.setdefault("_comment2", "gdrive_sync_path = Google Drive folder path used only for background sync; Stdytime.db is created there automatically.")
+    cfg.setdefault("_comment3", "sync_interval_minutes = how often local DB is pushed to Google Drive (0 = disable).")
+    cfg["db_path"] = _normalize_path(db_path or "") or _default_local_db_path_for_runtime().replace("\\", "/")
+    cfg["gdrive_sync_path"] = discovered
+    if "sync_interval_minutes" not in cfg:
+        cfg["sync_interval_minutes"] = 7
+
+    try:
+        _write_db_config(cfg)
+        print(f"[startup] Reused existing Google Drive backup path from this machine: {discovered}")
+    except Exception as exc:
+        print(f"[startup] WARNING: could not persist discovered Google Drive path: {exc}", file=sys.stderr)
+
+    return discovered
+
+
 def get_db_config_status() -> dict:
     """Return readiness status for local DB path + Google Drive sync path setup."""
     cfg = _read_db_config()
@@ -95,6 +195,8 @@ def get_db_config_status() -> dict:
         # Local DB path is auto-managed; default it when not explicitly set.
         db_path = _default_local_db_path_for_runtime().replace("\\", "/")
     gdrive_sync_path = str(cfg.get("gdrive_sync_path", "") or "").strip()
+    if not gdrive_sync_path:
+        gdrive_sync_path = _hydrate_missing_gdrive_sync_path(cfg, db_path)
 
     issues: list[str] = []
     warnings: list[str] = []
@@ -150,8 +252,7 @@ def save_db_config_paths(*, db_path: str | None, gdrive_sync_path: str, sync_int
     else:
         cfg["sync_interval_minutes"] = 7
 
-    with open(_DB_CONFIG_FILE, "w", encoding="utf-8") as fh:
-        json.dump(cfg, fh, indent=2)
+    _write_db_config(cfg)
 
     return get_db_config_status()
 

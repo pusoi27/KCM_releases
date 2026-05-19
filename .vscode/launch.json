@@ -7,6 +7,9 @@
             "request": "launch",
             "program": "${workspaceFolder}/app.py",
             "cwd": "${workspaceFolder}",
+            "env": {
+                "FLASK_USE_RELOADER": "false"
+            },
             "envFile": "${workspaceFolder}/.env",
             "console": "integratedTerminal"
         },
