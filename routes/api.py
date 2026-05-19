@@ -77,6 +77,33 @@ def _assistants_profile_cache_key() -> str:
 def _assistants_duty_cache_key() -> str:
     return server_cache.ASSISTANTS_DUTY_LIST_CACHE_KEY
 
+
+def _subjects_from_student_row(student_row) -> list:
+    """Return a safe subjects list from get_all_students() rows."""
+    if not student_row:
+        return []
+
+    # Current get_all_students() shape stores subjects_json at index 18.
+    raw_subjects = student_row[18] if len(student_row) > 18 else None
+    if raw_subjects:
+        try:
+            parsed = json.loads(raw_subjects)
+            if isinstance(parsed, list):
+                return [str(item).strip() for item in parsed if str(item or '').strip()]
+        except (TypeError, ValueError, json.JSONDecodeError):
+            # Legacy/malformed values can appear as delimited text; normalize gracefully.
+            text = str(raw_subjects).strip()
+            for sep in ('|', ';', ','):
+                if sep in text:
+                    tokens = [piece.strip() for piece in text.split(sep) if piece and piece.strip()]
+                    if tokens:
+                        return tokens
+
+            if text:
+                return [text]
+
+    return [student_row[2]] if len(student_row) > 2 and student_row[2] else []
+
 def _format_checkout_timestamp(value: str) -> str:
     """Format ISO-ish timestamps for human-readable emails."""
     if not value:
@@ -281,7 +308,7 @@ def register_api_routes(app):
                     "day1_time": s[15] if len(s) > 15 else None,
                     "day2": s[16] if len(s) > 16 else None,
                     "day2_time": s[17] if len(s) > 17 else None,
-                    "subjects": json.loads(s[18] or '[]') if len(s) > 18 and s[18] else ([s[2]] if s[2] else []),
+                    "subjects": _subjects_from_student_row(s),
                     "status": status,
                     "start_time": start_time,
                     "total_seconds": total_seconds,
@@ -513,7 +540,7 @@ def register_api_routes(app):
                 "book_loaned": s[8] if len(s) > 8 else 0,
                 "device_loaned": s[9] if len(s) > 9 else 0,
                 "start_time": start,
-                "subjects": json.loads(s[17] or '[]') if len(s) > 17 and s[17] else ([s[2]] if s[2] else []),
+                "subjects": _subjects_from_student_row(s),
                 "photo_url": f"/students/photo/{sid}" if _has_photo_blob(s) else '',
                 "photo_data_uri": _photo_data_uri(s),
             })
