@@ -37,12 +37,14 @@ def _loads_json_list(raw_value, default=None):
     return data if isinstance(data, list) else list(default)
 
 
-def _classification_label(el=0, pi=0, v=0, **_):
+def _classification_label(el=0, pi=0, v=0, ind=0, **_):
     """Return the primary classification label for a student."""
     if int(bool(el)):
         return "Assisted"
     if int(bool(pi)):
         return "Monitored"
+    if int(bool(ind)):
+        return "Independent"
     if int(bool(v)):
         return "Virtual"
     return "Monitored"
@@ -112,11 +114,12 @@ def _build_student_database_row(row):
         'subject_slots': subject_slots,
         'photo_url': _photo_url(row[0], bool(photo_blob)),
         'has_photo': bool(photo_blob),
-        'classification': _classification_label(el=row[8], pi=row[9], v=row[16]),
+        'classification': _classification_label(el=row[8], pi=row[9], v=row[16], ind=row[22] if len(row) > 22 else 0),
         'virtual': bool(row[16]),
         'schedule': schedule_entries,
         'schedule_slots': schedule_slots,
         'qr_filename': f"student_{row[0]}.png",
+        'checkout_notify_enabled': bool(row[23]) if len(row) > 23 else True,
     }
 
 
@@ -124,37 +127,22 @@ def get_student_database_rows(active=1):
     """Get student rows tailored for the Student Database screen only."""
     with sqlite3.connect(DB_PATH) as conn:
         c = conn.cursor()
-        c.execute(
-            """
-            SELECT
-                s.id,
-                s.name,
-                COALESCE(s.subject, ''),
-                COALESCE(s.email, ''),
-                COALESCE(s.phone, ''),
-                s.active,
-                s.book_loaned,
-                s.device_loaned,
-                s.el,
-                s.pi,
-                COALESCE(s.subjects_json, '[]'),
-                COALESCE(s.schedule_json, ''),
-                COALESCE(s.day1, ''),
-                COALESCE(s.day1_time, ''),
-                COALESCE(s.day2, ''),
-                COALESCE(s.day2_time, ''),
-                s.v,
-                s.photo_blob,
-                COALESCE(s.photo_mime, ''),
-                COALESCE(s.photo_filename, ''),
-                COALESCE(s.photo, ''),
-                COALESCE(s.guardian, '')
-            FROM students s
-            WHERE s.active = ?
-            ORDER BY s.name
-            """,
-            (active,),
+        cols = [row[1] for row in c.execute("PRAGMA table_info(students)").fetchall()]
+        has_checkout_notify = "checkout_notify_enabled" in cols
+
+        checkout_notify_select = "checkout_notify_enabled" if has_checkout_notify else "1 AS checkout_notify_enabled"
+        query = (
+            "SELECT "
+            "id, name, subject, email, phone, active, book_loaned, device_loaned, "
+            "el, pi, subjects_json, schedule_json, day1, day1_time, day2, day2_time, "
+            "v, photo_blob, photo_mime, photo_filename, photo, guardian, ind, "
+            f"{checkout_notify_select} "
+            "FROM students "
+            "WHERE active = ? "
+            "ORDER BY name"
         )
+
+        c.execute(query, (active,))
         return [_build_student_database_row(row) for row in c.fetchall()]
 
 
@@ -265,26 +253,29 @@ def _parse_classification_from_csv(row):
     el = int(_csv_bool(_csv_get(row, 'el', 'assisted', default='0')))
     pi = int(_csv_bool(_csv_get(row, 'pi', 'monitored', default='0')))
     v = int(_csv_bool(_csv_get(row, 'v', 'virtual', default='0')))
+    ind = int(_csv_bool(_csv_get(row, 'ind', 'independent', default='0')))
 
     raw = str(_csv_get(row, 'classification', default='') or '').strip().lower()
     if raw:
         if raw in ('assisted', 'a'):
-            return 1, 0, 0
+            return 1, 0, 0, 0
         if raw in ('monitored', 'm'):
-            return 0, 1, 0
+            return 0, 1, 0, 0
         if raw in ('independent', 'i'):
-            return 0, 1, 0  # no independent field; map to monitored
+            return 0, 0, 0, 1
         if raw in ('virtual', 'v'):
-            return 0, 0, 1
+            return 0, 0, 1, 0
 
     # Enforce single primary classification (same model as edit form)
     if el:
-        return 1, 0, 0
+        return 1, 0, 0, 0
     if pi:
-        return 0, 1, 0
+        return 0, 1, 0, 0
+    if ind:
+        return 0, 0, 0, 1
     if v:
-        return 0, 0, 1
-    return 0, 1, 0
+        return 0, 0, 1, 0
+    return 0, 1, 0, 0
 
 
 def _normalize_schedule_entries_from_json(raw_schedule_json):
@@ -425,7 +416,9 @@ def get_student(student_id):
                  photo_blob,
                  COALESCE(photo_mime,'') AS photo_mime,
                  COALESCE(schedule_json,'') AS schedule_json,
-                 COALESCE(guardian,'') AS guardian
+                 COALESCE(guardian,'') AS guardian,
+                 COALESCE(ind,0) AS ind,
+                 COALESCE(checkout_notify_enabled,1) AS checkout_notify_enabled
             FROM students WHERE id=?
         """, (student_id,)).fetchone()
         return row
@@ -459,6 +452,7 @@ def get_student_static_profile(student_id):
         'photo_mime': str(row[20] or '') if len(row) > 20 else '',
         'guardian': str(row[22] or '') if len(row) > 22 else '',
         'photo_url': _photo_url(row[0], bool(_coerce_blob(row[19] if len(row) > 19 else None))),
+        'checkout_notify_enabled': bool(row[24]) if len(row) > 24 else True,
     }
 
 
@@ -508,6 +502,14 @@ def set_student_qr_code(student_id, qr_blob):
         )
         conn.commit()
 
+def set_checkout_notify_enabled(student_id, enabled):
+    """Persist whether student should receive class checkout email notifications."""
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.execute(
+            "UPDATE students SET checkout_notify_enabled=? WHERE id=?",
+            (1 if bool(enabled) else 0, student_id),
+        )
+        conn.commit()
 
 def get_student_qr_code(student_id):
     """Retrieve a student's QR code blob from database."""
@@ -522,7 +524,7 @@ def get_student_qr_code(student_id):
     return None
 
 
-def add_student(name, subject, email, phone, book_loaned=0, el=0, pi=0, v=0, day1="", day2="", day1_time="", day2_time="", subjects=None, subject_minutes=None, schedule_json="", guardian=""):
+def add_student(name, subject, email, phone, book_loaned=0, el=0, pi=0, v=0, ind=0, day1="", day2="", day1_time="", day2_time="", subjects=None, subject_minutes=None, schedule_json="", guardian=""):
     """Add a new student to the database and automatically generate QR code.
     
     Args:
@@ -536,8 +538,8 @@ def add_student(name, subject, email, phone, book_loaned=0, el=0, pi=0, v=0, day
     with sqlite3.connect(DB_PATH) as conn:
         c = conn.cursor()
         c.execute("""INSERT INTO students
-            (name,subject,subjects_json,subject_minutes_json,total_study_minutes,email,phone,guardian,active,book_loaned,el,pi,v,day1,day2,day1_time,day2_time,schedule_json)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (name,subject,subjects_json,subject_minutes_json,total_study_minutes,email,phone,guardian,active,book_loaned,el,pi,v,ind,day1,day2,day1_time,day2_time,schedule_json)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             (
                 name,
                 primary_subject,
@@ -552,6 +554,7 @@ def add_student(name, subject, email, phone, book_loaned=0, el=0, pi=0, v=0, day
                 int(bool(el)),
                 int(bool(pi)),
                 int(bool(v)),
+                int(bool(ind)),
                 day1,
                 day2,
                 day1_time,
@@ -573,7 +576,7 @@ def add_student(name, subject, email, phone, book_loaned=0, el=0, pi=0, v=0, day
 
 
 
-def update_student(sid, name, email, phone, subject="", book_loaned=0, el=0, pi=0, v=0, day1="", day2="", day1_time="", day2_time="", subjects=None, subject_minutes=None, schedule_json="", guardian=""):
+def update_student(sid, name, email, phone, subject="", book_loaned=0, el=0, pi=0, v=0, ind=0, day1="", day2="", day1_time="", day2_time="", subjects=None, subject_minutes=None, schedule_json="", guardian=""):
     """Update an existing student's information with ownership check."""
     subjects_list, minutes_list, total_minutes = normalize_subject_entries(
         subjects if subjects is not None else [subject],
@@ -583,7 +586,7 @@ def update_student(sid, name, email, phone, subject="", book_loaned=0, el=0, pi=
 
     with sqlite3.connect(DB_PATH) as conn:
         c = conn.cursor()
-        c.execute("""UPDATE students SET name=?,subject=?,subjects_json=?,subject_minutes_json=?,total_study_minutes=?,email=?,phone=?,guardian=?,book_loaned=?,el=?,pi=?,v=?,day1=?,day2=?,day1_time=?,day2_time=?,schedule_json=? WHERE id=?""",
+        c.execute("""UPDATE students SET name=?,subject=?,subjects_json=?,subject_minutes_json=?,total_study_minutes=?,email=?,phone=?,guardian=?,book_loaned=?,el=?,pi=?,v=?,ind=?,day1=?,day2=?,day1_time=?,day2_time=?,schedule_json=? WHERE id=?""",
                   (
                       name,
                       primary_subject,
@@ -597,6 +600,7 @@ def update_student(sid, name, email, phone, subject="", book_loaned=0, el=0, pi=
                       int(bool(el)),
                       int(bool(pi)),
                       int(bool(v)),
+                      int(bool(ind)),
                       day1,
                       day2,
                       day1_time,
@@ -679,7 +683,7 @@ def import_csv(file_path):
             total_study_minutes = sum(subject_minutes)
             primary_subject = subjects[0]
 
-            el, pi, v = _parse_classification_from_csv(row)
+            el, pi, v, ind = _parse_classification_from_csv(row)
             
             # Check if student exists (owned by this user)
             student_record=conn.execute("SELECT id FROM students WHERE LOWER(TRIM(name))=LOWER(?)",(name.strip(),)).fetchone()
@@ -703,7 +707,8 @@ def import_csv(file_path):
                         active=1,
                         el=?,
                         pi=?,
-                        v=?
+                        v=?,
+                        ind=?
                     WHERE id=?
                     """,
                     (
@@ -718,6 +723,7 @@ def import_csv(file_path):
                         el,
                         pi,
                         v,
+                        ind,
                         student_id,
                     ),
                 )
@@ -738,9 +744,10 @@ def import_csv(file_path):
                         active,
                         el,
                         pi,
-                        v
+                        v,
+                        ind
                     )
-                    VALUES(?,?,?,?,?,?,?,?,1,?,?,?)
+                    VALUES(?,?,?,?,?,?,?,?,1,?,?,?,?)
                     """,
                     (
                         name,
@@ -754,6 +761,7 @@ def import_csv(file_path):
                         el,
                         pi,
                         v,
+                        ind,
                     ),
                 )
                 student_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
@@ -782,7 +790,8 @@ def export_csv(path):
                 COALESCE(subject, ''),
                 el,
                 pi,
-                v
+                v,
+                COALESCE(ind, 0)
             FROM students
             WHERE active = 1
             ORDER BY name
@@ -806,7 +815,7 @@ def export_csv(path):
         for row in rows:
             name, email, phone, guardian = row[0], row[1], row[2], row[3]
             subjects_json, legacy_subject = row[4], row[5]
-            el, pi, v = int(bool(row[6])), int(bool(row[7])), int(bool(row[8]))
+            el, pi, v, ind = int(bool(row[6])), int(bool(row[7])), int(bool(row[8])), int(bool(row[9]))
 
             try:
                 subjects = [str(s).strip() for s in json.loads(subjects_json or '[]') if str(s or '').strip()]
@@ -820,7 +829,7 @@ def export_csv(path):
             r_flag = 'x' if 'reading' in normalized_subjects else ''
             w_flag = 'x' if 'writing' in normalized_subjects else ''
 
-            classification = _classification_label(el=el, pi=pi, v=v)
+            classification = _classification_label(el=el, pi=pi, v=v, ind=ind)
 
             writer.writerow([
                 name,

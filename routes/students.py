@@ -1,7 +1,7 @@
 # routes/students.py
 from io import BytesIO
 
-from flask import abort, render_template, request, redirect, url_for, flash, send_file
+from flask import abort, jsonify, render_template, request, redirect, url_for, flash, send_file
 from werkzeug.utils import secure_filename
 from modules import student_manager, instructor_profile_manager, server_cache, db_backup_recovery, auth_manager
 from routes.auth import require_login, require_admin
@@ -203,6 +203,127 @@ def register_student_routes(app, upload_folder):
             duplicate_count=duplicate_count,
         )
 
+    @app.route("/students/notify", methods=["POST"])
+    @require_login
+    def students_notify():
+        from modules.email_manager import get_email_manager, render_branded_email_shell, resolve_center_name
+        from modules import instructor_profile_manager as _ipm
+
+        raw_ids = request.form.getlist("student_ids")
+        subject = request.form.get("subject", "").strip()
+        message = request.form.get("message", "").strip()
+
+        if not raw_ids:
+            flash("No students selected.", "warning")
+            return redirect(url_for("students_list"))
+        if not subject or not message:
+            flash("Subject and message are required.", "danger")
+            return redirect(url_for("students_list"))
+
+        # Validate and deduplicate IDs
+        try:
+            student_ids = list({int(sid) for sid in raw_ids if str(sid).strip().isdigit()})
+        except (ValueError, TypeError):
+            flash("Invalid student selection.", "danger")
+            return redirect(url_for("students_list"))
+
+        if not student_ids:
+            flash("No valid students selected.", "warning")
+            return redirect(url_for("students_list"))
+
+        profile = _ipm.get_instructor_profile() or {}
+        center_name = resolve_center_name()
+        email_manager = get_email_manager()
+
+        sent = []
+        skipped = []
+        failed = []
+
+        for sid in student_ids:
+            row = student_manager.get_student(sid)
+            if not row:
+                skipped.append(f"ID {sid} (not found)")
+                continue
+            student_name = str(row[1] or "Student").strip()
+            recipient_email = str(row[3] or "").strip()
+            guardian = str(row[22] or "").strip() if len(row) > 22 else ""
+
+            if not recipient_email or "@" not in recipient_email:
+                skipped.append(student_name)
+                continue
+
+            salutation = f"Dear {guardian}," if guardian else "Dear Parent/Guardian,"
+            plain_body = (
+                f"{salutation}\n\n"
+                f"{message}\n\n"
+                f"— {center_name}"
+            )
+            html_body = render_branded_email_shell(
+                title=subject,
+                center_name=center_name,
+                body_html=(
+                    f"<p>{salutation}</p>"
+                    f"<p>{'<br>'.join(line if line.strip() else '&nbsp;' for line in message.splitlines())}</p>"
+                ),
+                footer_note=f"This message was sent from {center_name}. Please do not reply to this email.",
+            )
+
+            result = email_manager.send_email(
+                recipient_email=recipient_email,
+                subject=f"{center_name} — {subject}",
+                body=plain_body,
+                html_body=html_body,
+            )
+            if result.get("success"):
+                sent.append(student_name)
+            else:
+                failed.append(f"{student_name} ({result.get('error', 'unknown error')})")
+
+        parts = []
+        if sent:
+            parts.append(f"Sent to {len(sent)} student(s): {', '.join(sent)}.")
+        if skipped:
+            parts.append(f"Skipped (no email): {', '.join(skipped)}.")
+        if failed:
+            parts.append(f"Failed: {', '.join(failed)}.")
+
+        if sent and not failed:
+            flash(" ".join(parts), "success")
+        elif failed:
+            flash(" ".join(parts), "warning")
+        else:
+            flash(" ".join(parts) if parts else "No emails sent.", "warning")
+
+        return redirect(url_for("students_list"))
+
+    @app.route("/students/checkout-notify", methods=["POST"])
+    @require_login
+    def students_checkout_notify_update():
+        payload = request.get_json(silent=True) or {}
+        sid = payload.get("student_id")
+        enabled = payload.get("enabled")
+
+        try:
+            sid = int(sid)
+        except (TypeError, ValueError):
+            return jsonify({"success": False, "error": "Invalid student_id"}), 400
+
+        student = student_manager.get_student(sid)
+        if not student:
+            return jsonify({"success": False, "error": "Student not found"}), 404
+
+        has_email = bool(str(student[3] or "").strip()) if len(student) > 3 else False
+        if not has_email and bool(enabled):
+            return jsonify({"success": False, "error": "Student has no email on file"}), 400
+
+        student_manager.set_checkout_notify_enabled(sid, bool(enabled))
+        _invalidate_student_caches()
+        return jsonify({
+            "success": True,
+            "student_id": sid,
+            "checkout_notify_enabled": bool(enabled),
+        })
+
     @app.route("/students/photo/<int:sid>")
     @require_login
     def students_photo(sid):
@@ -266,6 +387,7 @@ def register_student_routes(app, upload_folder):
                 el=int(bool(request.form.get("el"))),
                 pi=int(bool(request.form.get("pi"))),
                 v=int(bool(request.form.get("v"))),
+                ind=int(bool(request.form.get("ind"))),
                 day1=_d1,
                 day2=_d2,
                 day1_time=_dt1,
@@ -320,6 +442,7 @@ def register_student_routes(app, upload_folder):
                 el=int(bool(request.form.get("el"))),
                 pi=int(bool(request.form.get("pi"))),
                 v=int(bool(request.form.get("v"))),
+                ind=int(bool(request.form.get("ind"))),
                 day1=_d1,
                 day2=_d2,
                 day1_time=_dt1,

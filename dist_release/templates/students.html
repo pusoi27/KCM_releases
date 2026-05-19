@@ -239,7 +239,7 @@
     <a href="{{ url_for('qr_pdf_all') }}" class="btn btn-outline-dark btn-sm">Print QR Code (Avery 8160)</a>
   </div>
   <div class="small text-muted mb-2">
-    CSV format: <code>name,email,phone,M,R,W,classification</code>.
+    CSV format: <code>name,email,phone,guardian,M,R,W,classification</code>.
     Mark selected subjects with <code>x</code> under <code>M</code> (Math), <code>R</code> (Reading), and <code>W</code> (Writing).
     For classification use: <code>a</code> = Assisted, <code>m</code> = Monitored, <code>i</code> = Independent, <code>v</code> = Virtual.
   </div>
@@ -263,8 +263,9 @@
         <th class="col-day-flag" title="Saturday" aria-label="Saturday">Sa</th>
         <th>Email</th>
         <th>Phone</th>
+        <th>Guardian</th>
         <th class="col-qr">QR</th>
-        <th class="col-checkbox">Book Loan</th>
+        <th class="col-checkbox">Loan</th>
         <th class="col-actions">Actions</th>
       </tr>
     </thead>
@@ -334,14 +335,17 @@
         <td class="col-day-flag"><input class="form-check-input subject-check" type="checkbox" {% if ds.sa %}checked{% endif %} disabled></td>
         <td>{{ s.email }}</td>
         <td>{{ s.phone }}</td>
+        <td>{{ s.guardian }}</td>
         <td class="col-qr">
           <img src="{{ url_for('serve_student_qr', sid=s.id) }}?v={{ date_str|replace(',', '')|replace(' ', '') }}{{ time_str|replace(':', '')|replace(' ', '') }}" alt="QR" width="48" height="48" loading="lazy" decoding="async" data-fallback-src="{{ url_for('static', filename='img/logo.png') }}" onerror="handleStudentQrError(this);">
         </td>
         <td class="text-center col-checkbox">
           {% if s.book_loaned %}<span class="badge bg-primary">B</span>{% endif %}
+          {% if s.device_loaned %}<span class="badge bg-success">D</span>{% endif %}
         </td>
         <td class="col-actions">
           <a href="{{ url_for('students_edit',sid=s.id) }}" class="btn btn-outline-info btn-sm">Edit</a>
+          <a href="{{ url_for('students_export_vcf', sid=s.id) }}" class="btn btn-outline-success btn-sm" title="Download VCF contact file (browser save dialog)">VCF</a>
           <a href="{{ url_for('qr_pdf_individual', sid=s.id) }}" class="btn btn-outline-dark btn-sm" title="Download individual QR PDF">Print QR</a>
           {% if current_user and current_user.is_admin() %}
           <form method="POST" action="{{ url_for('students_delete',sid=s.id) }}" class="d-inline">
@@ -356,7 +360,7 @@
       <!-- Deleted Students Section -->
       {% if deleted_students %}
       <tr>
-        <td colspan="17" class="table-section-header bg-light px-3 py-2">
+        <td colspan="19" class="table-section-header bg-light px-3 py-2">
           <strong class="text-muted">Deleted Students</strong>
         </td>
       </tr>
@@ -422,11 +426,13 @@
         <td class="col-day-flag"><input class="form-check-input subject-check" type="checkbox" {% if ds.sa %}checked{% endif %} disabled style="opacity:0.6;"></td>
         <td class="text-muted">{{ s.email }}</td>
         <td class="text-muted">{{ s.phone }}</td>
+        <td class="text-muted">{{ s.guardian }}</td>
         <td class="col-qr">
           <img src="{{ url_for('serve_student_qr', sid=s.id) }}?v={{ date_str|replace(',', '')|replace(' ', '') }}{{ time_str|replace(':', '')|replace(' ', '') }}" alt="QR" width="48" height="48" loading="lazy" decoding="async" data-fallback-src="{{ url_for('static', filename='img/logo.png') }}" onerror="handleStudentQrError(this);" style="opacity: 0.5;">
         </td>
         <td class="text-center col-checkbox text-muted">
           {% if s.book_loaned %}<span class="badge bg-secondary">B</span>{% endif %}
+          {% if s.device_loaned %}<span class="badge bg-secondary">D</span>{% endif %}
         </td>
         <td class="col-actions">
           {% if current_user and current_user.is_admin() %}

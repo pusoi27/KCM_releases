@@ -655,27 +655,45 @@ def _ensure_version_up_to_date():
     return version
 
 
-_APP_VERSION_CACHE = None
-_APP_VERSION_CACHE_MTIME = None
-
-
 def get_app_version(force_refresh=False):
-    """Return app version with in-process caching to avoid repeated filesystem scans."""
-    global _APP_VERSION_CACHE, _APP_VERSION_CACHE_MTIME
-    version_file = os.path.join(os.path.dirname(__file__), 'VERSION')
-    try:
-        current_mtime = os.path.getmtime(version_file) if os.path.exists(version_file) else None
-    except Exception:
-        current_mtime = None
+    """Return app version exactly as stored in the VERSION file.
 
-    cache_stale = _APP_VERSION_CACHE_MTIME != current_mtime
-    if force_refresh or not _APP_VERSION_CACHE or cache_stale:
-        _APP_VERSION_CACHE = _ensure_version_up_to_date()
+    force_refresh is accepted for backwards compatibility with callers.
+    """
+    default_version = "00.00.01"
+
+    candidate_paths = []
+
+    # Source/runtime next to app.py
+    candidate_paths.append(os.path.join(os.path.dirname(__file__), 'VERSION'))
+
+    # Current working directory (common in development and some launchers)
+    candidate_paths.append(os.path.join(os.getcwd(), 'VERSION'))
+
+    # Frozen executable directory (PyInstaller / installed app)
+    if getattr(sys, 'frozen', False):
+        candidate_paths.append(os.path.join(os.path.dirname(sys.executable), 'VERSION'))
+
+    # De-duplicate while preserving order
+    seen = set()
+    ordered_paths = []
+    for path in candidate_paths:
+        norm = os.path.normcase(os.path.abspath(path))
+        if norm in seen:
+            continue
+        seen.add(norm)
+        ordered_paths.append(path)
+
+    for version_file in ordered_paths:
         try:
-            _APP_VERSION_CACHE_MTIME = os.path.getmtime(version_file) if os.path.exists(version_file) else None
+            if os.path.exists(version_file):
+                with open(version_file, 'r', encoding='utf-8') as vf:
+                    raw = (vf.read().strip() or default_version)
+                return raw
         except Exception:
-            _APP_VERSION_CACHE_MTIME = None
-    return _APP_VERSION_CACHE
+            continue
+
+    return default_version
 
 
 # ================================================================
@@ -763,12 +781,11 @@ _clear_state_on_startup()
 #  Auto-bump version on startup if source files changed
 # ================================================================
 def _check_version_on_startup():
-    """Check and auto-bump version on app startup if source files have changed."""
+    """Log startup app version as read directly from VERSION file."""
     current_version = get_app_version(force_refresh=True)
     print(f"[startup] Stdytime version: {current_version}")
 
-if os.getenv('ENABLE_VERSION_AUTOBUMP', 'true').lower() == 'true':
-    _check_version_on_startup()
+_check_version_on_startup()
 
 
 # ================================================================

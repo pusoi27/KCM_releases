@@ -4,7 +4,7 @@
 <div class="container-fluid mt-4">
   <div class="row mb-4">
     <div class="col-md-8">
-      <h2><i class="bi bi-journal-bookmark"></i> Books/Devices</h2>
+      <h2><i class="bi bi-journal-bookmark"></i> Books</h2>
       <p class="text-muted">Total books: <strong>{{ total_books }}</strong></p>
     </div>
     <div class="col-md-4 text-end">
@@ -67,7 +67,7 @@
             <th class="text-center">Available</th>
             <th class="text-center">Borrower</th>
             <th class="text-center">ISBN</th>
-            <th width="140" class="text-center">Actions</th>
+            <th width="200" class="text-center">Actions</th>
           </tr>
         </thead>
         <tbody id="booksTableBody">
@@ -93,6 +93,7 @@
                 <td class="text-center small text-muted">{{ book.isbn13 or book.isbn or '-' }}</td>
                 <td class="text-center">
                   <a href="{{ url_for('books_edit', book_id=book.id) }}" class="btn btn-outline-info btn-sm">Edit</a>
+                  <button type="button" class="btn btn-outline-secondary btn-sm" onclick="printISBN({{ book.id }})"><i class="bi bi-printer"></i> Print ISBN</button>
                   {% if current_user and current_user.is_admin() %}
                   <button type="button" class="btn btn-outline-danger btn-sm" onclick="submitDeleteBook({{ book.id }})">Del</button>
                   {% endif %}
@@ -135,6 +136,11 @@ document.addEventListener('DOMContentLoaded', function() {
   const levelFilter = document.getElementById('levelFilter');
   const searchBtn = document.getElementById('searchBtn');
   const booksTableBody = document.getElementById('booksTableBody');
+
+  window.printISBN = function(bookId) {
+    if (!confirm('Download ISBN label PDF for this book?')) return;
+    window.location.href = `/isbn/pdf/individual/${bookId}`;
+  };
 
   window.submitDeleteBook = function(bookId) {
     if (!confirm('Delete book?')) {
@@ -186,6 +192,7 @@ document.addEventListener('DOMContentLoaded', function() {
               <td class="text-center small text-muted">${escapeHtml(book.isbn13 || book.isbn || '-')}</td>
               <td class="text-center">
                 <a href="/books/edit/${book.id}" class="btn btn-outline-info btn-sm">Edit</a>
+                <button type="button" class="btn btn-outline-secondary btn-sm" onclick="printISBN(${book.id})"><i class="bi bi-printer"></i> Print ISBN</button>
                 {% if current_user and current_user.is_admin() %}
                 <button type="button" class="btn btn-outline-danger btn-sm" onclick="submitDeleteBook(${book.id})">Del</button>
                 {% endif %}

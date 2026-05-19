@@ -640,6 +640,16 @@
           </label>
         </div>
         <div>
+          <input class="classification-option" type="checkbox" name="ind" id="independentCheck" {% if student and student[23] %}checked{% endif %}>
+          <label class="classification-label" for="independentCheck">
+            <div class="classification-card card-independent" title="Student works independently without staff guidance; staff can service 5 or more students." aria-label="Student works independently without staff guidance; staff can service 5 or more students.">
+              <div class="classification-radio"></div>
+              <div class="classification-name">Independent</div>
+              <div class="classification-copy">Works without guidance</div>
+            </div>
+          </label>
+        </div>
+        <div>
           <input class="classification-option" type="checkbox" name="v" id="virtualCheck" {% if student and student[11] %}checked{% endif %}>
           <label class="classification-label" for="virtualCheck">
             <div class="classification-card card-virtual" title="Student joins the afterschool activity online, staff can service 2 to 4 students." aria-label="Student joins the afterschool activity online, staff can service 2 to 4 students.">

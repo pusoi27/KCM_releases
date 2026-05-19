@@ -11,7 +11,9 @@ Unicode true
 !ifndef APP_VERSION
   !define /file APP_VERSION "VERSION"
 !endif
-!searchreplace APP_VERSION_SAFE "${APP_VERSION}" "." "_"
+!ifndef APP_VERSION_SAFE
+  !searchreplace APP_VERSION_SAFE "${APP_VERSION}" "." "_"
+!endif
 !define UNINSTALL_KEY "Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\${APP_NAME}"
 !define APP_REG_KEY "Software\\${APP_NAME}"
 !define STARTMENU_FOLDER "${APP_NAME}"

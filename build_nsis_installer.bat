@@ -52,7 +52,7 @@ if not defined MAKENSIS_EXE (
 )
 
 echo [INFO] Using NSIS: %MAKENSIS_EXE%
-"%MAKENSIS_EXE%" /V3 /DAPP_VERSION=%APP_VERSION% /DAPP_VERSION_SAFE=%APP_VERSION_SAFE% stdytime_installer.nsi
+"%MAKENSIS_EXE%" /V3 /DAPP_VERSION=%APP_VERSION% stdytime_installer.nsi
 if errorlevel 1 (
   echo [ERROR] NSIS compile failed.
   exit /b 1

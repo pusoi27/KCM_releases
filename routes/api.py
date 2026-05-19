@@ -95,7 +95,7 @@ def _send_checkout_email(student_row, start_time: str, end_time: str):
     Student Activity Card send-email route.
 
     Returns a dict:
-      - status: sent | no_email | failed | error
+            - status: sent | disabled | no_email | failed | error
       - message: human-readable short message
     """
     import traceback as _tb
@@ -106,6 +106,12 @@ def _send_checkout_email(student_row, start_time: str, end_time: str):
 
         student_name = student_row[1] if len(student_row) > 1 else "Student"
         guardian_name = str(student_row[22] or '').strip() if len(student_row) > 22 else ''
+        checkout_notify_enabled = bool(student_row[24]) if len(student_row) > 24 else True
+
+        if not checkout_notify_enabled:
+            print(f"[checkout-email] Skipped for {student_name}: checkout notifications disabled")
+            return {"status": "disabled", "message": "Checkout notification disabled for this student"}
+
         recipient_email = (student_row[3] if len(student_row) > 3 else "") or ""
         recipient_email = recipient_email.strip()
 

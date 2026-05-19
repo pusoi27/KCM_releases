@@ -625,7 +625,8 @@ def init_db():
             day1 TEXT DEFAULT '',
             day1_time TEXT DEFAULT '',
             day2 TEXT DEFAULT '',
-            day2_time TEXT DEFAULT ''
+            day2_time TEXT DEFAULT '',
+            checkout_notify_enabled INTEGER DEFAULT 1
         )
     """)
 
@@ -844,6 +845,11 @@ def init_db():
             cur.execute("ALTER TABLE students ADD COLUMN qr_code BLOB")
         if "device_loaned" not in cols:
             cur.execute("ALTER TABLE students ADD COLUMN device_loaned INTEGER DEFAULT 0")
+        if "ind" not in cols:
+            cur.execute("ALTER TABLE students ADD COLUMN ind INTEGER DEFAULT 0")
+        if "checkout_notify_enabled" not in cols:
+            cur.execute("ALTER TABLE students ADD COLUMN checkout_notify_enabled INTEGER DEFAULT 1")
+        cur.execute("UPDATE students SET checkout_notify_enabled = 1 WHERE checkout_notify_enabled IS NULL")
         # Sync device_loaned from active material loans (fixes pre-migration stale data)
         cur.execute("UPDATE students SET device_loaned = 0 WHERE device_loaned IS NULL OR device_loaned = 0")
         cur.execute("""

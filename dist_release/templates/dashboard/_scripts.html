@@ -416,9 +416,10 @@ function toggleStaffAndRefresh(assistantId, rowEl) {
       const info = document.createElement('div');
       info.className = 'flex-fill';
       const badges = [];
-      if (s.subject) badges.push(subjectBadgeHtml(s.subject));
+      const subjectsList = (s.subjects && s.subjects.length > 0) ? s.subjects : (s.subject ? [s.subject] : []);
+      subjectsList.forEach(sub => badges.push(subjectBadgeHtml(sub)));
       if (s.book_loaned) badges.push('<span class="badge bg-light text-dark border me-1" style="font-size:0.65em;">B</span>');
-      if (s.paper_ws) badges.push('<span class="badge bg-light text-dark border me-1" style="font-size:0.65em;">P</span>');
+      if (s.device_loaned) badges.push('<span class="badge bg-light text-dark border me-1" style="font-size:0.65em;">D</span>');
       const badgeDisplay = badges.length > 0 ? badges.join('') : '<span class="text-muted">-</span>';
       
       const checkedBadge = s.status === 'checked'
@@ -497,8 +498,8 @@ function buildSeatGrid(activeSessions){
       if (s.book_loaned) {
         badges.push('B');
       }
-      if (s.paper_ws) {
-        badges.push('P');
+      if (s.device_loaned) {
+        badges.push('D');
       }
       const badgeText = badges.join(', ');
       const fontSize = isFullscreenMode ? '42px' : '32px';

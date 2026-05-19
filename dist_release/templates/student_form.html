@@ -583,13 +583,17 @@
             <input id="name" name="name" class="form-control" value="{{ student[1] if student else '' }}" required placeholder="Full name">
           </div>
           <div class="row g-2">
-            <div class="col-md-6">
+            <div class="col-md-4">
               <label for="email" class="form-label fw-semibold mb-1">Email</label>
               <input id="email" name="email" type="email" class="form-control" value="{{ student[3] if student else '' }}">
             </div>
-            <div class="col-md-6">
+            <div class="col-md-4">
               <label for="phone" class="form-label fw-semibold mb-1">Phone</label>
               <input id="phone" name="phone" class="form-control" value="{{ student[4] if student else '' }}">
+            </div>
+            <div class="col-md-4">
+              <label for="guardian" class="form-label fw-semibold mb-1">Guardian</label>
+              <input id="guardian" name="guardian" class="form-control" value="{{ student[22] if student and student|length > 22 else '' }}">
             </div>
           </div>
         </div>
@@ -636,12 +640,12 @@
           </label>
         </div>
         <div>
-          <input class="classification-option" type="checkbox" name="paper_ws" id="independentCheck" {% if student and student[8] %}checked{% endif %}>
+          <input class="classification-option" type="checkbox" name="ind" id="independentCheck" {% if student and student[23] %}checked{% endif %}>
           <label class="classification-label" for="independentCheck">
-            <div class="classification-card card-independent" title="Student is capable of working independently; staff planning per center guidelines." aria-label="Student is capable of working independently; staff planning per center guidelines.">
+            <div class="classification-card card-independent" title="Student works independently without staff guidance; staff can service 5 or more students." aria-label="Student works independently without staff guidance; staff can service 5 or more students.">
               <div class="classification-radio"></div>
               <div class="classification-name">Independent</div>
-              <div class="classification-copy">Self-guided pace</div>
+              <div class="classification-copy">Works without guidance</div>
             </div>
           </label>
         </div>
