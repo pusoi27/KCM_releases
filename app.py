@@ -664,6 +664,18 @@ def _find_latest_source_mtime(base_dir):
 def _ensure_version_up_to_date():
     """Always bump version in VERSION file on every app start."""
     vpath = os.path.join(os.path.dirname(__file__), 'VERSION')
+    lock_path = vpath + '.startup-bump.lock'
+    lock_acquired = False
+
+    # Prevent concurrent startup bumps from multiple processes.
+    try:
+        fd = os.open(lock_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+        os.close(fd)
+        lock_acquired = True
+    except FileExistsError:
+        print("[version] Startup bump skipped: another process is already updating VERSION.")
+        return get_app_version()
+
     version = None
     try:
         if os.path.exists(vpath):
@@ -681,6 +693,12 @@ def _ensure_version_up_to_date():
         print(f"[version] Bumped: {old_version} -> {version}")
     except Exception as e:
         print(f"[version] Failed to write VERSION file: {e}")
+    finally:
+        if lock_acquired:
+            try:
+                os.remove(lock_path)
+            except Exception:
+                pass
     return version
 
 
@@ -812,6 +830,15 @@ _clear_state_on_startup()
 
 def _check_version_on_startup():
     """Bump and log app version on every startup."""
+    # In Flask debug reloader mode, skip parent process to avoid double-bumps.
+    if (
+        not IS_PRODUCTION
+        and os.getenv("FLASK_USE_RELOADER", "true").lower() == "true"
+        and os.getenv("WERKZEUG_RUN_MAIN") != "true"
+    ):
+        print("[version] Skipping startup bump in Flask reloader parent process.")
+        return
+
     current_version = _ensure_version_up_to_date()
     print(f"[startup] Stdytime version: {current_version}")
 
