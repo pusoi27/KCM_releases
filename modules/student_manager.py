@@ -400,7 +400,8 @@ def get_all_students():
              SELECT s.id, s.name, s.subject, s.level, s.email, s.phone, COALESCE(s.guardian, '') AS guardian, '' AS legacy_contact, s.active, s.book_loaned, s.device_loaned,
                  s.el, s.pi, s.v, s.day1, s.day1_time, s.day2, s.day2_time, s.subjects_json, s.subject_minutes_json, s.total_study_minutes,
                   s.photo_blob,
-                  COALESCE(s.photo_mime, '') AS photo_mime
+                  COALESCE(s.photo_mime, '') AS photo_mime,
+                  COALESCE(s.ind, 0) AS ind
             FROM students s
             WHERE s.active = 1
             ORDER BY s.name
@@ -570,14 +571,15 @@ def add_student(name, subject, email, phone, book_loaned=0, el=0, pi=0, v=0, ind
         student_id = c.lastrowid
         conn.commit()
     
-    # Automatically generate QR code for the new student and store in DB
+    # Automatically generate QR code for the new student and store in DB only if not exists
     try:
-        qr_data = f"ID:{student_id}\nName:{name}"
-        qr_blob = qr_generator.generate_qr_bytes(qr_data)
-        set_student_qr_code(student_id, qr_blob)
+        existing_qr = get_student_qr_code(student_id)
+        if not existing_qr:
+            qr_data = f"ID:{student_id}\nName:{name}"
+            qr_blob = qr_generator.generate_qr_bytes(qr_data)
+            set_student_qr_code(student_id, qr_blob)
     except Exception as e:
         print(f"Warning: Failed to generate QR code for student {student_id}: {e}")
-    
     return student_id
 
 

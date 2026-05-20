@@ -404,7 +404,7 @@ def register_instructor_profile_routes(app):
                 'el': student[11] if len(student) > 11 else 0,
                 'pi': student[12] if len(student) > 12 else 0,
                 'v': student[13] if len(student) > 13 else 0,
-                'ind': student[22] if len(student) > 22 else 0,
+                'ind': student[23] if len(student) > 23 else 0,
             }
             
             # Check if student has scheduled times
@@ -424,9 +424,17 @@ def register_instructor_profile_routes(app):
             def add_student_to_slot(day, time_display, student_data, schedule, duration_minutes=30):
                 if day not in schedule['calendar']:
                     return
+
+                def append_unique(day_name, slot_time, payload):
+                    if slot_time not in schedule['calendar'][day_name]:
+                        schedule['calendar'][day_name][slot_time] = []
+                    existing_ids = {s.get('id') for s in schedule['calendar'][day_name][slot_time]}
+                    if payload.get('id') not in existing_ids:
+                        schedule['calendar'][day_name][slot_time].append(payload)
+
                 if time_display not in schedule['calendar'][day]:
                     schedule['calendar'][day][time_display] = []
-                schedule['calendar'][day][time_display].append(student_data)
+                append_unique(day, time_display, student_data)
 
                 additional_slots = max(0, math.ceil(max(5, duration_minutes) / 30) - 1)
                 for step in range(1, additional_slots + 1):
@@ -435,9 +443,7 @@ def register_instructor_profile_routes(app):
                     next_time_display = minutes_to_time_display(next_minutes)
 
                     if next_time_display in schedule['time_slots']:
-                        if next_time_display not in schedule['calendar'][day]:
-                            schedule['calendar'][day][next_time_display] = []
-                        schedule['calendar'][day][next_time_display].append(student_data)
+                        append_unique(day, next_time_display, student_data)
             
             # Add to Day 1
             if len(student) > 14 and student[14]:  # day1

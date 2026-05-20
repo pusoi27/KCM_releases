@@ -212,51 +212,32 @@
         <div class="time-slot">{{ time_slot }}</div>
         {% for day in schedule.active_days %}
           <div class="calendar-cell">
-            {% if schedule.calendar[day] and schedule.calendar[day][time_slot] %}
-              <!-- Assisted students line -->
-              <div class="classification-line">
-                {% for student in schedule.calendar[day][time_slot] %}
-                  {% if student.el %}
-                    <a href="{{ url_for('students_edit', sid=student.id, from_calendar=1) }}" class="student-badge" title="{{ student.name }} - {{ student.subject }} - Assisted" style="text-decoration: none; color: inherit; background-color: #fefce8; border: 1px solid #fde68a; color: #a16207;">
-                      {{ student.name }}
-                    </a>
-                  {% endif %}
-                {% endfor %}
-              </div>
-              
-              <!-- Monitored students line -->
-              <div class="classification-line">
-                {% for student in schedule.calendar[day][time_slot] %}
-                  {% if student.pi %}
-                    <a href="{{ url_for('students_edit', sid=student.id, from_calendar=1) }}" class="student-badge" title="{{ student.name }} - {{ student.subject }} - Monitored" style="text-decoration: none; color: inherit; background-color: #eff6ff; border: 1px solid #bfdbfe; color: #2563eb;">
-                      {{ student.name }}
-                    </a>
-                  {% endif %}
-                {% endfor %}
-              </div>
-              
-              <!-- Independent students line -->
-              <div class="classification-line">
-                {% for student in schedule.calendar[day][time_slot] %}
-                  {% if student.ind %}
-                    <a href="{{ url_for('students_edit', sid=student.id, from_calendar=1) }}" class="student-badge" title="{{ student.name }} - {{ student.subject }} - Independent" style="text-decoration: none; color: inherit; background-color: #f0fdf4; border: 1px solid #bbf7d0; color: #15803d;">
-                      {{ student.name }}
-                    </a>
-                  {% endif %}
-                {% endfor %}
-              </div>
-              
-              <!-- Default/Unclassified students line -->
-              <div class="classification-line">
-                {% for student in schedule.calendar[day][time_slot] %}
-                  {% if not student.el and not student.pi and not student.ind %}
-                    <a href="{{ url_for('students_edit', sid=student.id, from_calendar=1) }}" class="student-badge" title="{{ student.name }} - {{ student.subject }}" style="text-decoration: none; color: inherit; background-color: #eff6ff; border: 1px solid #bfdbfe; color: #2563eb;">
-                      {{ student.name }}
-                    </a>
-                  {% endif %}
-                {% endfor %}
-              </div>
-            {% else %}
+            {% set slot_students = schedule.calendar[day][time_slot] if schedule.calendar[day] and schedule.calendar[day][time_slot] else [] %}
+            <!-- Assisted students (top line) -->
+            <div class="classification-line">
+              {% for student in slot_students if student.el %}
+                <a href="{{ url_for('students_edit', sid=student.id, from_calendar=1) }}" class="student-badge" title="{{ student.name }} - {{ student.subject }} - Assisted" style="text-decoration: none; color: inherit; background-color: #fefce8; border: 1px solid #fde68a; color: #a16207;">
+                  {{ student.name }}
+                </a>
+              {% endfor %}
+            </div>
+            <!-- Monitored students (middle line) -->
+            <div class="classification-line">
+              {% for student in slot_students if student.pi %}
+                <a href="{{ url_for('students_edit', sid=student.id, from_calendar=1) }}" class="student-badge" title="{{ student.name }} - {{ student.subject }} - Monitored" style="text-decoration: none; color: inherit; background-color: #eff6ff; border: 1px solid #bfdbfe; color: #2563eb;">
+                  {{ student.name }}
+                </a>
+              {% endfor %}
+            </div>
+            <!-- Independent students (bottom line) -->
+            <div class="classification-line">
+              {% for student in slot_students if student.ind %}
+                <a href="{{ url_for('students_edit', sid=student.id, from_calendar=1) }}" class="student-badge" title="{{ student.name }} - {{ student.subject }} - Independent" style="text-decoration: none; color: inherit; background-color: #f0fdf4; border: 1px solid #bbf7d0; color: #15803d;">
+                  {{ student.name }}
+                </a>
+              {% endfor %}
+            </div>
+            {% if not slot_students %}
               <span class="empty-slot">-</span>
             {% endif %}
           </div>
