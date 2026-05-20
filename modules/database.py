@@ -5,6 +5,7 @@
 import sqlite3, os, sys, shutil, threading, time, atexit, socket, mimetypes
 from datetime import datetime, timezone
 import json
+import tempfile
 
 DATA_DIR = os.getenv("DATA_DIR", "data")
 LOCAL_FALLBACK_DB_PATH = os.path.join("data", "Stdytime.db")
@@ -24,23 +25,44 @@ def _default_local_db_path_for_runtime() -> str:
         # Defensive fallback when LOCALAPPDATA is unavailable
         return os.path.join(os.path.expanduser("~"), "AppData", "Local", "StdyTime", "Stdytime.db")
 
-    return os.path.join(DATA_DIR, "Stdytime.db")
+    source_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    return os.path.join(source_root, DATA_DIR, "Stdytime.db")
 
-# ---------------------------------------------------------------------------
-# Config file (db_config.json next to app.py).
-# Supported keys:
-#   db_path              – local machine path for all session reads/writes
-#   gdrive_sync_path     – Google Drive path used only for background sync
-#   sync_interval_minutes – how often local is pushed to GDrive (0 = off)
-# ---------------------------------------------------------------------------
+def _get_persistent_config_dir() -> str:
+    """Return a stable config directory for the current runtime."""
+    if getattr(sys, "frozen", False):
+        local_appdata = os.getenv("LOCALAPPDATA", "").strip()
+        if local_appdata:
+            return os.path.join(local_appdata, "StdyTime")
+        return os.path.join(os.path.expanduser("~"), "AppData", "Local", "StdyTime")
+
+    # Source/dev runs keep config next to project files.
+    return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+
 _APP_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-_DB_CONFIG_FILE = os.path.join(_APP_ROOT, "db_config.json")
+_CONFIG_DIR = _get_persistent_config_dir()
+_DB_CONFIG_FILE = os.path.join(_CONFIG_DIR, "db_config.json")
+_LEGACY_DB_CONFIG_FILE = os.path.join(_APP_ROOT, "db_config.json")
 _GDRIVE_DISCOVERY_ATTEMPTED = False
 
 
 def _read_db_config() -> dict:
     """Return the full config dict from db_config.json."""
     try:
+        # One-time migration path for packaged installs that used to read from app root.
+        if (
+            getattr(sys, "frozen", False)
+            and not os.path.exists(_DB_CONFIG_FILE)
+            and os.path.exists(_LEGACY_DB_CONFIG_FILE)
+        ):
+            try:
+                os.makedirs(_CONFIG_DIR, exist_ok=True)
+                shutil.copy2(_LEGACY_DB_CONFIG_FILE, _DB_CONFIG_FILE)
+                print(f"[startup] Migrated db config to persistent path: {_DB_CONFIG_FILE}")
+            except Exception as exc:
+                print(f"[startup] WARNING: failed to migrate legacy db config: {exc}", file=sys.stderr)
+
         with open(_DB_CONFIG_FILE, encoding="utf-8") as fh:
             return json.load(fh)
     except FileNotFoundError:
@@ -52,14 +74,48 @@ def _read_db_config() -> dict:
 
 def _write_db_config(cfg: dict) -> None:
     """Persist the config dict to db_config.json."""
-    with open(_DB_CONFIG_FILE, "w", encoding="utf-8") as fh:
-        json.dump(cfg, fh, indent=2)
+    os.makedirs(os.path.dirname(_DB_CONFIG_FILE), exist_ok=True)
+    tmp_fd, tmp_path = tempfile.mkstemp(prefix="db_config_", suffix=".tmp", dir=os.path.dirname(_DB_CONFIG_FILE))
+    try:
+        with os.fdopen(tmp_fd, "w", encoding="utf-8") as fh:
+            json.dump(cfg, fh, indent=2)
+            fh.flush()
+            os.fsync(fh.fileno())
+        os.replace(tmp_path, _DB_CONFIG_FILE)
+    finally:
+        try:
+            if os.path.exists(tmp_path):
+                os.remove(tmp_path)
+        except Exception:
+            pass
+
+
+def _to_absolute_path(path: str) -> str:
+    """Return an absolute normalized path (relative paths resolve from app root)."""
+    candidate = (path or "").strip()
+    if not candidate:
+        return ""
+    if os.path.isabs(candidate):
+        return os.path.abspath(candidate)
+    return os.path.abspath(os.path.join(_APP_ROOT, candidate))
 
 
 def _read_db_config_path() -> str | None:
     """Return db_path from db_config.json, or None if absent/invalid."""
-    path = _read_db_config().get("db_path", "").strip()
-    return path if path else None
+    cfg = _read_db_config()
+    raw_path = str(cfg.get("db_path", "") or "").strip()
+    if not raw_path:
+        return None
+
+    absolute = _to_absolute_path(raw_path)
+    if absolute and absolute != raw_path:
+        try:
+            cfg["db_path"] = absolute.replace("\\", "/")
+            _write_db_config(cfg)
+        except Exception as exc:
+            print(f"[startup] WARNING: could not normalize db_path to absolute path: {exc}", file=sys.stderr)
+
+    return absolute if absolute else None
 
 
 def _normalize_path(path: str) -> str:
@@ -194,6 +250,8 @@ def get_db_config_status() -> dict:
     if not db_path:
         # Local DB path is auto-managed; default it when not explicitly set.
         db_path = _default_local_db_path_for_runtime().replace("\\", "/")
+    else:
+        db_path = _to_absolute_path(db_path).replace("\\", "/")
     gdrive_sync_path = str(cfg.get("gdrive_sync_path", "") or "").strip()
     if not gdrive_sync_path:
         gdrive_sync_path = _hydrate_missing_gdrive_sync_path(cfg, db_path)
@@ -242,6 +300,8 @@ def save_db_config_paths(*, db_path: str | None, gdrive_sync_path: str, sync_int
     if not db_path:
         db_path = existing_db_path or _default_local_db_path_for_runtime().replace("\\", "/")
 
+    db_path = _to_absolute_path(db_path).replace("\\", "/")
+
     cfg["_comment"] = "db_path = local machine path (fast, all session reads/writes go here)."
     cfg["_comment2"] = "gdrive_sync_path = Google Drive folder path used only for background sync; Stdytime.db is created there automatically."
     cfg["_comment3"] = "sync_interval_minutes = how often local DB is pushed to Google Drive (0 = disable)."
@@ -280,6 +340,7 @@ def _resolve_db_path():
     config_path = _read_db_config_path()
     env_db_path = os.getenv("DB_PATH", "").strip()
     preferred = config_path or env_db_path or _default_local_db_path_for_runtime()
+    preferred = _to_absolute_path(preferred)
     is_usable, reason = _can_use_db_parent(preferred)
     if is_usable:
         print(f"[startup] Local DB path: {preferred}")
@@ -435,9 +496,139 @@ def _migrate_student_photos_to_blob(db_path: str) -> None:
         conn.commit()
 
 
-def sync_from_gdrive(local_path: str, gdrive_path: str) -> bool:
+_LEGACY_STUDENT_COLUMNS_TO_REMOVE = (
+    "math_goal",
+    "math_ws_per_week",
+    "math_worksheets_per_week",
+    "reading_goal",
+    "reading_ws_per_week",
+    "reading_worksheets_per_week",
+)
+
+
+def _remove_legacy_student_columns(db_path: str) -> None:
+    """Drop legacy goal columns from students table, rebuilding table if needed."""
+    with sqlite3.connect(db_path) as conn:
+        cur = conn.cursor()
+        cols = [r[1] for r in cur.execute("PRAGMA table_info(students)").fetchall()]
+        to_drop = [col for col in _LEGACY_STUDENT_COLUMNS_TO_REMOVE if col in cols]
+        if not to_drop:
+            return
+
+        try:
+            for col in to_drop:
+                cur.execute(f'ALTER TABLE students DROP COLUMN "{col}"')
+            conn.commit()
+            print(f"[startup] Removed legacy student goal columns: {', '.join(to_drop)}")
+            return
+        except Exception as exc:
+            print(
+                f"[startup] Direct DROP COLUMN for legacy goal fields failed ({exc}); rebuilding students table.",
+                file=sys.stderr,
+            )
+            conn.rollback()
+
+        cur.execute("PRAGMA foreign_keys=OFF")
+        cur.execute("DROP TABLE IF EXISTS students_new_no_goals")
+        cur.execute(
+            """
+            CREATE TABLE students_new_no_goals (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT,
+                subject TEXT,
+                subjects_json TEXT DEFAULT '[]',
+                subject_minutes_json TEXT DEFAULT '[]',
+                total_study_minutes INTEGER DEFAULT 30,
+                level TEXT,
+                book_loaned INTEGER DEFAULT 0,
+                email TEXT,
+                phone TEXT,
+                guardian TEXT DEFAULT '',
+                active INTEGER DEFAULT 1,
+                el INTEGER DEFAULT 0,
+                pi INTEGER DEFAULT 0,
+                v INTEGER DEFAULT 0,
+                day1 TEXT DEFAULT '',
+                day1_time TEXT DEFAULT '',
+                day2 TEXT DEFAULT '',
+                day2_time TEXT DEFAULT '',
+                checkout_notify_enabled INTEGER DEFAULT 1,
+                photo TEXT DEFAULT '',
+                photo_blob BLOB,
+                photo_mime TEXT DEFAULT '',
+                photo_filename TEXT DEFAULT '',
+                schedule_json TEXT DEFAULT '',
+                qr_code BLOB,
+                device_loaned INTEGER DEFAULT 0,
+                ind INTEGER DEFAULT 0
+            )
+            """
+        )
+
+        src_cols = set(cols)
+
+        def _src(col_name: str, default_sql: str) -> str:
+            if col_name in src_cols:
+                return f'"{col_name}"'
+            return f'{default_sql} AS "{col_name}"'
+
+        insert_cols = [
+            "id", "name", "subject", "subjects_json", "subject_minutes_json", "total_study_minutes",
+            "level", "book_loaned", "email", "phone", "guardian", "active", "el", "pi", "v",
+            "day1", "day1_time", "day2", "day2_time", "checkout_notify_enabled", "photo", "photo_blob",
+            "photo_mime", "photo_filename", "schedule_json", "qr_code", "device_loaned", "ind",
+        ]
+
+        select_exprs = [
+            _src("id", "NULL"),
+            _src("name", "''"),
+            _src("subject", "''"),
+            _src("subjects_json", "'[]'"),
+            _src("subject_minutes_json", "'[]'"),
+            _src("total_study_minutes", "30"),
+            _src("level", "''"),
+            _src("book_loaned", "0"),
+            _src("email", "''"),
+            _src("phone", "''"),
+            _src("guardian", "''"),
+            _src("active", "1"),
+            _src("el", "0"),
+            _src("pi", "0"),
+            _src("v", "0"),
+            _src("day1", "''"),
+            _src("day1_time", "''"),
+            _src("day2", "''"),
+            _src("day2_time", "''"),
+            _src("checkout_notify_enabled", "1"),
+            _src("photo", "''"),
+            _src("photo_blob", "NULL"),
+            _src("photo_mime", "''"),
+            _src("photo_filename", "''"),
+            _src("schedule_json", "''"),
+            _src("qr_code", "NULL"),
+            _src("device_loaned", "0"),
+            _src("ind", "0"),
+        ]
+
+        cur.execute(
+            f"""
+            INSERT INTO students_new_no_goals ({', '.join(insert_cols)})
+            SELECT {', '.join(select_exprs)}
+            FROM students
+            """
+        )
+        cur.execute("DROP TABLE students")
+        cur.execute("ALTER TABLE students_new_no_goals RENAME TO students")
+        cur.execute("PRAGMA foreign_keys=ON")
+        conn.commit()
+        print(f"[startup] Rebuilt students table without legacy goal columns: {', '.join(to_drop)}")
+
+
+def sync_from_gdrive(local_path: str, gdrive_path: str, force: bool = False) -> bool:
     """
-    Pull GDrive → local on startup if the GDrive copy is newer.
+    Pull GDrive → local.
+    - force=False: pull only when GDrive mtime is newer than local.
+    - force=True: always pull when a GDrive DB exists.
     Returns True if a pull was performed.
     """
     gdrive_path = _resolve_gdrive_sync_target(gdrive_path)
@@ -446,8 +637,10 @@ def sync_from_gdrive(local_path: str, gdrive_path: str) -> bool:
     try:
         gdrive_mtime = os.path.getmtime(gdrive_path)
         local_mtime = os.path.getmtime(local_path) if os.path.exists(local_path) else 0
-        if gdrive_mtime > local_mtime + 10:   # 10 s tolerance avoids noise
-            print(f"[sync] Pulling DB from Google Drive (GDrive is newer): {gdrive_path}")
+        should_pull = force or (gdrive_mtime > local_mtime + 10)  # 10 s tolerance avoids noise
+        if should_pull:
+            reason = "forced startup override" if force else "GDrive is newer"
+            print(f"[sync] Pulling DB from Google Drive ({reason}): {gdrive_path}")
             _sqlite_backup(gdrive_path, local_path)
             print("[sync] Pull complete.")
             return True
@@ -630,16 +823,16 @@ def _start_background_sync(local_path: str, gdrive_path: str, interval_minutes: 
 _cfg = _read_db_config()
 GDRIVE_SYNC_PATH: str | None = _cfg.get("gdrive_sync_path", "").strip() or None
 _SYNC_INTERVAL = int(_cfg.get("sync_interval_minutes", 7))
-_STARTUP_PULL_ENABLED = str(_cfg.get("startup_pull_from_gdrive", "false")).strip().lower() == "true"
 
 DB_PATH = _resolve_db_path()
 
-# On startup: optional pull from GDrive if it is newer than local copy.
-# Default is disabled so local DB remains source-of-truth for runtime speed.
-if _STARTUP_PULL_ENABLED:
-    sync_from_gdrive(DB_PATH, GDRIVE_SYNC_PATH)
+# On startup: unconditionally override local DB with Google Drive DB when available.
+if GDRIVE_SYNC_PATH:
+    pulled = sync_from_gdrive(DB_PATH, GDRIVE_SYNC_PATH, force=True)
+    if not pulled:
+        print("[sync] Startup override skipped: Google Drive DB not found/unavailable.")
 else:
-    print("[sync] Startup pull disabled; local DB is source of truth.")
+    print("[sync] Startup override skipped: Google Drive path is not configured.")
 
 # Background thread: push local → GDrive periodically
 _start_background_sync(DB_PATH, GDRIVE_SYNC_PATH, _SYNC_INTERVAL)
@@ -717,10 +910,6 @@ def init_db():
             phone TEXT,
             guardian TEXT DEFAULT '',
             active INTEGER DEFAULT 1,
-            math_goal TEXT DEFAULT '',
-            math_ws_per_week INTEGER DEFAULT 0,
-            reading_goal TEXT DEFAULT '',
-            reading_ws_per_week INTEGER DEFAULT 0,
             el INTEGER DEFAULT 0,
             pi INTEGER DEFAULT 0,
             v INTEGER DEFAULT 0,
@@ -876,8 +1065,8 @@ def init_db():
     # Sample data
     if not c.execute("SELECT COUNT(*) FROM students").fetchone()[0]:
         demo = [
-            ("Alice Johnson", "S1", "6A", 0, "alice@demo.com", "111-222", 1),
-            ("Bob Smith", "S2", "5A", 1, "bob@demo.com", "222-333", 1)
+            ("Alice Johnson", "Reading", "6A", 0, "alice@demo.com", "111-222", 1),
+            ("Bob Smith", "Math", "5A", 1, "bob@demo.com", "222-333", 1)
         ]
         c.executemany("""INSERT INTO students
             (name, subject, level, book_loaned, email, phone, active)
@@ -893,23 +1082,13 @@ def init_db():
                   ("Mathematics Basics","KumoPress","111222333",1,"5A"))
     conn.commit(); conn.close()
 
+    _remove_legacy_student_columns(DB_PATH)
+
     # Ensure additional columns exist on students table (migration for additional fields)
     with sqlite3.connect(DB_PATH) as conn:
         cur = conn.cursor()
         cur.execute("PRAGMA table_info(students)")
         cols = [r[1] for r in cur.fetchall()]
-        if "math_goal" not in cols:
-            cur.execute("ALTER TABLE students ADD COLUMN math_goal TEXT")
-        if "math_worksheets_per_week" not in cols:
-            cur.execute("ALTER TABLE students ADD COLUMN math_worksheets_per_week INTEGER DEFAULT 0")
-        if "math_ws_per_week" not in cols:
-            cur.execute("ALTER TABLE students ADD COLUMN math_ws_per_week INTEGER DEFAULT 0")
-        if "reading_goal" not in cols:
-            cur.execute("ALTER TABLE students ADD COLUMN reading_goal TEXT")
-        if "reading_worksheets_per_week" not in cols:
-            cur.execute("ALTER TABLE students ADD COLUMN reading_worksheets_per_week INTEGER DEFAULT 0")
-        if "reading_ws_per_week" not in cols:
-            cur.execute("ALTER TABLE students ADD COLUMN reading_ws_per_week INTEGER DEFAULT 0")
         # Add new fields: EL, PI, V checkboxes and Day 1, Day 2 schedule fields
         if "el" not in cols:
             cur.execute("ALTER TABLE students ADD COLUMN el INTEGER DEFAULT 0")

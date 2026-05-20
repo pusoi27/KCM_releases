@@ -68,7 +68,8 @@
                       {% endif %}
                     </td>
                     <td>
-                      <span class="badge {% if student.subject == 'S1' %}bg-info{% elif student.subject == 'S2' %}bg-warning text-dark{% else %}bg-secondary{% endif %}">
+                      {% set subject_token = (student.subject or '')|trim|lower %}
+                      <span class="badge {% if subject_token in ['math', 'mathematics', 'm'] %}bg-primary{% elif subject_token in ['reading', 'read', 'r'] %}bg-info text-dark{% elif subject_token in ['writing', 'write', 'w'] %}bg-warning text-dark{% else %}bg-secondary{% endif %}">
                         {{ student.subject or 'N/A' }}
                       </span>
                     </td>

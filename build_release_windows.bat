@@ -25,7 +25,11 @@ copy %DIST_DIR%\Stdytime.exe %RELEASE_DIR%\
 copy .env %RELEASE_DIR%\
 copy db_config.json.example %RELEASE_DIR%\
 copy INSTALL_README_WINDOWS.txt %RELEASE_DIR%\
-copy VERSION %RELEASE_DIR%\
+if exist Version (
+	copy Version %RELEASE_DIR%\VERSION
+) else (
+	copy VERSION %RELEASE_DIR%\
+)
 REM Copy folders
 xcopy templates %RELEASE_DIR%\templates /E /I /Y
 xcopy static %RELEASE_DIR%\static /E /I /Y

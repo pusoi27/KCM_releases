@@ -32,7 +32,7 @@ def register_dashboard_routes(app):
 
     @app.route("/")
     @require_login
-    @require_feature(auth_manager.FEATURE_KUMOCLASS)
+    @require_feature(auth_manager.FEATURE_STDYTIMECLASS)
     def dashboard():
         return render_template(
             "dashboard.html",

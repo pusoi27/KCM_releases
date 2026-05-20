@@ -160,21 +160,9 @@ def _extract_days(schedule_json_str):
 def _students_list_cache_key() -> str:
     return server_cache.STUDENTS_LIST_CACHE_KEY
 
-def _student_goal_cache_key(student_id) -> str:
-    return f"{server_cache.STUDENT_GOAL_CACHE_PREFIX}{student_id}"
-
-def _student_goal_cache_prefix() -> str:
-    return server_cache.STUDENT_GOAL_CACHE_PREFIX
-
 def _invalidate_student_caches():
     """Invalidate student cache lanes."""
     server_cache.invalidate(_students_list_cache_key())
-
-def _invalidate_student_goal_caches(student_id=None, all_goal_keys_for_user=False):
-    if student_id is not None:
-        server_cache.invalidate(_student_goal_cache_key(student_id))
-    if all_goal_keys_for_user:
-        server_cache.invalidate_prefix(_student_goal_cache_prefix())
 
 
 def _student_photo_url(student_row):
@@ -397,7 +385,7 @@ def register_student_routes(app, upload_folder):
                 schedule_json=_sched_json,
                 guardian=request.form.get("guardian", ""),
             )
-            # Invalidate tenant-scoped list lane + this student's static profile lane.
+            # Invalidate tenant-scoped student list lane.
             _invalidate_student_caches()
             # Save photo after we have the student_id
             photo_file = request.files.get('photo')
@@ -452,7 +440,7 @@ def register_student_routes(app, upload_folder):
                 schedule_json=_sched_json,
                 guardian=request.form.get("guardian", ""),
             )
-            # Invalidate static profile/goals lane for this student + user-scoped list lane.
+            # Invalidate tenant-scoped student list lane.
             _invalidate_student_caches()
             # Save photo if a new one was uploaded
             photo_file = request.files.get('photo')

@@ -37,36 +37,63 @@ def _trace_staff_duty(event: str, **fields) -> None:
 def _students_list_cache_key() -> str:
     return server_cache.STUDENTS_LIST_CACHE_KEY
 
-def _student_goal_cache_key(student_id) -> str:
-    return f"{server_cache.STUDENT_GOAL_CACHE_PREFIX}{student_id}"
-
 
 def _has_photo_blob(student_row) -> bool:
     """Return True when the student row contains a non-empty photo blob."""
-    if not student_row or len(student_row) <= 20:
-        return False
-    raw = student_row[20]
-    if raw is None:
-        return False
-    if isinstance(raw, memoryview):
-        return len(raw.tobytes()) > 0
-    if isinstance(raw, (bytes, bytearray)):
-        return len(raw) > 0
-    return False
+    blob, _ = _extract_photo_blob_and_mime(student_row)
+    return bool(blob)
+
+
+def _extract_photo_blob_and_mime(student_row):
+    """Return (photo_blob_bytes|None, photo_mime) from heterogeneous student row shapes."""
+    if not student_row:
+        return None, ''
+
+    # Known row shapes used across the app:
+    # - get_student():      ... photo_blob(19), photo_mime(20), ...
+    # - get_all_students(): ... total_study_minutes(20), photo_blob(21), photo_mime(22)
+    candidate_pairs = [(21, 22), (19, 20), (20, 21)]
+
+    def _as_blob(value):
+        if isinstance(value, memoryview):
+            value = value.tobytes()
+        if isinstance(value, (bytes, bytearray)) and len(value) > 0:
+            return bytes(value)
+        return None
+
+    for blob_idx, mime_idx in candidate_pairs:
+        if len(student_row) <= blob_idx:
+            continue
+        blob = _as_blob(student_row[blob_idx])
+        if not blob:
+            continue
+        mime = ''
+        if len(student_row) > mime_idx:
+            mime = str(student_row[mime_idx] or '').strip()
+        return blob, mime
+
+    # Fallback for legacy/unknown tuple layouts: scan right-to-left for first non-empty bytes-like value.
+    for idx in range(len(student_row) - 1, -1, -1):
+        blob = _as_blob(student_row[idx])
+        if not blob:
+            continue
+        mime = ''
+        if idx + 1 < len(student_row):
+            next_val = student_row[idx + 1]
+            if isinstance(next_val, str):
+                candidate_mime = next_val.strip()
+                if '/' in candidate_mime:
+                    mime = candidate_mime
+        return blob, mime
+
+    return None, ''
 
 
 def _photo_data_uri(student_row) -> str:
     """Return a data URI for a student blob photo, or empty string if absent."""
-    if not _has_photo_blob(student_row):
+    blob, mime = _extract_photo_blob_and_mime(student_row)
+    if not blob:
         return ''
-    blob = student_row[20]
-    if isinstance(blob, memoryview):
-        blob = blob.tobytes()
-    if not isinstance(blob, (bytes, bytearray)) or not blob:
-        return ''
-    mime = ''
-    if len(student_row) > 21:
-        mime = str(student_row[21] or '').strip()
     mime = mime or 'image/png'
     encoded = base64.b64encode(blob).decode('ascii')
     return f'data:{mime};base64,{encoded}'
@@ -103,6 +130,36 @@ def _subjects_from_student_row(student_row) -> list:
                 return [text]
 
     return [student_row[2]] if len(student_row) > 2 and student_row[2] else []
+
+
+def _total_study_minutes_from_student_row(student_row) -> int:
+    """Return total planned study minutes for a student row from get_all_students()."""
+    if not student_row:
+        return 30
+
+    try:
+        total_minutes = int(student_row[20]) if len(student_row) > 20 and student_row[20] is not None else 0
+    except (TypeError, ValueError):
+        total_minutes = 0
+    if total_minutes > 0:
+        return total_minutes
+
+    # Fallback: sum subject_minutes_json when total column is missing/invalid.
+    raw_minutes = student_row[19] if len(student_row) > 19 else None
+    if raw_minutes:
+        try:
+            parsed = json.loads(raw_minutes)
+            if isinstance(parsed, list):
+                minute_values = [max(0, int(item)) for item in parsed if item is not None]
+                summed = sum(minute_values)
+                if summed > 0:
+                    return summed
+        except (TypeError, ValueError, json.JSONDecodeError):
+            pass
+
+    # Final fallback: subjects count * 30 minutes.
+    subjects = _subjects_from_student_row(student_row)
+    return max(30, len(subjects) * 30)
 
 def _format_checkout_timestamp(value: str) -> str:
     """Format ISO-ish timestamps for human-readable emails."""
@@ -219,7 +276,7 @@ def register_api_routes(app):
     
     @app.route("/api/students/list")
     @require_login
-    @require_feature(auth_manager.FEATURE_KUMOCLASS)
+    @require_feature(auth_manager.FEATURE_STDYTIMECLASS)
     def api_students_list():
         """Return students with computed status: registered | active | checked."""
         cache_key = _students_list_cache_key()
@@ -341,42 +398,9 @@ def register_api_routes(app):
 
         return jsonify(result)
 
-    @app.route("/api/students/profile-goals/<int:sid>")
-    @require_login
-    def api_student_profile_goals(sid):
-        """Return static student profile/goals payload with long-lived cache policy."""
-        cache_key = _student_goal_cache_key(sid)
-        def _build_profile_goals_payload():
-            profile = student_manager.get_student_static_profile(sid)
-            if not profile:
-                return None
-            return {
-                "id": profile.get("id"),
-                "name": profile.get("name"),
-                "subject": profile.get("subject"),
-                "guardian": profile.get("guardian"),
-                "math_goal": profile.get("math_goal"),
-                "math_ws_per_week": profile.get("math_ws_per_week"),
-                "reading_goal": profile.get("reading_goal"),
-                "reading_ws_per_week": profile.get("reading_ws_per_week"),
-                "day1": profile.get("day1"),
-                "day2": profile.get("day2"),
-                "day1_time": profile.get("day1_time"),
-                "day2_time": profile.get("day2_time"),
-            }
-
-        payload = server_cache.get_or_set(
-            cache_key,
-            _build_profile_goals_payload,
-            policy="student_goal",
-        )
-        if payload is None:
-            return jsonify({"error": "Student not found"}), 404
-        return jsonify(payload)
-
     @app.route("/api/students/start/<int:sid>", methods=["POST"])
     @require_login
-    @require_feature(auth_manager.FEATURE_KUMOCLASS)
+    @require_feature(auth_manager.FEATURE_STDYTIMECLASS)
     def api_students_start(sid):
         student = student_manager.get_student(sid)
         if not student:
@@ -387,7 +411,7 @@ def register_api_routes(app):
 
     @app.route("/api/students/stop/<int:sid>", methods=["POST"])
     @require_login
-    @require_feature(auth_manager.FEATURE_KUMOCLASS)
+    @require_feature(auth_manager.FEATURE_STDYTIMECLASS)
     def api_students_stop(sid):
         student = student_manager.get_student(sid)
         if not student:
@@ -460,7 +484,7 @@ def register_api_routes(app):
 
     @app.route("/api/sessions/active")
     @require_login
-    @require_feature(auth_manager.FEATURE_KUMOCLASS)
+    @require_feature(auth_manager.FEATURE_STDYTIMECLASS)
     def api_sessions_active():
         """Return only currently active sessions; auto-stop any over 2h."""
         now_str = time_now()
@@ -541,6 +565,7 @@ def register_api_routes(app):
                 "device_loaned": s[9] if len(s) > 9 else 0,
                 "start_time": start,
                 "subjects": _subjects_from_student_row(s),
+                "total_study_minutes": _total_study_minutes_from_student_row(s),
                 "photo_url": f"/students/photo/{sid}" if _has_photo_blob(s) else '',
                 "photo_data_uri": _photo_data_uri(s),
             })
@@ -549,7 +574,7 @@ def register_api_routes(app):
 
     @app.route("/api/sessions/clear", methods=["POST"])
     @require_admin
-    @require_feature(auth_manager.FEATURE_KUMOCLASS)
+    @require_feature(auth_manager.FEATURE_STDYTIMECLASS)
     def api_sessions_clear():
         """Stop all active sessions (DB + cache) and clear timer buffers."""
         try:
@@ -566,12 +591,11 @@ def register_api_routes(app):
 
     @app.route("/api/sessions/toggle", methods=["POST"])
     @require_login
-    @require_feature(auth_manager.FEATURE_KUMOCLASS)
+    @require_feature(auth_manager.FEATURE_STDYTIMECLASS)
     def api_sessions_toggle():
         """Toggle a student's session: start if not active, stop if active.
         Request JSON: {"student_id": <id>}
         Returns: {"action": "started"|"checked_out", "student_id": <id>, "name": <name>}
-        Validation: Student must have at least one goal (Math or Reading) to start session.
         """
         try:
             data = request.get_json() or {}
@@ -651,20 +675,6 @@ def register_api_routes(app):
                     "checkout_email_message": checkout_email_message,
                 }), 200
             else:
-                # Validate goals only when STARTING a new session.
-                # get_student tuple:
-                # (id,name,subject,email,phone,legacy_contact,active,book_loaned,device_loaned,math_goal,math_ws_per_week,reading_goal,reading_ws_per_week,...)
-                math_goal = student[9] if len(student) > 9 else None
-                reading_goal = student[11] if len(student) > 11 else None
-
-                math_filled = bool(math_goal and str(math_goal).strip())
-                reading_filled = bool(reading_goal and str(reading_goal).strip())
-
-                if not (math_filled or reading_filled):
-                    return jsonify({
-                        "error": f"⚠️ {student_name} cannot start a session. Math Goal and Reading Goal are both blank. Please set at least one goal (Math or Reading)."
-                    }), 400
-
                 # Start a new session
                 timer_manager.start_session(student_id)
                 server_cache.invalidate(_students_list_cache_key())

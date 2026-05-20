@@ -11,7 +11,7 @@ import, plus a compatibility shim for get_current_user_id().
 FEATURE_STUDENT_DATABASE = "student_database"
 FEATURE_BOOKS = "books"
 FEATURE_ASSISTANTS = "assistants"
-FEATURE_KUMOCLASS = "kumoclass"
+FEATURE_STDYTIMECLASS = "stdytimeclass"
 FEATURE_UTILITIES_PRINT = "utilities_print"
 FEATURE_UTILITIES_EMAIL = "utilities_email"
 FEATURE_INSTRUCTOR_PROFILE = "instructor_profile"
@@ -24,4 +24,4 @@ def get_current_user_id():
     return 1
 
 
-
+

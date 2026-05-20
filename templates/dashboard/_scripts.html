@@ -1,7 +1,6 @@
 <script>
 const SEAT_LIMIT = 16;
 const SEAT_LIMIT_FULLSCREEN = 16; // 4x4 grid = 16 seats
-const DURATION_LIMITS = { "S1": 30*60, "S2": 60*60 };
 const IDLE_TIMEOUT_MS = 60000; // 1 minute
 const isActiveClassWindow = true; // only dashboard should handle class check-in/out
 
@@ -133,6 +132,22 @@ function subjectBadgeHtml(value){
   const subject = String(value ?? '').trim();
   if (!subject) return '';
   return `<span class="badge ${subjectBadgeClass(subject)} me-1" style="font-size:0.65em;">${escapeHtmlAttr(subject)}</span>`;
+}
+
+function sessionLimitSeconds(session){
+  const plannedMinutes = Number(session && session.total_study_minutes);
+  if (Number.isFinite(plannedMinutes) && plannedMinutes > 0) {
+    return Math.round(plannedMinutes * 60);
+  }
+
+  const subjects = Array.isArray(session && session.subjects)
+    ? session.subjects.filter(Boolean)
+    : [];
+  if (subjects.length > 0) {
+    return subjects.length * 30 * 60;
+  }
+
+  return 30 * 60;
 }
 
 
@@ -490,7 +505,7 @@ function buildSeatGrid(activeSessions){
     const s=activeSessions[i];
     if(s){
       const start=new Date((s.start_time||"").replace(/\u202f|\u2009/g," "));
-      const limit=DURATION_LIMITS[s.subject]||1800;
+      const limit = sessionLimitSeconds(s);
       const badges = [];
       if (s.subject) {  // Only add subject badge if subject is not empty
         badges.push(s.subject);

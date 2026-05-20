@@ -45,12 +45,12 @@
     white-space: nowrap;
     cursor: pointer;
   }
-  .student-badge.s1 {
+  .student-badge.subject-one {
     background-color: #d1ecf1;
     border: 1px solid #bee5eb;
     color: #000;
   }
-  .student-badge.s2 {
+  .student-badge.subject-two {
     background-color: #fff3cd;
     border: 1px solid #ffeaa7;
     color: #000;
@@ -96,6 +96,16 @@
     border-radius: 4px;
     font-size: 0.8rem;
     margin-right: 5px;
+  }
+  .legend-badge.subject-one {
+    background-color: #d1ecf1;
+    border: 1px solid #bee5eb;
+    color: #000;
+  }
+  .legend-badge.subject-two {
+    background-color: #fff3cd;
+    border: 1px solid #ffeaa7;
+    color: #000;
   }
   @media print {
     @page {
@@ -214,11 +224,11 @@
     <div class="legend print-hide">
       <h6 class="mb-3"><i class="bi bi-info-circle"></i> Legend</h6>
       <div class="legend-item">
-        <span class="legend-badge s1">S1</span>
+        <span class="legend-badge subject-one">1 Subject</span>
         <span>One Subject</span>
       </div>
       <div class="legend-item">
-        <span class="legend-badge s2">S2</span>
+        <span class="legend-badge subject-two">2 Subjects</span>
         <span>Two Subjects</span>
       </div>
       <div class="legend-item">

@@ -1,35 +1,40 @@
 import sqlite3
+import os
+import sys
 
-DB_PATH = r"c:/Users/octav/AppData/Local/Programs/Python/Python312/stdytime/data/Stdytime.db"
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, PROJECT_ROOT)
 
-with sqlite3.connect(DB_PATH) as conn:
-    c = conn.cursor()
-    c.execute("""
-        CREATE TABLE IF NOT EXISTS students_new (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            name TEXT,
-            subject TEXT,
-            level TEXT,
-            book_loaned INTEGER DEFAULT 0,
-            paper_ws INTEGER DEFAULT 0,
-            email TEXT,
-            phone TEXT,
-            active INTEGER DEFAULT 1,
-            el INTEGER DEFAULT 0,
-            pi INTEGER DEFAULT 0,
-            v INTEGER DEFAULT 0,
-            day1 TEXT DEFAULT '',
-            day1_time TEXT DEFAULT '',
-            day2 TEXT DEFAULT '',
-            day2_time TEXT DEFAULT '',
-            owner_user_id INTEGER NOT NULL DEFAULT 1
-        )
-    """)
-    c.execute("""
-        INSERT INTO students_new (id, name, subject, level, book_loaned, paper_ws, email, phone, active, el, pi, v, day1, day1_time, day2, day2_time, owner_user_id)
-        SELECT id, name, subject, level, book_loaned, paper_ws, email, phone, active, el, pi, v, day1, day1_time, day2, day2_time, owner_user_id FROM students
-    """)
-    c.execute("DROP TABLE students")
-    c.execute("ALTER TABLE students_new RENAME TO students")
-    conn.commit()
-print("Student table migrated: math/reading goals and ws/week fields removed.")
+from modules.database import DB_PATH
+
+
+LEGACY_GOAL_COLUMNS = (
+    "math_goal",
+    "math_ws_per_week",
+    "math_worksheets_per_week",
+    "reading_goal",
+    "reading_ws_per_week",
+    "reading_worksheets_per_week",
+)
+
+
+def main():
+    with sqlite3.connect(DB_PATH) as conn:
+        c = conn.cursor()
+        cols = [r[1] for r in c.execute("PRAGMA table_info(students)").fetchall()]
+        to_drop = [col for col in LEGACY_GOAL_COLUMNS if col in cols]
+
+        if not to_drop:
+            print("No legacy goal columns found. Nothing to migrate.")
+            return
+
+        for col in to_drop:
+            c.execute(f'ALTER TABLE students DROP COLUMN "{col}"')
+        conn.commit()
+
+    print(f"Student table migrated. Removed columns: {', '.join(to_drop)}")
+
+
+if __name__ == "__main__":
+    main()

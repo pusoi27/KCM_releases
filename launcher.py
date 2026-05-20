@@ -19,6 +19,8 @@ import logging
 import subprocess
 import tempfile
 import shutil
+import socket
+import ctypes
 from pathlib import Path
 
 # ---------------------------------------------------------------------------
@@ -37,11 +39,6 @@ logging.basicConfig(
     datefmt="%H:%M:%S",
 )
 log = logging.getLogger("launcher")
-
-# ---------------------------------------------------------------------------
-# Import Flask app (this runs module-level setup in app.py)
-# ---------------------------------------------------------------------------
-from app import app  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Waitress server thread
@@ -79,9 +76,34 @@ def _load_icon_image():
 def start_server():
     global _server
     from waitress import create_server
+    from app import app
     log.info("Starting Waitress on %s", URL)
     _server = create_server(app, host=HOST, port=PORT, threads=8)
     _server.run()
+
+
+def _is_port_open(host, port, timeout=0.8):
+    """Return True when a server is already listening on host:port."""
+    try:
+        with socket.create_connection((host, port), timeout=timeout):
+            return True
+    except OSError:
+        return False
+
+
+def _show_already_running_notice(url):
+    """Show a user-facing notice in packaged mode when an instance is already running."""
+    if not getattr(sys, 'frozen', False):
+        return
+    try:
+        ctypes.windll.user32.MessageBoxW(
+            0,
+            f"Stdytime is already running.\n\nOpening existing instance:\n{url}",
+            "Stdytime",
+            0x40,  # MB_ICONINFORMATION
+        )
+    except Exception:
+        pass
 
 
 def _find_browser_executable():
@@ -181,7 +203,7 @@ def quit_app(icon, item=None):
         icon.stop()
     if _server:
         _server.close()
-    os._exit(0)
+    raise SystemExit(0)
 
 
 # ---------------------------------------------------------------------------
@@ -189,6 +211,12 @@ def quit_app(icon, item=None):
 # ---------------------------------------------------------------------------
 def main():
     global _server_thread, _tray_icon
+
+    if _is_port_open(HOST, PORT):
+        log.info("Existing Stdytime instance detected at %s; opening browser only.", URL)
+        _show_already_running_notice(URL)
+        open_browser()
+        return
 
     # Start Waitress in a daemon thread
     _server_thread = threading.Thread(target=start_server, daemon=True, name="waitress")

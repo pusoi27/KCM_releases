@@ -342,8 +342,8 @@
         {% set ns = namespace(m=false, r=false, w=false) %}
         {% for subject_name in s.subjects %}
           {% set token = (subject_name or '')|trim|lower %}
-          {% if token in ['m', 'math', 'mathematics', 's2'] %}{% set ns.m = true %}{% endif %}
-          {% if token in ['r', 'reading', 'read', 's1'] %}{% set ns.r = true %}{% endif %}
+          {% if token in ['m', 'math', 'mathematics'] or (token.startswith('s') and token[1:] == '2') %}{% set ns.m = true %}{% endif %}
+          {% if token in ['r', 'reading', 'read'] or (token.startswith('s') and token[1:] == '1') %}{% set ns.r = true %}{% endif %}
           {% if token in ['w', 'writing', 'write'] %}{% set ns.w = true %}{% endif %}
         {% endfor %}
         <td class="col-subject-flag"><input class="form-check-input subject-check" type="checkbox" {% if ns.m %}checked{% endif %} disabled></td>
@@ -440,8 +440,8 @@
         {% set ns = namespace(m=false, r=false, w=false) %}
         {% for subject_name in s.subjects %}
           {% set token = (subject_name or '')|trim|lower %}
-          {% if token in ['m', 'math', 'mathematics', 's2'] %}{% set ns.m = true %}{% endif %}
-          {% if token in ['r', 'reading', 'read', 's1'] %}{% set ns.r = true %}{% endif %}
+          {% if token in ['m', 'math', 'mathematics'] or (token.startswith('s') and token[1:] == '2') %}{% set ns.m = true %}{% endif %}
+          {% if token in ['r', 'reading', 'read'] or (token.startswith('s') and token[1:] == '1') %}{% set ns.r = true %}{% endif %}
           {% if token in ['w', 'writing', 'write'] %}{% set ns.w = true %}{% endif %}
         {% endfor %}
         <td class="col-subject-flag"><input class="form-check-input subject-check" type="checkbox" {% if ns.m %}checked{% endif %} disabled style="opacity:0.6;"></td>

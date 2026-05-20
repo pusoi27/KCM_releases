@@ -111,11 +111,34 @@ Function WriteFreshDbConfig
   FileClose $2
 FunctionEnd
 
+Function EnsureStdytimeStopped
+  ; Stop any running packaged app instance so files can be overwritten.
+  nsExec::ExecToLog 'taskkill /F /IM Stdytime.exe'
+  Sleep 1200
+
+  ; If executable still cannot be deleted, it is locked by another process/session.
+  IfFileExists "$INSTDIR\\Stdytime.exe" 0 done_stop
+  ClearErrors
+  Delete "$INSTDIR\\Stdytime.exe"
+  IfErrors 0 restore_exe
+
+  MessageBox MB_OK|MB_ICONSTOP "Stdytime appears to still be running.$\r$\nPlease close all Stdytime windows (including tray/background) and run the installer again."
+  Abort
+
+restore_exe:
+  ; Recreate placeholder by copying current EXE from payload during install section.
+done_stop:
+FunctionEnd
+
 Section "Stdytime (required)" SecMain
   SectionIn RO
 
   ; Always install/update in one stable folder.
   StrCpy $INSTDIR "$LOCALAPPDATA\\${APP_NAME}"
+
+  ; Upgrades must overwrite existing binaries.
+  SetOverwrite on
+  Call EnsureStdytimeStopped
 
   SetOutPath "$INSTDIR"
   ; Never overwrite user local DB/config/backup artifacts during update.

@@ -185,15 +185,21 @@ def _csv_marked(value):
 def _normalize_subject_name(raw_subject):
     token = str(raw_subject or '').strip()
     key = token.lower()
+
+    # Legacy S# subject designations are mapped without hard-coded legacy labels.
+    if key.startswith('s') and key[1:].isdigit():
+        if key[1:] == '1':
+            return 'Reading'
+        if key[1:] == '2':
+            return 'Math'
+
     mapping = {
         'm': 'Math',
         'math': 'Math',
         'mathematics': 'Math',
-        's2': 'Math',
         'r': 'Reading',
         'reading': 'Reading',
         'read': 'Reading',
-        's1': 'Reading',
         'w': 'Writing',
         'writing': 'Writing',
         'write': 'Writing',
@@ -633,7 +639,6 @@ def get_deleted_students():
         c = conn.cursor()
         c.execute("""
             SELECT s.id, s.name, s.subject, s.level, s.email, s.phone, '' AS legacy_contact, s.active, s.book_loaned, s.device_loaned,
-                   s.math_goal, s.math_ws_per_week, s.reading_goal, s.reading_ws_per_week,
                    s.el, s.pi, s.v, s.day1, s.day1_time, s.day2, s.day2_time
             FROM students s
             WHERE s.active = 0

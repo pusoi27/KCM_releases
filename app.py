@@ -18,43 +18,6 @@ from flask_wtf.csrf import CSRFProtect, generate_csrf
 import logging
 import atexit
 
-# Ensure only one instance runs on port 5000 (Windows-specific)
-import subprocess
-import re
-
-def kill_processes_on_port(port):
-    """Kill all processes using the specified TCP port (Windows only)."""
-    try:
-        # Run netstat to find PIDs using the port
-        result = subprocess.run(
-            ["netstat", "-ano"], capture_output=True, text=True, check=True
-        )
-        lines = result.stdout.splitlines()
-        pids = set()
-        port_pattern = re.compile(rf"^\s*TCP\s+[^\s]+:{port}\s+")
-        for line in lines:
-            if port_pattern.match(line):
-                parts = line.split()
-                if len(parts) >= 5:
-                    pid = parts[-1]
-                    if pid.isdigit():
-                        pids.add(pid)
-        # Kill each PID
-        for pid in pids:
-            if int(pid) == os.getpid():
-                continue  # Don't kill self
-            try:
-                subprocess.run(["taskkill", "/PID", pid, "/F"], check=True, capture_output=True)
-                print(f"[startup] Killed process on port {port}: PID {pid}")
-            except Exception as e:
-                print(f"[startup] Failed to kill PID {pid}: {e}")
-    except Exception as e:
-        print(f"[startup] Error checking/killing processes on port {port}: {e}")
-
-# Only kill processes on port 5000 if not running in Flask reloader child
-if os.getenv("WERKZEUG_RUN_MAIN") != "true":
-    kill_processes_on_port(5000)
-
 # Load environment variables from .env file
 load_dotenv()
 
@@ -65,6 +28,28 @@ from modules import user_identity_manager
 from modules import server_cache
 from modules.utils import format_hhmm
 from modules.rate_limiter import limiter
+from modules.single_instance import ensure_single_instance, release_single_instance_lock
+
+
+def _should_enforce_single_instance() -> bool:
+    """Avoid lock contention with Flask's reloader parent process in development."""
+    use_reloader = os.getenv("FLASK_USE_RELOADER", "true").lower() == "true"
+    if use_reloader and os.getenv("WERKZEUG_RUN_MAIN") != "true":
+        return False
+    return True
+
+
+if _should_enforce_single_instance():
+    try:
+        ensure_single_instance(
+            app_name='stdytime-app',
+            host=os.getenv('HOST', '127.0.0.1'),
+            port=int(os.getenv('PORT', '5000')),
+        )
+        atexit.register(release_single_instance_lock)
+    except RuntimeError as exc:
+        print(f"[startup] BLOCKED: {exc}", file=sys.stderr)
+        sys.exit(1)
 
 # ================================================================
 #  Flask setup
@@ -533,7 +518,7 @@ def inject_subscription_access():
         'can_access_students': True,
         'can_access_books': True,
         'can_access_assistants': True,
-        'can_access_kumoclass': True,
+        'can_access_stdytimeclass': True,
         'can_access_utilities_print': True,
         'can_send_email': True,
         'can_access_instructor_profile': True,

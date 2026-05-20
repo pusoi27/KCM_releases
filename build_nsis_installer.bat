@@ -24,9 +24,13 @@ if errorlevel 1 exit /b 1
 
 REM Read version for installer naming
 set APP_VERSION=
-for /f "usebackq delims=" %%v in ("VERSION") do set APP_VERSION=%%v
+if exist "Version" (
+  for /f "usebackq delims=" %%v in ("Version") do set APP_VERSION=%%v
+) else (
+  for /f "usebackq delims=" %%v in ("VERSION") do set APP_VERSION=%%v
+)
 if "%APP_VERSION%"=="" (
-  echo [ERROR] Could not read VERSION file.
+  echo [ERROR] Could not read Version or VERSION file.
   exit /b 1
 )
 

@@ -43,7 +43,6 @@ _store: Dict[str, _CacheEntry] = {}
 
 # Shared cache key base strings
 STUDENTS_LIST_CACHE_KEY = "students:list:v1"
-STUDENT_GOAL_CACHE_PREFIX = "students:goal:v1:"
 BOOKS_CATALOG_CACHE_KEY = "books:catalog:v1"
 BOOK_DETAIL_CACHE_PREFIX = "books:detail:v1:"
 ASSISTANTS_PROFILE_LIST_CACHE_KEY = "assistants:profiles:list:v1"
@@ -55,8 +54,6 @@ CACHE_POLICIES = {
 	"default": {"ttl": 300, "jitter": 30},
 	# Example: student check-in data => 1h + rand(0..30m)
 	"checkin": {"ttl": 3600, "jitter": 1800},
-	# Example: student goals/static profile => 24h + rand(0..30m)
-	"student_goal": {"ttl": 86400, "jitter": 1800},
 	# Books catalog/details are mostly static and can live longer.
 	"book_catalog": {"ttl": 21600, "jitter": 1800},
 	# Assistant profiles are mostly static.

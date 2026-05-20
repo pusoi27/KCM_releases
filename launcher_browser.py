@@ -10,46 +10,14 @@ import time
 import webbrowser
 import subprocess
 import shutil
-import atexit
 import tempfile
+import socket
+import ctypes
 from pathlib import Path
 
 
-_PORT_TO_CLEANUP = 5000
-_BROWSER_PROCESS = None
-
-
-def _kill_processes_on_port(port):
-    """Kill all processes listening on a TCP port (Windows only)."""
-    try:
-        result = subprocess.run(
-            ["netstat", "-ano"], capture_output=True, text=True, check=True
-        )
-        pids = set()
-        for line in result.stdout.splitlines():
-            if f":{port} " not in line or "LISTENING" not in line:
-                continue
-            parts = line.split()
-            if len(parts) >= 5 and parts[-1].isdigit():
-                pids.add(parts[-1])
-
-        for pid in pids:
-            if int(pid) == os.getpid():
-                continue
-            try:
-                subprocess.run(["taskkill", "/PID", pid, "/F"], check=True, capture_output=True)
-                print(f"[launcher] Killed process on port {port}: PID {pid}")
-            except Exception as exc:
-                print(f"[launcher] Failed to kill PID {pid}: {exc}")
-    except Exception as exc:
-        print(f"[launcher] Error checking/killing processes on port {port}: {exc}")
-
-
-def _cleanup_on_exit():
-    _kill_processes_on_port(_PORT_TO_CLEANUP)
-
-
-atexit.register(_cleanup_on_exit)
+_DEFAULT_HOST = '127.0.0.1'
+_DEFAULT_PORT = 5000
 
 
 def _find_browser_executable():
@@ -94,6 +62,30 @@ def _launch_browser(url):
         webbrowser.open(url)
         return None
 
+
+def _is_port_open(host, port, timeout=0.8):
+    """Return True when a server is already listening on host:port."""
+    try:
+        with socket.create_connection((host, port), timeout=timeout):
+            return True
+    except OSError:
+        return False
+
+
+def _show_already_running_notice(url):
+    """Show a user-facing notice in packaged mode when an instance is already running."""
+    if not getattr(sys, 'frozen', False):
+        return
+    try:
+        ctypes.windll.user32.MessageBoxW(
+            0,
+            f"Stdytime is already running.\n\nOpening existing instance:\n{url}",
+            "Stdytime",
+            0x40,  # MB_ICONINFORMATION
+        )
+    except Exception:
+        pass
+
 def main():
     # Set environment for local development
     os.environ['APP_ENV'] = 'development'
@@ -101,6 +93,18 @@ def main():
     os.environ['PORT'] = '5000'
     os.environ['COOKIE_SECURE'] = 'false'
     
+    host = os.environ.get('HOST', _DEFAULT_HOST)
+    port = int(os.environ.get('PORT', str(_DEFAULT_PORT)))
+    url = f"http://{host}:{port}/"
+
+    # If the app is already running, do not spawn another instance.
+    if _is_port_open(host, port):
+        print(f"\nAn existing Stdytime instance is already running at {url}")
+        print("Opening the existing instance in your browser...")
+        _show_already_running_notice(url)
+        _launch_browser(url)
+        return
+
     # Get the app directory
     if getattr(sys, 'frozen', False):
         # Running as executable
@@ -177,7 +181,6 @@ def main():
         if not center_name:
             center_name = "Stdytime Center"
 
-        url = "http://127.0.0.1:5000/"
         print(f"\nOpening {url} in your browser...")
         browser_proc = _launch_browser(url)
 
@@ -196,15 +199,12 @@ def main():
         try:
             if browser_proc:
                 browser_proc.wait()
-                print("\nBrowser closed; cleaning up port 5000 listeners...")
-                _kill_processes_on_port(_PORT_TO_CLEANUP)
             else:
                 while True:
                     time.sleep(1)
         except KeyboardInterrupt:
             print("\nShutting down...")
         finally:
-            _kill_processes_on_port(_PORT_TO_CLEANUP)
             sys.exit(0)
             
     except Exception as e:
