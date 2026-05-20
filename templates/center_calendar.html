@@ -35,6 +35,15 @@
     padding: 6px;
     min-height: 60px;
     font-size: 0.8rem;
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+  }
+  .classification-line {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 2px;
+    line-height: 1.2;
   }
   .student-badge {
     display: inline-block;
@@ -204,14 +213,49 @@
         {% for day in schedule.active_days %}
           <div class="calendar-cell">
             {% if schedule.calendar[day] and schedule.calendar[day][time_slot] %}
-              {% for student in schedule.calendar[day][time_slot] %}
-                <a href="{{ url_for('students_edit', sid=student.id, from_calendar=1) }}" class="student-badge {{ student.subject|lower }}{% if not student.el and not student.pi %} no-background{% elif student.el %} has-el{% elif student.pi %} has-pi{% endif %}" title="{{ student.name }} - {{ student.subject }} - {{ student.email }}" style="text-decoration: none; color: inherit;">
-                  {{ student.name }}
-                  {% if student.el %}<span class="badge bg-warning text-dark" style="font-size:0.65rem;padding:1px 3px;">EL</span>{% endif %}
-                  {% if student.pi %}<span class="badge bg-info" style="font-size:0.65rem;padding:1px 3px;">PI</span>{% endif %}
-                  {% if student.v %}<span class="badge bg-success" style="font-size:0.65rem;padding:1px 3px;">V</span>{% endif %}
-                </a>
-              {% endfor %}
+              <!-- Assisted students line -->
+              <div class="classification-line">
+                {% for student in schedule.calendar[day][time_slot] %}
+                  {% if student.el %}
+                    <a href="{{ url_for('students_edit', sid=student.id, from_calendar=1) }}" class="student-badge" title="{{ student.name }} - {{ student.subject }} - Assisted" style="text-decoration: none; color: inherit; background-color: #fefce8; border: 1px solid #fde68a; color: #a16207;">
+                      {{ student.name }}
+                    </a>
+                  {% endif %}
+                {% endfor %}
+              </div>
+              
+              <!-- Monitored students line -->
+              <div class="classification-line">
+                {% for student in schedule.calendar[day][time_slot] %}
+                  {% if student.pi %}
+                    <a href="{{ url_for('students_edit', sid=student.id, from_calendar=1) }}" class="student-badge" title="{{ student.name }} - {{ student.subject }} - Monitored" style="text-decoration: none; color: inherit; background-color: #eff6ff; border: 1px solid #bfdbfe; color: #2563eb;">
+                      {{ student.name }}
+                    </a>
+                  {% endif %}
+                {% endfor %}
+              </div>
+              
+              <!-- Independent students line -->
+              <div class="classification-line">
+                {% for student in schedule.calendar[day][time_slot] %}
+                  {% if student.ind %}
+                    <a href="{{ url_for('students_edit', sid=student.id, from_calendar=1) }}" class="student-badge" title="{{ student.name }} - {{ student.subject }} - Independent" style="text-decoration: none; color: inherit; background-color: #f0fdf4; border: 1px solid #bbf7d0; color: #15803d;">
+                      {{ student.name }}
+                    </a>
+                  {% endif %}
+                {% endfor %}
+              </div>
+              
+              <!-- Default/Unclassified students line -->
+              <div class="classification-line">
+                {% for student in schedule.calendar[day][time_slot] %}
+                  {% if not student.el and not student.pi and not student.ind %}
+                    <a href="{{ url_for('students_edit', sid=student.id, from_calendar=1) }}" class="student-badge" title="{{ student.name }} - {{ student.subject }}" style="text-decoration: none; color: inherit; background-color: #eff6ff; border: 1px solid #bfdbfe; color: #2563eb;">
+                      {{ student.name }}
+                    </a>
+                  {% endif %}
+                {% endfor %}
+              </div>
             {% else %}
               <span class="empty-slot">-</span>
             {% endif %}
@@ -220,47 +264,36 @@
       {% endfor %}
     </div>
 
-    <!-- Legend -->
-    <div class="legend print-hide">
-      <h6 class="mb-3"><i class="bi bi-info-circle"></i> Legend</h6>
-      <div class="legend-item">
-        <span class="legend-badge subject-one">1 Subject</span>
-        <span>One Subject</span>
-      </div>
-      <div class="legend-item">
-        <span class="legend-badge subject-two">2 Subjects</span>
-        <span>Two Subjects</span>
-      </div>
-      <div class="legend-item">
-        <span class="badge bg-warning text-dark">EL</span>
-        <span>Early Learner</span>
-      </div>
-      <div class="legend-item">
-        <span class="badge bg-info">PI</span>
-        <span>Primary Instruction</span>
-      </div>
-      <div class="legend-item">
-        <span class="badge bg-success">V</span>
-        <span>Virtual</span>
-      </div>
-    </div>
-
     <!-- Virtual Students Section -->
     {% if schedule.virtual_students %}
       <div style="margin-top: 30px;" class="print-hide">
         <h5 class="mb-3"><i class="bi bi-wifi"></i> Virtual Students</h5>
         <div style="display: flex; flex-wrap: wrap; gap: 10px;">
           {% for student in schedule.virtual_students %}
-            <a href="{{ url_for('students_edit', sid=student.id, from_calendar=1) }}" class="student-badge {{ student.subject|lower }}{% if not student.el and not student.pi %} no-background{% elif student.el %} has-el{% elif student.pi %} has-pi{% endif %}" title="{{ student.name }} - {{ student.subject }} - {{ student.email }}" style="text-decoration: none; color: inherit;">
+            <a href="{{ url_for('students_edit', sid=student.id, from_calendar=1) }}" class="student-badge" style="text-decoration: none; color: inherit; background-color: #faf5ff; border: 1px solid #e9d5ff; color: #7c3aed; padding: 3px 6px; margin: 2px; border-radius: 4px; font-size: 0.75rem; white-space: nowrap; cursor: pointer;" title="{{ student.name }} - {{ student.subject }} - Virtual">
               {{ student.name }}
-              {% if student.el %}<span class="badge bg-warning text-dark" style="font-size:0.65rem;padding:1px 3px;">EL</span>{% endif %}
-              {% if student.pi %}<span class="badge bg-info" style="font-size:0.65rem;padding:1px 3px;">PI</span>{% endif %}
-              <span class="badge bg-success" style="font-size:0.65rem;padding:1px 3px;">V</span>
             </a>
           {% endfor %}
         </div>
       </div>
     {% endif %}
+
+    <!-- Legend -->
+    <div class="legend print-hide">
+      <h6 class="mb-3"><i class="bi bi-info-circle"></i> Legend</h6>
+      <div class="legend-item">
+        <span class="legend-badge" style="background-color: #fefce8; border: 1px solid #fde68a; color: #a16207;">Assisted</span>
+      </div>
+      <div class="legend-item">
+        <span class="legend-badge" style="background-color: #eff6ff; border: 1px solid #bfdbfe; color: #2563eb;">Monitored</span>
+      </div>
+      <div class="legend-item">
+        <span class="legend-badge" style="background-color: #f0fdf4; border: 1px solid #bbf7d0; color: #15803d;">Independent</span>
+      </div>
+      <div class="legend-item">
+        <span class="legend-badge" style="background-color: #faf5ff; border: 1px solid #e9d5ff; color: #7c3aed;">Virtual</span>
+      </div>
+    </div>
   {% endif %}
 </div>
 
