@@ -406,7 +406,7 @@ def register_reports_routes(app):
         if sid and not error:
             with sqlite3.connect(DB_PATH) as conn:
                 c = conn.cursor()
-                srow = c.execute("SELECT name FROM students WHERE id=?", (sid)).fetchone()
+                srow = c.execute("SELECT name FROM students WHERE id=?", (sid,)).fetchone()
                 if srow:
                     student_name = srow[0]
                     q = """
@@ -467,7 +467,7 @@ def register_reports_routes(app):
 
         with sqlite3.connect(DB_PATH) as conn:
             c = conn.cursor()
-            srow = c.execute("SELECT name FROM students WHERE id=?", (sid)).fetchone()
+            srow = c.execute("SELECT name FROM students WHERE id=?", (sid,)).fetchone()
             if not srow:
                 return "Student not found", 404
             student_name = srow[0]
