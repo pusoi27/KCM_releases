@@ -130,10 +130,33 @@ def get_student_database_rows(active=1):
         cols = [row[1] for row in c.execute("PRAGMA table_info(students)").fetchall()]
         has_checkout_notify = "checkout_notify_enabled" in cols
 
+        has_book_loans_table = c.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='book_loans' LIMIT 1"
+        ).fetchone() is not None
+        has_material_loans_table = c.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='material_loans' LIMIT 1"
+        ).fetchone() is not None
+
         checkout_notify_select = "checkout_notify_enabled" if has_checkout_notify else "1 AS checkout_notify_enabled"
+        book_loaned_select = (
+            "CASE WHEN EXISTS ("
+            "SELECT 1 FROM book_loans bl "
+            "WHERE bl.student_id = students.id AND bl.return_date IS NULL"
+            ") THEN 1 ELSE COALESCE(students.book_loaned, 0) END"
+            if has_book_loans_table
+            else "COALESCE(students.book_loaned, 0)"
+        )
+        device_loaned_select = (
+            "CASE WHEN EXISTS ("
+            "SELECT 1 FROM material_loans ml "
+            "WHERE ml.student_id = students.id AND ml.return_date IS NULL"
+            ") THEN 1 ELSE COALESCE(students.device_loaned, 0) END"
+            if has_material_loans_table
+            else "COALESCE(students.device_loaned, 0)"
+        )
         query = (
             "SELECT "
-            "id, name, subject, email, phone, active, book_loaned, device_loaned, "
+            f"id, name, subject, email, phone, active, {book_loaned_select} AS book_loaned, {device_loaned_select} AS device_loaned, "
             "el, pi, subjects_json, schedule_json, day1, day1_time, day2, day2_time, "
             "v, photo_blob, photo_mime, photo_filename, photo, guardian, ind, "
             f"{checkout_notify_select} "

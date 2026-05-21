@@ -371,6 +371,90 @@ def register_qr_routes(app):
         pdf_buffer = _build_avery8163_pdf(labels)
         return send_file(pdf_buffer, as_attachment=True, download_name=f"book_{bid}_qr.pdf", mimetype='application/pdf')
 
+    @app.route('/qr/materials/generate_all', methods=['POST'])
+    @require_login
+    @require_feature(auth_manager.FEATURE_BOOKS)
+    def qr_materials_generate_all():
+        """Generate QR images for all devices where missing and redirect back to Devices list."""
+        generated, skipped, errors = [], [], []
+        materials = materials_manager.get_materials()
+
+        for material in materials:
+            try:
+                mid = material[0]
+                title = material[1] or ''
+                qr_code = material[5]
+
+                existing_qr_blob = materials_manager.get_material_qr_code_blob(mid)
+                if existing_qr_blob:
+                    skipped.append(f"device_{mid}.png")
+                    continue
+
+                if not qr_code:
+                    qr_code = materials_manager._build_material_qr_code(mid)
+
+                materials_manager.update_material(mid, qr_code=qr_code)
+
+                refreshed_qr_blob = materials_manager.get_material_qr_code_blob(mid)
+                if refreshed_qr_blob:
+                    generated.append(f"device_{mid}.png")
+                else:
+                    errors.append({'id': mid, 'title': title, 'error': 'QR image not generated'})
+            except Exception as e:
+                errors.append({'id': material[0], 'error': str(e)})
+
+        if errors:
+            flash(
+                f"Generated {len(generated)} QR code(s), skipped {len(skipped)}, with {len(errors)} error(s).",
+                "warning",
+            )
+        elif generated:
+            flash(
+                f"Generated {len(generated)} QR code(s) for devices without assigned QR images.",
+                "success",
+            )
+        else:
+            flash("No QR codes generated; all devices already have assigned QR images", "info")
+
+        return redirect(url_for('materials_list'))
+
+    @app.route('/qr/materials/pdf')
+    @require_login
+    @require_feature(auth_manager.FEATURE_BOOKS)
+    def qr_materials_pdf():
+        """Generate Avery 8163 PDF for all devices with QR codes."""
+        labels = []
+        materials = materials_manager.get_materials()
+
+        for material in materials:
+            mid = material[0]
+            title = material[1] or ''
+            qr_code = material[5]
+
+            qr_blob = materials_manager.get_material_qr_code_blob(mid)
+            if not qr_blob:
+                try:
+                    if not qr_code:
+                        qr_code = materials_manager._build_material_qr_code(mid)
+                    materials_manager.update_material(mid, qr_code=qr_code)
+                    qr_blob = materials_manager.get_material_qr_code_blob(mid)
+                except Exception:
+                    qr_blob = None
+
+            if qr_blob:
+                labels.append({'name': title, 'qr_blob': io.BytesIO(qr_blob)})
+
+        if not labels:
+            return "No device QR codes found. Generate them first.", 400
+
+        pdf_buffer = _build_avery8163_pdf(labels)
+        return send_file(
+            pdf_buffer,
+            as_attachment=True,
+            download_name="devices_qr_avery8163.pdf",
+            mimetype='application/pdf',
+        )
+
     # ================================================================
     # QR Print - Materials/Devices
     # ================================================================
