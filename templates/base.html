@@ -22,6 +22,19 @@
 </head>
 <body>
 {% block topbar %}{% include "navbar.html" %}{% endblock %}
+{% if version_compatibility and version_compatibility.show %}
+  <div
+    id="version-compat-banner"
+    class="container-fluid px-3 mt-2"
+    data-session-key="version-compat-warning:{{ version_compatibility.app_version|e }}:{{ version_compatibility.backup_version|e }}"
+  >
+    <div class="alert alert-warning alert-dismissible fade show mb-2" role="alert">
+      <i class="bi bi-exclamation-triangle-fill me-2"></i>
+      {{ version_compatibility.message }}
+      <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Dismiss warning"></button>
+    </div>
+  </div>
+{% endif %}
 {% with messages = get_flashed_messages(with_categories=true) %}
   {% if messages %}
     <div class="container mt-2">
@@ -43,6 +56,34 @@
       bsAlert.close();
     }, 3000);
   });
+</script>
+<script>
+  (function () {
+    var wrapper = document.getElementById('version-compat-banner');
+    if (!wrapper) return;
+
+    var key = wrapper.getAttribute('data-session-key') || 'version-compat-warning';
+    try {
+      if (window.sessionStorage.getItem(key) === '1') {
+        wrapper.remove();
+        return;
+      }
+    } catch (e) {
+      // Ignore storage errors; keep banner visible.
+    }
+
+    var alertEl = wrapper.querySelector('.alert');
+    if (!alertEl) return;
+
+    alertEl.addEventListener('closed.bs.alert', function () {
+      try {
+        window.sessionStorage.setItem(key, '1');
+      } catch (e) {
+        // Ignore storage errors.
+      }
+      wrapper.remove();
+    });
+  })();
 </script>
 <script>
   /* Auto-inject CSRF token into every non-GET fetch() call */

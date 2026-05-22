@@ -45,6 +45,142 @@ _CONFIG_DIR = _get_persistent_config_dir()
 _DB_CONFIG_FILE = os.path.join(_CONFIG_DIR, "db_config.json")
 _LEGACY_DB_CONFIG_FILE = os.path.join(_APP_ROOT, "db_config.json")
 _GDRIVE_DISCOVERY_ATTEMPTED = False
+_FIXED_SYNC_INTERVAL_MINUTES = 9
+_APP_VERSION_META_KEY = "app_version"
+
+
+def _ensure_app_metadata_table(conn: sqlite3.Connection) -> None:
+    """Ensure app metadata table exists for cross-machine compatibility fields."""
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS app_metadata (
+            meta_key TEXT PRIMARY KEY,
+            meta_value TEXT,
+            updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+        )
+        """
+    )
+
+
+def _parse_version_tuple(version: str) -> tuple[int, ...] | None:
+    raw = str(version or "").strip()
+    if not raw:
+        return None
+    parts = raw.split(".")
+    try:
+        return tuple(int(part) for part in parts)
+    except ValueError:
+        return None
+
+
+def _compare_versions(left: str, right: str) -> int:
+    """Return -1 when left<right, 0 when equal, 1 when left>right."""
+    l_tuple = _parse_version_tuple(left)
+    r_tuple = _parse_version_tuple(right)
+
+    if l_tuple is not None and r_tuple is not None:
+        max_len = max(len(l_tuple), len(r_tuple))
+        l_pad = l_tuple + (0,) * (max_len - len(l_tuple))
+        r_pad = r_tuple + (0,) * (max_len - len(r_tuple))
+        if l_pad < r_pad:
+            return -1
+        if l_pad > r_pad:
+            return 1
+        return 0
+
+    left_norm = str(left or "").strip().lower()
+    right_norm = str(right or "").strip().lower()
+    if left_norm < right_norm:
+        return -1
+    if left_norm > right_norm:
+        return 1
+    return 0
+
+
+def get_recorded_app_version(db_path: str | None = None) -> str:
+    """Return recorded DB app version metadata (latest known writer version)."""
+    target_db = db_path or DB_PATH
+    try:
+        with sqlite3.connect(target_db) as conn:
+            _ensure_app_metadata_table(conn)
+            row = conn.execute(
+                "SELECT COALESCE(meta_value, '') FROM app_metadata WHERE meta_key = ? LIMIT 1",
+                (_APP_VERSION_META_KEY,),
+            ).fetchone()
+            return str((row[0] if row else "") or "").strip()
+    except Exception as exc:
+        print(f"[version] WARNING: failed reading recorded DB app version: {exc}", file=sys.stderr)
+        return ""
+
+
+def record_app_version(app_version: str, db_path: str | None = None) -> str:
+    """Persist app version in DB metadata, never downgrading an existing newer value."""
+    current = str(app_version or "").strip()
+    if not current:
+        return get_recorded_app_version(db_path=db_path)
+
+    target_db = db_path or DB_PATH
+    try:
+        with sqlite3.connect(target_db) as conn:
+            _ensure_app_metadata_table(conn)
+            row = conn.execute(
+                "SELECT COALESCE(meta_value, '') FROM app_metadata WHERE meta_key = ? LIMIT 1",
+                (_APP_VERSION_META_KEY,),
+            ).fetchone()
+            existing = str((row[0] if row else "") or "").strip()
+
+            # Never overwrite a newer version with an older binary's version.
+            if existing and _compare_versions(current, existing) < 0:
+                return existing
+
+            conn.execute(
+                """
+                INSERT INTO app_metadata (meta_key, meta_value, updated_at)
+                VALUES (?, ?, CURRENT_TIMESTAMP)
+                ON CONFLICT(meta_key) DO UPDATE SET
+                    meta_value=excluded.meta_value,
+                    updated_at=CURRENT_TIMESTAMP
+                """,
+                (_APP_VERSION_META_KEY, current),
+            )
+            conn.commit()
+            return current
+    except Exception as exc:
+        print(f"[version] WARNING: failed recording DB app version metadata: {exc}", file=sys.stderr)
+        return get_recorded_app_version(db_path=db_path)
+
+
+def get_version_compatibility_warning(app_version: str) -> dict:
+    """Return compatibility warning payload when binary is older than DB backup version."""
+    current = str(app_version or "").strip()
+    recorded = get_recorded_app_version()
+    if not current or not recorded:
+        return {
+            "show": False,
+            "app_version": current,
+            "backup_version": recorded,
+            "message": "",
+        }
+
+    is_older_than_backup = _compare_versions(current, recorded) < 0
+    if not is_older_than_backup:
+        return {
+            "show": False,
+            "app_version": current,
+            "backup_version": recorded,
+            "message": "",
+        }
+
+    return {
+        "show": True,
+        "app_version": current,
+        "backup_version": recorded,
+        "message": (
+            f"Update required: this machine is running v{current}, "
+            f"but the shared backup database was updated by v{recorded}. "
+            "Please update this application to the latest release."
+        ),
+    }
 
 
 def _read_db_config() -> dict:
@@ -133,6 +269,50 @@ def _is_google_drive_location(path: str) -> bool:
     )
 
 
+def _is_onedrive_location(path: str) -> bool:
+    normalized = _normalize_path(path).lower()
+    if not normalized:
+        return False
+    return "onedrive" in normalized
+
+
+def _is_supported_cloud_location(path: str, provider: str) -> bool:
+    provider = (provider or "").strip().lower()
+    if provider == "google_drive":
+        return _is_google_drive_location(path)
+    if provider == "onedrive":
+        return _is_onedrive_location(path)
+    return _is_google_drive_location(path) or _is_onedrive_location(path)
+
+
+def _resolve_cloud_provider_and_path(cfg: dict) -> tuple[str, str]:
+    provider = str(cfg.get("cloud_provider", "") or "").strip().lower()
+    gdrive_sync_path = _normalize_path(str(cfg.get("gdrive_sync_path", "") or ""))
+    onedrive_sync_path = _normalize_path(str(cfg.get("onedrive_sync_path", "") or ""))
+
+    if provider == "onedrive":
+        if onedrive_sync_path:
+            return "onedrive", onedrive_sync_path
+        if gdrive_sync_path:
+            return "google_drive", gdrive_sync_path
+
+    if provider == "google_drive":
+        if gdrive_sync_path:
+            return "google_drive", gdrive_sync_path
+        if onedrive_sync_path:
+            return "onedrive", onedrive_sync_path
+
+    if gdrive_sync_path:
+        return "google_drive", gdrive_sync_path
+    if onedrive_sync_path:
+        return "onedrive", onedrive_sync_path
+    return "google_drive", ""
+
+
+def _cloud_label(sync_path: str) -> str:
+    return "OneDrive" if _is_onedrive_location(sync_path) else "Google Drive"
+
+
 def _resolve_gdrive_sync_target(gdrive_sync_path: str) -> str:
     """Return the actual DB file path used for Google Drive sync.
 
@@ -150,9 +330,9 @@ def _resolve_gdrive_sync_target(gdrive_sync_path: str) -> str:
     return path
 
 
-def _gdrive_path_exists(gdrive_sync_path: str) -> bool:
-    """Return True when the configured Google Drive folder/DB path exists."""
-    raw = _normalize_path(gdrive_sync_path)
+def _cloud_path_exists(sync_path: str) -> bool:
+    """Return True when the configured cloud folder/DB path exists."""
+    raw = _normalize_path(sync_path)
     if not raw:
         return False
     target = _resolve_gdrive_sync_target(raw)
@@ -169,7 +349,7 @@ def _extract_valid_gdrive_path_from_config_file(config_file: str) -> tuple[float
             return None
         if not _is_google_drive_location(candidate):
             return None
-        if not _gdrive_path_exists(candidate):
+        if not _cloud_path_exists(candidate):
             return None
         return (os.path.getmtime(config_file), candidate)
     except Exception:
@@ -228,11 +408,10 @@ def _hydrate_missing_gdrive_sync_path(cfg: dict, db_path: str) -> str:
 
     cfg.setdefault("_comment", "db_path = local machine path (fast, all session reads/writes go here).")
     cfg.setdefault("_comment2", "gdrive_sync_path = Google Drive folder path used only for background sync; Stdytime.db is created there automatically.")
-    cfg.setdefault("_comment3", "sync_interval_minutes = how often local DB is pushed to Google Drive (0 = disable).")
+    cfg.setdefault("_comment3", "sync_interval_minutes = fixed system-managed value (9 minutes).")
     cfg["db_path"] = _normalize_path(db_path or "") or _default_local_db_path_for_runtime().replace("\\", "/")
     cfg["gdrive_sync_path"] = discovered
-    if "sync_interval_minutes" not in cfg:
-        cfg["sync_interval_minutes"] = 7
+    cfg["sync_interval_minutes"] = _FIXED_SYNC_INTERVAL_MINUTES
 
     try:
         _write_db_config(cfg)
@@ -244,7 +423,7 @@ def _hydrate_missing_gdrive_sync_path(cfg: dict, db_path: str) -> str:
 
 
 def get_db_config_status() -> dict:
-    """Return readiness status for local DB path + Google Drive sync path setup."""
+    """Return readiness status for local DB path + cloud backup sync path setup."""
     cfg = _read_db_config()
     db_path = str(cfg.get("db_path", "") or "").strip()
     if not db_path:
@@ -252,9 +431,18 @@ def get_db_config_status() -> dict:
         db_path = _default_local_db_path_for_runtime().replace("\\", "/")
     else:
         db_path = _to_absolute_path(db_path).replace("\\", "/")
-    gdrive_sync_path = str(cfg.get("gdrive_sync_path", "") or "").strip()
-    if not gdrive_sync_path:
-        gdrive_sync_path = _hydrate_missing_gdrive_sync_path(cfg, db_path)
+    gdrive_sync_path = _normalize_path(str(cfg.get("gdrive_sync_path", "") or ""))
+    onedrive_sync_path = _normalize_path(str(cfg.get("onedrive_sync_path", "") or ""))
+    cloud_provider, cloud_sync_path = _resolve_cloud_provider_and_path(cfg)
+    if cloud_provider == "google_drive" and not cloud_sync_path:
+        discovered_gdrive = _hydrate_missing_gdrive_sync_path(cfg, db_path)
+        if discovered_gdrive:
+            gdrive_sync_path = discovered_gdrive
+            cloud_provider, cloud_sync_path = _resolve_cloud_provider_and_path({
+                "cloud_provider": cloud_provider,
+                "gdrive_sync_path": gdrive_sync_path,
+                "onedrive_sync_path": onedrive_sync_path,
+            })
 
     issues: list[str] = []
     warnings: list[str] = []
@@ -263,14 +451,23 @@ def get_db_config_status() -> dict:
     if not usable:
         issues.append(f"Local database path is not writable: {reason}")
 
-    if not gdrive_sync_path:
+    if not cloud_sync_path:
         issues.append(
-            "Google Drive folder path is required. Install Google Drive for Desktop and choose a folder in My Drive, for example: G:/My Drive/StdyTime."
+            "Cloud backup folder path is required. Choose either Google Drive (My Drive/StdyTime) or OneDrive (OneDrive/StdyTime)."
         )
     else:
-        if not _is_google_drive_location(gdrive_sync_path):
+        if not _is_supported_cloud_location(cloud_sync_path, cloud_provider):
+            if cloud_provider == "onedrive":
+                issues.append(
+                    "OneDrive folder path must point to your OneDrive folder, for example: C:/Users/YourName/OneDrive/StdyTime."
+                )
+            else:
+                issues.append(
+                    "Google Drive folder path must point to Google Drive/My Drive, for example: G:/My Drive/StdyTime."
+                )
+        elif not _cloud_path_exists(cloud_sync_path):
             issues.append(
-                "Google Drive folder path must point to Google Drive/My Drive. Install Google Drive for Desktop and choose a path like G:/My Drive/StdyTime."
+                "Configured cloud backup path does not exist yet. Create the folder first, then save again."
             )
 
     return {
@@ -279,21 +476,33 @@ def get_db_config_status() -> dict:
         "warnings": warnings,
         "config": {
             "db_path": db_path,
+            "cloud_provider": cloud_provider,
+            "cloud_sync_path": cloud_sync_path,
             "gdrive_sync_path": gdrive_sync_path,
-            "sync_interval_minutes": int(cfg.get("sync_interval_minutes", 7) or 7),
+            "onedrive_sync_path": onedrive_sync_path,
+            "sync_interval_minutes": _FIXED_SYNC_INTERVAL_MINUTES,
             "startup_pull_from_gdrive": bool(cfg.get("startup_pull_from_gdrive", False)),
         },
         "example": {
             "db_path": "C:/Users/YourName/AppData/Local/StdyTime/Stdytime.db",
             "gdrive_sync_path": "G:/My Drive/StdyTime",
+            "onedrive_sync_path": "C:/Users/YourName/OneDrive/StdyTime",
         },
     }
 
 
-def save_db_config_paths(*, db_path: str | None, gdrive_sync_path: str, sync_interval_minutes: int | None = None) -> dict:
-    """Persist db_path and gdrive_sync_path to db_config.json and return updated status."""
+def save_db_config_paths(
+    *,
+    db_path: str | None,
+    gdrive_sync_path: str,
+    onedrive_sync_path: str = "",
+    cloud_provider: str = "google_drive",
+) -> dict:
+    """Persist db_path and cloud sync path settings to db_config.json and return updated status."""
     db_path = _normalize_path(db_path or "")
     gdrive_sync_path = _normalize_path(gdrive_sync_path or "")
+    onedrive_sync_path = _normalize_path(onedrive_sync_path or "")
+    cloud_provider = (cloud_provider or "google_drive").strip().lower()
 
     cfg = _read_db_config()
     existing_db_path = str(cfg.get("db_path", "") or "").strip().replace("\\", "/")
@@ -303,14 +512,22 @@ def save_db_config_paths(*, db_path: str | None, gdrive_sync_path: str, sync_int
     db_path = _to_absolute_path(db_path).replace("\\", "/")
 
     cfg["_comment"] = "db_path = local machine path (fast, all session reads/writes go here)."
-    cfg["_comment2"] = "gdrive_sync_path = Google Drive folder path used only for background sync; Stdytime.db is created there automatically."
-    cfg["_comment3"] = "sync_interval_minutes = how often local DB is pushed to Google Drive (0 = disable)."
+    cfg["_comment2"] = "cloud_provider = choose google_drive or onedrive for backup/sync destination."
+    cfg["_comment3"] = "sync_interval_minutes = fixed system-managed value (9 minutes)."
+    cfg["_comment4"] = "gdrive_sync_path / onedrive_sync_path = folder path used only for background sync; Stdytime.db is created there automatically."
+
+    if cloud_provider not in ("google_drive", "onedrive"):
+        cloud_provider = "google_drive"
+    if cloud_provider == "google_drive" and not gdrive_sync_path and onedrive_sync_path:
+        cloud_provider = "onedrive"
+    if cloud_provider == "onedrive" and not onedrive_sync_path and gdrive_sync_path:
+        cloud_provider = "google_drive"
+
     cfg["db_path"] = db_path
     cfg["gdrive_sync_path"] = gdrive_sync_path
-    if sync_interval_minutes is not None:
-        cfg["sync_interval_minutes"] = max(0, int(sync_interval_minutes))
-    else:
-        cfg["sync_interval_minutes"] = 7
+    cfg["onedrive_sync_path"] = onedrive_sync_path
+    cfg["cloud_provider"] = cloud_provider
+    cfg["sync_interval_minutes"] = _FIXED_SYNC_INTERVAL_MINUTES
 
     _write_db_config(cfg)
 
@@ -450,11 +667,26 @@ def _migrate_student_photos_to_blob(db_path: str) -> None:
 
     with sqlite3.connect(db_path) as conn:
         cur = conn.cursor()
+        cols = [r[1] for r in cur.execute("PRAGMA table_info(students)").fetchall()]
+        has_photo = "photo" in cols
+        has_photo_filename = "photo_filename" in cols
+        has_photo_blob = "photo_blob" in cols
+        has_photo_mime = "photo_mime" in cols
+
+        if not has_photo_blob:
+            return
+        if not has_photo and not has_photo_filename:
+            return
+
+        legacy_photo_expr = "COALESCE(photo, '')" if has_photo else "''"
+        legacy_filename_expr = "COALESCE(photo_filename, '')" if has_photo_filename else "''"
+        photo_mime_expr = "COALESCE(photo_mime, '')" if has_photo_mime else "''"
+
         rows = cur.execute(
-            """
-            SELECT id, photo, photo_blob, photo_mime, photo_filename
+            f"""
+            SELECT id, {legacy_photo_expr} AS legacy_photo, {legacy_filename_expr} AS legacy_filename, {photo_mime_expr} AS photo_mime
             FROM students
-            WHERE COALESCE(photo, '') <> ''
+            WHERE ({legacy_photo_expr} <> '' OR {legacy_filename_expr} <> '')
               AND (photo_blob IS NULL OR length(photo_blob) = 0)
             """
         ).fetchall()
@@ -462,8 +694,8 @@ def _migrate_student_photos_to_blob(db_path: str) -> None:
         if not rows:
             return
 
-        for student_id, legacy_photo, photo_blob, photo_mime, photo_filename in rows:
-            legacy_name = str(legacy_photo or photo_filename or '').strip()
+        for student_id, legacy_photo, legacy_filename, photo_mime in rows:
+            legacy_name = str(legacy_photo or legacy_filename or '').strip()
             if not legacy_name:
                 continue
 
@@ -479,14 +711,12 @@ def _migrate_student_photos_to_blob(db_path: str) -> None:
                 cur.execute(
                     """
                     UPDATE students
-                    SET photo_blob=?, photo_mime=?, photo_filename=?, photo=?
+                    SET photo_blob=?, photo_mime=?
                     WHERE id=?
                     """,
                     (
                         sqlite3.Binary(blob),
                         photo_mime or _guess_photo_mime(legacy_name),
-                        photo_filename or legacy_name,
-                        legacy_name,
                         student_id,
                     ),
                 )
@@ -497,6 +727,9 @@ def _migrate_student_photos_to_blob(db_path: str) -> None:
 
 
 _LEGACY_STUDENT_COLUMNS_TO_REMOVE = (
+    "level",
+    "photo",
+    "photo_filename",
     "math_goal",
     "math_ws_per_week",
     "math_worksheets_per_week",
@@ -507,7 +740,7 @@ _LEGACY_STUDENT_COLUMNS_TO_REMOVE = (
 
 
 def _remove_legacy_student_columns(db_path: str) -> None:
-    """Drop legacy goal columns from students table, rebuilding table if needed."""
+    """Drop legacy columns from students table, rebuilding table if needed."""
     with sqlite3.connect(db_path) as conn:
         cur = conn.cursor()
         cols = [r[1] for r in cur.execute("PRAGMA table_info(students)").fetchall()]
@@ -539,7 +772,6 @@ def _remove_legacy_student_columns(db_path: str) -> None:
                 subjects_json TEXT DEFAULT '[]',
                 subject_minutes_json TEXT DEFAULT '[]',
                 total_study_minutes INTEGER DEFAULT 30,
-                level TEXT,
                 book_loaned INTEGER DEFAULT 0,
                 email TEXT,
                 phone TEXT,
@@ -552,11 +784,17 @@ def _remove_legacy_student_columns(db_path: str) -> None:
                 day1_time TEXT DEFAULT '',
                 day2 TEXT DEFAULT '',
                 day2_time TEXT DEFAULT '',
+                day3 TEXT DEFAULT '',
+                day3_time TEXT DEFAULT '',
+                day4 TEXT DEFAULT '',
+                day4_time TEXT DEFAULT '',
+                day5 TEXT DEFAULT '',
+                day5_time TEXT DEFAULT '',
+                day6 TEXT DEFAULT '',
+                day6_time TEXT DEFAULT '',
                 checkout_notify_enabled INTEGER DEFAULT 1,
-                photo TEXT DEFAULT '',
                 photo_blob BLOB,
                 photo_mime TEXT DEFAULT '',
-                photo_filename TEXT DEFAULT '',
                 schedule_json TEXT DEFAULT '',
                 qr_code BLOB,
                 device_loaned INTEGER DEFAULT 0,
@@ -574,9 +812,10 @@ def _remove_legacy_student_columns(db_path: str) -> None:
 
         insert_cols = [
             "id", "name", "subject", "subjects_json", "subject_minutes_json", "total_study_minutes",
-            "level", "book_loaned", "email", "phone", "guardian", "active", "el", "pi", "v",
-            "day1", "day1_time", "day2", "day2_time", "checkout_notify_enabled", "photo", "photo_blob",
-            "photo_mime", "photo_filename", "schedule_json", "qr_code", "device_loaned", "ind",
+            "book_loaned", "email", "phone", "guardian", "active", "el", "pi", "v",
+            "day1", "day1_time", "day2", "day2_time", "day3", "day3_time", "day4", "day4_time",
+            "day5", "day5_time", "day6", "day6_time", "checkout_notify_enabled", "photo_blob",
+            "photo_mime", "schedule_json", "qr_code", "device_loaned", "ind",
         ]
 
         select_exprs = [
@@ -586,7 +825,6 @@ def _remove_legacy_student_columns(db_path: str) -> None:
             _src("subjects_json", "'[]'"),
             _src("subject_minutes_json", "'[]'"),
             _src("total_study_minutes", "30"),
-            _src("level", "''"),
             _src("book_loaned", "0"),
             _src("email", "''"),
             _src("phone", "''"),
@@ -599,11 +837,17 @@ def _remove_legacy_student_columns(db_path: str) -> None:
             _src("day1_time", "''"),
             _src("day2", "''"),
             _src("day2_time", "''"),
+            _src("day3", "''"),
+            _src("day3_time", "''"),
+            _src("day4", "''"),
+            _src("day4_time", "''"),
+            _src("day5", "''"),
+            _src("day5_time", "''"),
+            _src("day6", "''"),
+            _src("day6_time", "''"),
             _src("checkout_notify_enabled", "1"),
-            _src("photo", "''"),
             _src("photo_blob", "NULL"),
             _src("photo_mime", "''"),
-            _src("photo_filename", "''"),
             _src("schedule_json", "''"),
             _src("qr_code", "NULL"),
             _src("device_loaned", "0"),
@@ -635,12 +879,13 @@ def sync_from_gdrive(local_path: str, gdrive_path: str, force: bool = False) -> 
     if not gdrive_path or not os.path.exists(gdrive_path):
         return False
     try:
+        cloud_name = _cloud_label(gdrive_path)
         gdrive_mtime = os.path.getmtime(gdrive_path)
         local_mtime = os.path.getmtime(local_path) if os.path.exists(local_path) else 0
         should_pull = force or (gdrive_mtime > local_mtime + 10)  # 10 s tolerance avoids noise
         if should_pull:
-            reason = "forced startup override" if force else "GDrive is newer"
-            print(f"[sync] Pulling DB from Google Drive ({reason}): {gdrive_path}")
+            reason = "forced startup override" if force else "cloud backup is newer"
+            print(f"[sync] Pulling DB from {cloud_name} ({reason}): {gdrive_path}")
             _sqlite_backup(gdrive_path, local_path)
             print("[sync] Pull complete.")
             return True
@@ -667,6 +912,7 @@ def sync_to_gdrive(local_path: str, gdrive_path: str, retries: int = 0, retry_de
         if not silent:
             print("[sync] WARNING: local DB does not exist yet; skipping push.", file=sys.stderr)
         return False
+    cloud_name = _cloud_label(gdrive_path)
     attempts = retries + 1
     for attempt in range(1, attempts + 1):
         try:
@@ -674,7 +920,7 @@ def sync_to_gdrive(local_path: str, gdrive_path: str, retries: int = 0, retry_de
             if not silent:
                 summary = _db_summary(local_path)
                 print(
-                    f"[sync] Pushed DB to Google Drive: {gdrive_path}\n"
+                    f"[sync] Pushed DB to {cloud_name}: {gdrive_path}\n"
                     f"[sync] Snapshot -> {summary}"
                 )
             return True
@@ -701,6 +947,11 @@ def sync_to_gdrive(local_path: str, gdrive_path: str, retries: int = 0, retry_de
 def sync_to_gdrive_now() -> bool:
     """Public entry point for on-demand push (callable from routes)."""
     return sync_to_gdrive(DB_PATH, GDRIVE_SYNC_PATH)
+
+
+def sync_from_gdrive_now(force: bool = True) -> bool:
+    """Public entry point for on-demand pull (callable from routes)."""
+    return sync_from_gdrive(DB_PATH, GDRIVE_SYNC_PATH, force=force)
 
 
 # ====================================================================
@@ -821,8 +1072,9 @@ def _start_background_sync(local_path: str, gdrive_path: str, interval_minutes: 
 # ====================================================================
 
 _cfg = _read_db_config()
-GDRIVE_SYNC_PATH: str | None = _cfg.get("gdrive_sync_path", "").strip() or None
-_SYNC_INTERVAL = int(_cfg.get("sync_interval_minutes", 7))
+_CLOUD_PROVIDER, _CLOUD_SYNC_PATH = _resolve_cloud_provider_and_path(_cfg)
+GDRIVE_SYNC_PATH: str | None = _CLOUD_SYNC_PATH or None
+_SYNC_INTERVAL = _FIXED_SYNC_INTERVAL_MINUTES
 
 DB_PATH = _resolve_db_path()
 
@@ -830,9 +1082,9 @@ DB_PATH = _resolve_db_path()
 if GDRIVE_SYNC_PATH:
     pulled = sync_from_gdrive(DB_PATH, GDRIVE_SYNC_PATH, force=True)
     if not pulled:
-        print("[sync] Startup override skipped: Google Drive DB not found/unavailable.")
+        print(f"[sync] Startup override skipped: {_cloud_label(GDRIVE_SYNC_PATH)} DB not found/unavailable.")
 else:
-    print("[sync] Startup override skipped: Google Drive path is not configured.")
+    print("[sync] Startup override skipped: cloud backup path is not configured.")
 
 # Background thread: push local → GDrive periodically
 _start_background_sync(DB_PATH, GDRIVE_SYNC_PATH, _SYNC_INTERVAL)
@@ -859,7 +1111,7 @@ def _sync_on_exit():
             _sqlite_backup(DB_PATH, gdrive_target)
             summary = _db_summary(DB_PATH)
             print(
-                f"[sync] Final exit push to Google Drive complete: {gdrive_target}\n"
+                f"[sync] Final exit push to {_cloud_label(gdrive_target)} complete: {gdrive_target}\n"
                 f"[sync] Snapshot -> {summary}"
             )
             return
@@ -904,7 +1156,6 @@ def init_db():
             subjects_json TEXT DEFAULT '[]',
             subject_minutes_json TEXT DEFAULT '[]',
             total_study_minutes INTEGER DEFAULT 30,
-            level TEXT,
             book_loaned INTEGER DEFAULT 0,
             email TEXT,
             phone TEXT,
@@ -917,6 +1168,14 @@ def init_db():
             day1_time TEXT DEFAULT '',
             day2 TEXT DEFAULT '',
             day2_time TEXT DEFAULT '',
+            day3 TEXT DEFAULT '',
+            day3_time TEXT DEFAULT '',
+            day4 TEXT DEFAULT '',
+            day4_time TEXT DEFAULT '',
+            day5 TEXT DEFAULT '',
+            day5_time TEXT DEFAULT '',
+            day6 TEXT DEFAULT '',
+            day6_time TEXT DEFAULT '',
             checkout_notify_enabled INTEGER DEFAULT 1
         )
     """)
@@ -928,7 +1187,8 @@ def init_db():
             name TEXT,
             role TEXT,
             email TEXT,
-            phone TEXT
+            phone TEXT,
+            loading INTEGER DEFAULT 1
         )
     """)
 
@@ -1060,17 +1320,20 @@ def init_db():
         )
     """)
 
+    # Cross-machine compatibility metadata
+    _ensure_app_metadata_table(conn)
+
     conn.commit()
 
     # Sample data
     if not c.execute("SELECT COUNT(*) FROM students").fetchone()[0]:
         demo = [
-            ("Alice Johnson", "Reading", "6A", 0, "alice@demo.com", "111-222", 1),
-            ("Bob Smith", "Math", "5A", 1, "bob@demo.com", "222-333", 1)
+            ("Alice Johnson", "Reading", 0, "alice@demo.com", "111-222", 1),
+            ("Bob Smith", "Math", 1, "bob@demo.com", "222-333", 1)
         ]
         c.executemany("""INSERT INTO students
-            (name, subject, level, book_loaned, email, phone, active)
-            VALUES (?,?,?,?,?,?,?)""", demo)
+            (name, subject, book_loaned, email, phone, active)
+            VALUES (?,?,?,?,?,?)""", demo)
 
     if not c.execute("SELECT COUNT(*) FROM staff").fetchone()[0]:
         c.execute("INSERT INTO staff (name,role,email,phone) VALUES (?,?,?,?)",
@@ -1081,8 +1344,6 @@ def init_db():
                   " VALUES (?,?,?,?,?)",
                   ("Mathematics Basics","KumoPress","111222333",1,"5A"))
     conn.commit(); conn.close()
-
-    _remove_legacy_student_columns(DB_PATH)
 
     # Ensure additional columns exist on students table (migration for additional fields)
     with sqlite3.connect(DB_PATH) as conn:
@@ -1104,20 +1365,32 @@ def init_db():
             cur.execute("ALTER TABLE students ADD COLUMN day1_time TEXT")
         if "day2_time" not in cols:
             cur.execute("ALTER TABLE students ADD COLUMN day2_time TEXT")
+        if "day3" not in cols:
+            cur.execute("ALTER TABLE students ADD COLUMN day3 TEXT")
+        if "day3_time" not in cols:
+            cur.execute("ALTER TABLE students ADD COLUMN day3_time TEXT")
+        if "day4" not in cols:
+            cur.execute("ALTER TABLE students ADD COLUMN day4 TEXT")
+        if "day4_time" not in cols:
+            cur.execute("ALTER TABLE students ADD COLUMN day4_time TEXT")
+        if "day5" not in cols:
+            cur.execute("ALTER TABLE students ADD COLUMN day5 TEXT")
+        if "day5_time" not in cols:
+            cur.execute("ALTER TABLE students ADD COLUMN day5_time TEXT")
+        if "day6" not in cols:
+            cur.execute("ALTER TABLE students ADD COLUMN day6 TEXT")
+        if "day6_time" not in cols:
+            cur.execute("ALTER TABLE students ADD COLUMN day6_time TEXT")
         if "subjects_json" not in cols:
             cur.execute("ALTER TABLE students ADD COLUMN subjects_json TEXT DEFAULT '[]'")
         if "subject_minutes_json" not in cols:
             cur.execute("ALTER TABLE students ADD COLUMN subject_minutes_json TEXT DEFAULT '[]'")
         if "total_study_minutes" not in cols:
             cur.execute("ALTER TABLE students ADD COLUMN total_study_minutes INTEGER DEFAULT 30")
-        if "photo" not in cols:
-            cur.execute("ALTER TABLE students ADD COLUMN photo TEXT DEFAULT ''")
         if "photo_blob" not in cols:
             cur.execute("ALTER TABLE students ADD COLUMN photo_blob BLOB")
         if "photo_mime" not in cols:
             cur.execute("ALTER TABLE students ADD COLUMN photo_mime TEXT DEFAULT ''")
-        if "photo_filename" not in cols:
-            cur.execute("ALTER TABLE students ADD COLUMN photo_filename TEXT DEFAULT ''")
         if "schedule_json" not in cols:
             cur.execute("ALTER TABLE students ADD COLUMN schedule_json TEXT DEFAULT ''")
         if "guardian" not in cols:
@@ -1131,6 +1404,83 @@ def init_db():
         if "checkout_notify_enabled" not in cols:
             cur.execute("ALTER TABLE students ADD COLUMN checkout_notify_enabled INTEGER DEFAULT 1")
         cur.execute("UPDATE students SET checkout_notify_enabled = 1 WHERE checkout_notify_enabled IS NULL")
+
+        schedule_rows = cur.execute(
+            """
+            SELECT
+                id,
+                COALESCE(schedule_json, ''),
+                COALESCE(day1, ''), COALESCE(day1_time, ''),
+                COALESCE(day2, ''), COALESCE(day2_time, ''),
+                COALESCE(day3, ''), COALESCE(day3_time, ''),
+                COALESCE(day4, ''), COALESCE(day4_time, ''),
+                COALESCE(day5, ''), COALESCE(day5_time, ''),
+                COALESCE(day6, ''), COALESCE(day6_time, '')
+            FROM students
+            """
+        ).fetchall()
+
+        schedule_updates = []
+        for row in schedule_rows:
+            student_id = row[0]
+            raw_schedule_json = row[1]
+            entries = []
+            seen_days = set()
+
+            if raw_schedule_json:
+                try:
+                    parsed = json.loads(raw_schedule_json)
+                except (TypeError, ValueError, json.JSONDecodeError):
+                    parsed = []
+                if isinstance(parsed, list):
+                    for entry in parsed:
+                        if not isinstance(entry, dict):
+                            continue
+                        day = str(entry.get("day") or "").strip()
+                        time = str(entry.get("time") or "").strip()
+                        if not day or day in seen_days:
+                            continue
+                        seen_days.add(day)
+                        entries.append((day, time))
+                        if len(entries) >= 6:
+                            break
+
+            if not entries:
+                for idx in range(2, 14, 2):
+                    day = str(row[idx] or "").strip()
+                    time = str(row[idx + 1] or "").strip()
+                    if not day or day in seen_days:
+                        continue
+                    seen_days.add(day)
+                    entries.append((day, time))
+                    if len(entries) >= 6:
+                        break
+
+            slot_values = []
+            for slot_index in range(6):
+                if slot_index < len(entries):
+                    slot_values.extend([entries[slot_index][0], entries[slot_index][1]])
+                else:
+                    slot_values.extend(["", ""])
+
+            schedule_updates.append((*slot_values, student_id))
+
+        if schedule_updates:
+            cur.executemany(
+                """
+                UPDATE students
+                SET
+                    day1=?, day1_time=?,
+                    day2=?, day2_time=?,
+                    day3=?, day3_time=?,
+                    day4=?, day4_time=?,
+                    day5=?, day5_time=?,
+                    day6=?, day6_time=?
+                WHERE id=?
+                """,
+                schedule_updates,
+            )
+
         # Sync device_loaned from active material loans (fixes pre-migration stale data)
         cur.execute("UPDATE students SET device_loaned = 0 WHERE device_loaned IS NULL OR device_loaned = 0")
         cur.execute("""
@@ -1148,6 +1498,7 @@ def init_db():
         conn.commit()
 
     _migrate_student_photos_to_blob(DB_PATH)
+    _remove_legacy_student_columns(DB_PATH)
 
     # Ensure required columns exist on staff table; drop orphaned columns
     with sqlite3.connect(DB_PATH) as conn:
@@ -1162,6 +1513,9 @@ def init_db():
             cur.execute("ALTER TABLE staff ADD COLUMN icon_picture BLOB")
         if "icon_picture_mime" not in cols:
             cur.execute("ALTER TABLE staff ADD COLUMN icon_picture_mime TEXT DEFAULT ''")
+        if "loading" not in cols:
+            cur.execute("ALTER TABLE staff ADD COLUMN loading INTEGER DEFAULT 1")
+        cur.execute("UPDATE staff SET loading = 1 WHERE loading IS NULL")
         conn.commit()
 
     # Ensure new book columns exist (migration for book inventory management)
@@ -1350,7 +1704,7 @@ def init_db():
         pushed = sync_to_gdrive(DB_PATH, GDRIVE_SYNC_PATH)
         if not pushed:
             print(
-                "[sync] WARNING: initial post-init push to Google Drive did not complete. "
+                "[sync] WARNING: initial post-init push to cloud backup did not complete. "
                 "Background sync/exit sync will retry.",
                 file=sys.stderr,
             )

@@ -21,7 +21,15 @@ import atexit
 # Load environment variables from .env file
 load_dotenv()
 
-from modules.database import init_db, DB_PATH, GDriveLockError, get_db_config_status
+from modules.database import (
+    init_db,
+    DB_PATH,
+    GDriveLockError,
+    get_db_config_status,
+    sync_to_gdrive_now,
+    record_app_version,
+    get_version_compatibility_warning,
+)
 from modules import student_manager, timer_manager, qr_generator, assistant_manager, reports, auth_manager, license_manager
 from modules import instructor_profile_manager
 from modules import user_identity_manager
@@ -39,7 +47,15 @@ def _should_enforce_single_instance() -> bool:
     return True
 
 
-if _should_enforce_single_instance():
+def _acquire_single_instance_or_exit() -> bool:
+    """Acquire single-instance guard for server startup.
+
+    Returns:
+        bool: True when startup may continue, False when blocked in a debugger
+        session (no SystemExit raised).
+    """
+    if not _should_enforce_single_instance():
+        return True
     try:
         ensure_single_instance(
             app_name='stdytime-app',
@@ -47,9 +63,17 @@ if _should_enforce_single_instance():
             port=int(os.getenv('PORT', '5000')),
         )
         atexit.register(release_single_instance_lock)
+        return True
     except RuntimeError as exc:
-        print(f"[startup] BLOCKED: {exc}", file=sys.stderr)
-        sys.exit(1)
+        if _is_debugger_attached():
+            print(
+                f"[startup] BLOCKED (debugger): {exc} "
+                "A server instance is already running; ending this debug run without SystemExit.",
+                file=sys.stderr,
+            )
+        else:
+            print(f"[startup] BLOCKED: {exc}", file=sys.stderr)
+        return False
 
 # ================================================================
 #  Flask setup
@@ -71,8 +95,16 @@ _EXIT_SHUTDOWN_IN_PROGRESS = False
 
 def _is_debugger_attached():
     """Return True when the current process is running under a debugger."""
+    # Common debugpy markers in VS Code launches.
+    if os.getenv("DEBUGPY_LAUNCHER_PORT") or os.getenv("PYDEVD_LOAD_VALUES_ASYNC"):
+        return True
+
     gettrace = getattr(sys, 'gettrace', None)
-    return bool(callable(gettrace) and gettrace())
+    if callable(gettrace) and gettrace():
+        return True
+
+    # Fallback: debugpy may be imported before trace is fully active.
+    return 'debugpy' in sys.modules
 
 
 class _TeeStream:
@@ -473,6 +505,19 @@ def after_request_profiler(response):
     app.logger.debug("[request] <- %s %s %s", request.method, endpoint, response.status_code)
     return response
 
+
+@app.after_request
+def after_request_immediate_backup_sync(response):
+    """Immediately push local DB to cloud backup after successful write operations."""
+    try:
+        is_write = request.method in ('POST', 'PUT', 'PATCH', 'DELETE')
+        is_success = 200 <= int(response.status_code) < 400
+        if is_write and is_success:
+            sync_to_gdrive_now()
+    except Exception as exc:
+        app.logger.warning("[sync] Immediate post-write backup push failed: %s", exc)
+    return response
+
 # Prevent client/proxies from caching API responses
 @app.after_request
 def add_no_cache_headers(response):
@@ -558,6 +603,13 @@ def inject_license_status():
 def inject_app_version():
     """Inject app version from VERSION file into all templates."""
     return dict(app_version=get_app_version())
+
+
+@app.context_processor
+def inject_app_version_compatibility():
+    """Inject cross-machine app/backup version compatibility banner state."""
+    current_version = get_app_version()
+    return dict(version_compatibility=get_version_compatibility_warning(current_version))
 
 
 @app.context_processor
@@ -825,6 +877,13 @@ def _check_version_on_startup():
         return
 
     current_version = _ensure_version_up_to_date()
+    recorded_version = record_app_version(current_version)
+    if recorded_version != current_version:
+        print(
+            f"[version] Local app v{current_version} is older than recorded DB backup version v{recorded_version}."
+        )
+    # Push immediately so backup DB carries the latest compatible app version marker.
+    sync_to_gdrive_now()
     print(f"[startup] Stdytime version: {current_version}")
 
 _check_version_on_startup()
@@ -972,26 +1031,36 @@ atexit.register(print_profiler_summary)
 #  Run app
 # ================================================================
 if __name__ == "__main__":
-    port = int(os.getenv("PORT", "5000"))
-    host = os.getenv("HOST", "127.0.0.1")
-    if IS_PRODUCTION:
-        # Production: use Waitress (no Flask dev-server warnings)
-        from waitress import serve
-        print(f"[Stdytime] Serving on http://{host}:{port}  (Waitress)")
-        serve(app, host=host, port=port, threads=8)
+    can_start_server = _acquire_single_instance_or_exit()
+    if not can_start_server:
+        # Exit naturally (code 0) to avoid debugger breaking on SystemExit.
+        # For non-debug runs, return a non-zero process exit code.
+        if _is_debugger_attached():
+            pass
+        else:
+            raise SystemExit(1)
     else:
-        # Development: Flask dev server with reloader for fast iteration
-        debugger_attached = _is_debugger_attached()
-        if debugger_attached:
-            print("[startup] Debugger detected; disabling Flask auto-reloader for a clean VS Code debug session.")
-        use_reloader = (
-            os.getenv("FLASK_USE_RELOADER", "true").lower() == "true"
-            and not debugger_attached
-        )
-        app.run(
-            host=host,
-            port=port,
-            debug=True,
-            use_reloader=use_reloader,
-            threaded=True,
-        )
+
+        port = int(os.getenv("PORT", "5000"))
+        host = os.getenv("HOST", "127.0.0.1")
+        if IS_PRODUCTION:
+            # Production: use Waitress (no Flask dev-server warnings)
+            from waitress import serve
+            print(f"[Stdytime] Serving on http://{host}:{port}  (Waitress)")
+            serve(app, host=host, port=port, threads=8)
+        else:
+            # Development: Flask dev server with reloader for fast iteration
+            debugger_attached = _is_debugger_attached()
+            if debugger_attached:
+                print("[startup] Debugger detected; disabling Flask auto-reloader for a clean VS Code debug session.")
+            use_reloader = (
+                os.getenv("FLASK_USE_RELOADER", "true").lower() == "true"
+                and not debugger_attached
+            )
+            app.run(
+                host=host,
+                port=port,
+                debug=True,
+                use_reloader=use_reloader,
+                threaded=True,
+            )
