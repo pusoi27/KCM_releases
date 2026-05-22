@@ -1,6 +1,6 @@
 ﻿#*****************************
 # schedule_manager.py - Assistant scheduling by day
-# Version: 1.0.0
+# Version: 1.0.1
 #*****************************
 """
 CRUD operations for assistant scheduling (assigns assistants to specific calendar dates).
@@ -9,6 +9,11 @@ CRUD operations for assistant scheduling (assigns assistants to specific calenda
 import sqlite3
 from datetime import datetime, timedelta
 from modules.database import DB_PATH
+
+
+def _staff_loading_select(conn: sqlite3.Connection) -> str:
+    cols = [row[1] for row in conn.execute("PRAGMA table_info(staff)").fetchall()]
+    return "COALESCE(s.loading, 1) AS loading" if "loading" in cols else "1 AS loading"
 
 
 def schedule_assistant(assistant_id, scheduled_date):
@@ -21,7 +26,7 @@ def schedule_assistant(assistant_id, scheduled_date):
         try:
             c.execute(
                 """INSERT INTO assistant_schedule (assistant_id, scheduled_date)
-                   VALUES (?, ?, ?)""",
+                   VALUES (?, ?)""",
                 (assistant_id, scheduled_date),
             )
             conn.commit()
@@ -50,18 +55,19 @@ def unschedule_assistant(assistant_id, scheduled_date):
 def get_scheduled_assistants_for_date(scheduled_date):
     """
     Fetch all assistants scheduled for a specific date.
-    Returns list of (assistant_id, name, role, email, phone).
+        Returns list of (assistant_id, name, role, email, phone, loading).
     """
     with sqlite3.connect(DB_PATH) as conn:
         c = conn.cursor()
+        loading_select = _staff_loading_select(conn)
         c.execute(
-            """SELECT s.id, s.name, s.role, s.email, s.phone
+            f"""SELECT s.id, s.name, s.role, s.email, s.phone, {loading_select}
                FROM staff s
                INNER JOIN assistant_schedule a
                  ON s.id = a.assistant_id
                WHERE a.scheduled_date = ?
                ORDER BY s.name""",
-            (scheduled_date),
+            (scheduled_date,),
         )
         return c.fetchall()
 
@@ -83,15 +89,16 @@ def is_assistant_scheduled(assistant_id, scheduled_date):
 def get_unscheduled_assistants():
     """
     Fetch all assistants not currently in the schedule.
-    Returns list of (assistant_id, name, role, email, phone).
+    Returns list of (assistant_id, name, role, email, phone, loading).
     """
     with sqlite3.connect(DB_PATH) as conn:
         c = conn.cursor()
+        loading_select = _staff_loading_select(conn).replace("s.", "")
         c.execute(
-            """SELECT id, name, role, email, phone
+            f"""SELECT id, name, role, email, phone, {loading_select}
                FROM staff
-               WHERE               ORDER BY name""",
-            (),
+               WHERE role = 'assistant'
+               ORDER BY name""",
         )
         return c.fetchall()
 
@@ -99,7 +106,7 @@ def get_unscheduled_assistants():
 def get_assistants_schedule_for_month(year, month):
     """
     Fetch all scheduled assistants for a given month.
-    Returns dict: {YYYY-MM-DD: [(assistant_id, name, role, email, phone), ...]}.
+    Returns dict: {YYYY-MM-DD: [(assistant_id, name, role, email, phone, loading), ...]}.
     """
     # Get first and last day of month
     first_day = datetime(year, month, 1).date()
@@ -113,8 +120,9 @@ def get_assistants_schedule_for_month(year, month):
     
     with sqlite3.connect(DB_PATH) as conn:
         c = conn.cursor()
+        loading_select = _staff_loading_select(conn)
         c.execute(
-            """SELECT a.scheduled_date, s.id, s.name, s.role, s.email, s.phone
+            f"""SELECT a.scheduled_date, s.id, s.name, s.role, s.email, s.phone, {loading_select}
                FROM assistant_schedule a
                INNER JOIN staff s ON s.id = a.assistant_id
                WHERE a.scheduled_date BETWEEN ? AND ?
@@ -143,7 +151,7 @@ def set_center_closed_date(closed_date, reason="Holiday / Center Closed"):
         try:
             c.execute(
                 """INSERT INTO center_closed_dates (closed_date, reason)
-                   VALUES (?, ?, ?)""",
+                   VALUES (?, ?)""",
                 (closed_date, reason or "Holiday / Center Closed"),
             )
             conn.commit()
@@ -162,7 +170,7 @@ def unset_center_closed_date(closed_date):
         c.execute(
             """DELETE FROM center_closed_dates
                WHERE closed_date = ?""",
-            (closed_date),
+            (closed_date,),
         )
         conn.commit()
         return c.rowcount
@@ -177,7 +185,7 @@ def is_center_closed_date(closed_date):
                FROM center_closed_dates
                WHERE closed_date = ?
                LIMIT 1""",
-            (closed_date),
+            (closed_date,),
         ).fetchone()
         return row is not None
 
@@ -216,7 +224,7 @@ def unschedule_all_assistants_for_date(scheduled_date):
         c.execute(
             """DELETE FROM assistant_schedule
                WHERE scheduled_date = ?""",
-            (scheduled_date),
+            (scheduled_date,),
         )
         conn.commit()
         return c.rowcount

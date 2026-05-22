@@ -9,7 +9,7 @@ call .venv\Scripts\activate.bat
 
 pyinstaller ^
     --onefile ^
-    --windowed ^
+    --console ^
     --name "Run Stdytime" ^
     --icon "assets\stdytime.ico" ^
     launcher_browser.py
