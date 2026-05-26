@@ -1,7 +1,7 @@
 # routes/students.py
 from io import BytesIO
 
-from flask import abort, jsonify, render_template, request, redirect, url_for, flash, send_file
+from flask import abort, jsonify, render_template, request, redirect, url_for, flash, send_file, current_app
 from werkzeug.utils import secure_filename
 from modules import student_manager, instructor_profile_manager, server_cache, db_backup_recovery, auth_manager
 from routes.auth import require_login, require_admin
@@ -60,6 +60,9 @@ def _read_student_photo(file_storage, student_id):
         return None
     photo_bytes = file_storage.read()
     if not photo_bytes:
+        return None
+    max_photo_bytes = int(current_app.config.get('MAX_PHOTO_BYTES') or 0)
+    if max_photo_bytes and len(photo_bytes) > max_photo_bytes:
         return None
     photo_mime = file_storage.mimetype or {
         'jpg': 'image/jpeg',

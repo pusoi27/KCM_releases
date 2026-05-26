@@ -1,5 +1,5 @@
 # routes/assistants.py
-from flask import render_template, request, redirect, url_for, flash, send_file, jsonify
+from flask import render_template, request, redirect, url_for, flash, send_file, jsonify, current_app
 import io
 import mimetypes
 import os
@@ -21,6 +21,9 @@ def _save_assistant_photo(file_storage, assistant_id):
     try:
         icon_blob = file_storage.read()
         if not icon_blob:
+            return False
+        max_photo_bytes = int(current_app.config.get('MAX_PHOTO_BYTES') or 0)
+        if max_photo_bytes and len(icon_blob) > max_photo_bytes:
             return False
         
         icon_mime = file_storage.mimetype or mimetypes.guess_type(file_storage.filename)[0] or 'image/png'
@@ -185,6 +188,8 @@ def register_assistant_routes(app):
             return jsonify({'success': False, 'message': str(e)}), 500
 
     @app.route("/staff/icon/<int:aid>")
+    @require_login
+    @require_feature(auth_manager.FEATURE_ASSISTANTS)
     def serve_staff_icon(aid):
         """Serve staff member's icon picture."""
         icon_data = assistant_manager.get_assistant_icon(aid)

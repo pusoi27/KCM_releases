@@ -7,12 +7,14 @@ Features: Student management, session tracking, QR generation, Avery 8160 PDF ou
 
 from flask import Flask, render_template, request, send_from_directory, jsonify, session, g, redirect, url_for
 from werkzeug.utils import secure_filename
+from werkzeug.exceptions import RequestEntityTooLarge
 from datetime import datetime, timedelta
 import sqlite3
 import os
 import secrets
 import sys
 import shutil
+import ipaddress
 from dotenv import load_dotenv
 from flask_wtf.csrf import CSRFProtect, generate_csrf
 import logging
@@ -152,6 +154,27 @@ def _is_debugger_attached():
     return 'debugpy' in sys.modules
 
 
+def _is_loopback_host(hostname: str) -> bool:
+    """Return True when the provided host resolves to loopback/local-only."""
+    value = (hostname or '').strip().lower()
+    if value in {'localhost', '127.0.0.1', '::1'}:
+        return True
+    try:
+        return ipaddress.ip_address(value).is_loopback
+    except ValueError:
+        return False
+
+
+def _parse_env_int(name: str, default: int, minimum: int = 1) -> int:
+    """Parse a positive integer environment value with safe fallback."""
+    raw = str(os.getenv(name, str(default))).strip()
+    try:
+        parsed = int(raw)
+    except (TypeError, ValueError):
+        parsed = default
+    return max(minimum, parsed)
+
+
 class _TeeStream:
     """Write stream output to both the original stream and a trace file."""
 
@@ -250,6 +273,8 @@ app.config['SESSION_COOKIE_SECURE'] = os.getenv('COOKIE_SECURE', cookie_secure_d
 app.config['SESSION_COOKIE_HTTPONLY'] = True
 app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
 app.config['WTF_CSRF_TIME_LIMIT'] = 3600  # CSRF token valid for 1 hour
+app.config['MAX_CONTENT_LENGTH'] = _parse_env_int('MAX_UPLOAD_MB', 8) * 1024 * 1024
+app.config['MAX_PHOTO_BYTES'] = _parse_env_int('MAX_PHOTO_MB', 5) * 1024 * 1024
 
 # Initialize / verify sqlite DB
 try:
@@ -1122,6 +1147,16 @@ def not_found(e):
     return render_template("404.html"), 404
 
 
+@app.errorhandler(RequestEntityTooLarge)
+def request_entity_too_large(_error):
+    max_bytes = int(app.config.get('MAX_CONTENT_LENGTH') or 0)
+    max_mb = max(1, max_bytes // (1024 * 1024))
+    message = f"Upload too large. Maximum allowed request size is {max_mb} MB."
+    if request.path.startswith('/api/'):
+        return jsonify({'success': False, 'error': message}), 413
+    return message, 413
+
+
 # ================================================================
 #  Shutdown handler - print profiler summary
 # ================================================================
@@ -1149,6 +1184,18 @@ if __name__ == "__main__":
 
         port = int(os.getenv("PORT", "5000"))
         host = os.getenv("HOST", "127.0.0.1")
+        allow_unsafe_dev_host = os.getenv("ALLOW_UNSAFE_DEV_HOST", "false").lower() == "true"
+
+        if not IS_PRODUCTION and not _is_loopback_host(host):
+            if allow_unsafe_dev_host:
+                print(f"[security] WARNING: Non-loopback HOST in development mode: {host}")
+            else:
+                print(
+                    f"[security] Guardrail active: refusing non-loopback HOST '{host}' in development. "
+                    "Set ALLOW_UNSAFE_DEV_HOST=true to override explicitly."
+                )
+                host = "127.0.0.1"
+
         if IS_PRODUCTION:
             # Production: use Waitress (no Flask dev-server warnings)
             from waitress import serve
@@ -1163,10 +1210,14 @@ if __name__ == "__main__":
                 os.getenv("FLASK_USE_RELOADER", "true").lower() == "true"
                 and not debugger_attached
             )
+            debug_mode = os.getenv("FLASK_DEBUG", "1").lower() in {"1", "true", "yes", "on"}
+            if not _is_loopback_host(host) and debug_mode:
+                print("[security] Guardrail active: disabling debug mode on non-loopback host.")
+                debug_mode = False
             app.run(
                 host=host,
                 port=port,
-                debug=True,
+                debug=debug_mode,
                 use_reloader=use_reloader,
                 threaded=True,
             )
