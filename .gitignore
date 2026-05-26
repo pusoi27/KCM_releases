@@ -31,3 +31,6 @@ db_config.json
 
 # Local logs
 *.log
+
+# Windows binaries/installers (never commit)
+*.exe
