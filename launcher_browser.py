@@ -79,7 +79,7 @@ def _show_already_running_notice(url):
     try:
         ctypes.windll.user32.MessageBoxW(
             0,
-            f"Stdytime is already running.\n\nOpening existing instance:\n{url}",
+            f"Instance already running on {_DEFAULT_HOST}:{_DEFAULT_PORT}.\n\nOpening existing instance:\n{url}",
             "Stdytime",
             0x40,  # MB_ICONINFORMATION
         )
@@ -99,7 +99,7 @@ def main():
 
     # If the app is already running, do not spawn another instance.
     if _is_port_open(host, port):
-        print(f"\nAn existing Stdytime instance is already running at {url}")
+        print(f"\nInstance already running on {host}:{port}")
         print("Opening the existing instance in your browser...")
         _show_already_running_notice(url)
         _launch_browser(url)

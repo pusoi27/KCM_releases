@@ -1,7 +1,7 @@
 # routes/instructor_profile.py
 from flask import render_template, request, redirect, url_for, flash, jsonify, session, current_app, send_file
-from modules import instructor_profile_manager, student_manager, auth_manager, user_identity_manager
-from datetime import datetime
+from modules import instructor_profile_manager, student_manager, auth_manager, user_identity_manager, schedule_manager
+from datetime import datetime, timedelta
 from routes.auth import require_login
 import math
 import json
@@ -306,6 +306,8 @@ def register_instructor_profile_routes(app):
         """Display the center calendar with student schedules"""
         profile = instructor_profile_manager.get_instructor_profile()
         students = student_manager.get_all_students()
+        today = datetime.today().date()
+        week_start = today - timedelta(days=today.weekday())
 
         def normalize_day_name(value):
             token = str(value or '').strip()
@@ -354,8 +356,50 @@ def register_instructor_profile_routes(app):
         schedule = {
             'time_slots': [],
             'active_days': active_days,
-            'calendar': {day: {} for day in active_days}
+            'calendar': {day: {} for day in active_days},
+            'day_metadata': {},
+            'slot_loading': {day: {} for day in active_days},
         }
+
+        weekday_lookup = {
+            'Monday': 0,
+            'Tuesday': 1,
+            'Wednesday': 2,
+            'Thursday': 3,
+            'Friday': 4,
+            'Saturday': 5,
+            'Sunday': 6,
+        }
+
+        for day_name in active_days:
+            week_date = week_start + timedelta(days=weekday_lookup.get(day_name, 0))
+            scheduled_assistants = schedule_manager.get_scheduled_assistants_for_date(week_date.isoformat())
+            total_loading = 0
+            assistant_lines = []
+            for assistant in scheduled_assistants:
+                try:
+                    assistant_loading = max(0, int(assistant[5] if len(assistant) > 5 else 1))
+                except (TypeError, ValueError):
+                    assistant_loading = 1
+                total_loading += assistant_loading
+                assistant_lines.append(f"{assistant[1]} (load {assistant_loading})")
+
+            assistant_summary = ", ".join(assistant_lines) if assistant_lines else "No staff scheduled"
+            assistant_tooltip = (
+                f"{day_name} {week_date.strftime('%b %d')}\n"
+                f"Scheduled staff: {assistant_summary}\n"
+                f"Total A/M loading: {total_loading}"
+            )
+
+            schedule['day_metadata'][day_name] = {
+                'date': week_date.isoformat(),
+                'date_label': week_date.strftime('%b %d'),
+                'assistants': scheduled_assistants,
+                'loading_capacity': total_loading,
+                'assistant_summary': assistant_summary,
+                'assistant_count': len(scheduled_assistants),
+                'assistant_tooltip': assistant_tooltip,
+            }
         
         # Collect virtual students (marked as V=1)
         virtual_students = []
@@ -381,16 +425,16 @@ def register_instructor_profile_routes(app):
         # Place students in calendar
         for student in students:
             total_study_minutes = 30
-            if len(student) > 20 and student[20]:
+            if len(student) > 19 and student[19]:
                 try:
-                    total_study_minutes = max(5, int(student[20]))
+                    total_study_minutes = max(5, int(student[19]))
                 except (TypeError, ValueError):
                     total_study_minutes = 30
 
             subjects_display = student[2] if student[2] else 'N/A'
-            if len(student) > 18 and student[18]:
+            if len(student) > 17 and student[17]:
                 try:
-                    parsed_subjects = [str(s).strip() for s in json.loads(student[18]) if str(s).strip()]
+                    parsed_subjects = [str(s).strip() for s in json.loads(student[17]) if str(s).strip()]
                     if parsed_subjects:
                         subjects_display = ", ".join(parsed_subjects)
                 except (TypeError, ValueError):
@@ -400,20 +444,48 @@ def register_instructor_profile_routes(app):
                 'id': student[0],
                 'name': student[1],
                 'subject': subjects_display,
-                'email': student[4] if len(student) > 4 else '',
-                'el': student[11] if len(student) > 11 else 0,
-                'pi': student[12] if len(student) > 12 else 0,
-                'v': student[13] if len(student) > 13 else 0,
-                'ind': student[23] if len(student) > 23 else 0,
+                'email': student[3] if len(student) > 3 else '',
+                'el': student[10] if len(student) > 10 else 0,
+                'pi': student[11] if len(student) > 11 else 0,
+                'v': student[12] if len(student) > 12 else 0,
+                'ind': student[22] if len(student) > 22 else 0,
             }
+
+            schedule_entries = []
+            seen_days = set()
+
+            raw_schedule_json = student[23] if len(student) > 23 else ''
+            if raw_schedule_json:
+                try:
+                    parsed_schedule = json.loads(raw_schedule_json)
+                except (TypeError, ValueError):
+                    parsed_schedule = []
+                if isinstance(parsed_schedule, list):
+                    for entry in parsed_schedule:
+                        if not isinstance(entry, dict):
+                            continue
+                        day = str(entry.get('day') or '').strip()
+                        time = str(entry.get('time') or '').strip()
+                        if not day or day in seen_days:
+                            continue
+                        seen_days.add(day)
+                        schedule_entries.append({'day': day, 'time': time})
+                        if len(schedule_entries) >= 6:
+                            break
+
+            if not schedule_entries:
+                for day_idx, time_idx in ((13, 14), (15, 16), (24, 25), (26, 27), (28, 29), (30, 31)):
+                    day = str(student[day_idx] or '').strip() if len(student) > day_idx else ''
+                    time = str(student[time_idx] or '').strip() if len(student) > time_idx else ''
+                    if not day or day in seen_days:
+                        continue
+                    seen_days.add(day)
+                    schedule_entries.append({'day': day, 'time': time})
             
-            # Check if student has scheduled times
-            has_day1 = len(student) > 14 and student[14]
-            has_day2 = len(student) > 16 and student[16]
-            has_scheduled_times = has_day1 or has_day2
+            has_scheduled_times = bool(schedule_entries)
             
             # Check if student is virtual
-            is_virtual = student[13] if len(student) > 13 else 0
+            is_virtual = student[12] if len(student) > 12 else 0
             
             # If virtual with NO scheduled times, add to virtual students list instead of calendar
             if is_virtual and not has_scheduled_times:
@@ -445,21 +517,13 @@ def register_instructor_profile_routes(app):
                     if next_time_display in schedule['time_slots']:
                         append_unique(day, next_time_display, student_data)
             
-            # Add to Day 1
-            if len(student) > 14 and student[14]:  # day1
-                day1 = normalize_day_name(student[14])
-                time1 = student[15] if len(student) > 15 else None
-                if time1:
-                    time_display = format_time_display(time1)
-                    add_student_to_slot(day1, time_display, student_data, schedule, duration_minutes=total_study_minutes)
-            
-            # Add to Day 2
-            if len(student) > 16 and student[16]:  # day2
-                day2 = normalize_day_name(student[16])
-                time2 = student[17] if len(student) > 17 else None
-                if time2:
-                    time_display = format_time_display(time2)
-                    add_student_to_slot(day2, time_display, student_data, schedule, duration_minutes=total_study_minutes)
+            for entry in schedule_entries:
+                day_name = normalize_day_name(entry.get('day'))
+                time_value = entry.get('time')
+                if not day_name or not time_value:
+                    continue
+                time_display = format_time_display(time_value)
+                add_student_to_slot(day_name, time_display, student_data, schedule, duration_minutes=total_study_minutes)
 
         # Order students within each slot: EL first, then PI, then the rest
         for day in schedule['calendar']:
@@ -471,8 +535,31 @@ def register_instructor_profile_routes(app):
                         s.get('name', '')
                     )
                 )
+
+        for day in schedule['active_days']:
+            day_capacity = schedule['day_metadata'].get(day, {}).get('loading_capacity', 0)
+            for time_slot in schedule['time_slots']:
+                slot_students = schedule['calendar'].get(day, {}).get(time_slot, []) or []
+                occupied_count = sum(1 for student in slot_students if student.get('el') or student.get('pi'))
+                over_capacity = max(0, occupied_count - day_capacity)
+                schedule['slot_loading'][day][time_slot] = {
+                    'capacity': day_capacity,
+                    'occupied': occupied_count,
+                    'free': max(0, day_capacity - occupied_count),
+                    'over_capacity': over_capacity,
+                }
         
-        total_students = len([s for s in students if (len(s) > 15 and s[15]) or (len(s) > 17 and s[17])])
+        total_students = len([
+            s for s in students
+            if (
+                (len(s) > 14 and s[14])
+                or (len(s) > 16 and s[16])
+                or (len(s) > 25 and s[25])
+                or (len(s) > 27 and s[27])
+                or (len(s) > 29 and s[29])
+                or (len(s) > 31 and s[31])
+            )
+        ])
         schedule['virtual_students'] = virtual_students
         
         return render_template("center_calendar.html", schedule=schedule, total_students=total_students)

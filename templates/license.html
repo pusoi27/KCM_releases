@@ -18,7 +18,7 @@
       <div class="row g-0">
         <div class="col-lg-5 bg-success text-white p-4 p-lg-5">
           <h1 class="h3 fw-bold mb-3">Stdytime License</h1>
-          <p class="mb-4">This installation is built for a single local machine. Once a subscription is paid, paste the issued license key here and the app stays unlocked until the license expires.</p>
+          <p class="mb-4">Use this same screen at startup or from the menu to activate or upgrade your license. Depending on your plan, one license key can cover one machine or multiple machines.</p>
           <div class="small opacity-75 mb-2">Machine fingerprint</div>
           <div class="mono bg-dark bg-opacity-25 p-3 rounded mb-4">{{ license_status.machine_fingerprint }}</div>
           <div class="small opacity-75 mb-2">Current status</div>
@@ -46,7 +46,7 @@
             <a href="https://stdytime.com/#pricing" target="_blank" class="btn btn-sm btn-success">Buy a subscription</a>
           </div>
           {% endif %}
-          <p class="text-muted">After purchase, LemonSqueezy emails you a license key. Paste it below to activate this machine. One license key activates one machine.</p>
+          <p class="text-muted">After purchase, LemonSqueezy emails you a license key. Paste it below to activate this installation. If your plan includes multiple machines, the license will show its activation limit here.</p>
 
           <form method="POST" action="{{ url_for('activate_license') }}" class="mb-4">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">

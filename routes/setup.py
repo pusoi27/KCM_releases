@@ -1,6 +1,7 @@
 from flask import render_template, request, redirect, url_for, flash, jsonify, session
 
 from modules.database import get_db_config_status, save_db_config_paths
+from modules.database import sync_to_gdrive_now, sync_from_gdrive_now, get_last_sync_error
 from modules import instructor_profile_manager
 from routes.auth import require_login
 
@@ -62,18 +63,15 @@ def register_setup_routes(app):
     @require_login
     def setup_storage():
         if request.method == 'POST':
+            cloud_provider = (request.form.get('cloud_provider') or 'onedrive').strip().lower()
             gdrive_sync_path = (request.form.get('gdrive_sync_path') or '').strip()
-            sync_interval = (request.form.get('sync_interval_minutes') or '').strip()
-
-            try:
-                sync_interval_value = int(sync_interval) if sync_interval else None
-            except ValueError:
-                sync_interval_value = None
+            onedrive_sync_path = (request.form.get('onedrive_sync_path') or '').strip()
 
             status = save_db_config_paths(
                 db_path=None,
                 gdrive_sync_path=gdrive_sync_path,
-                sync_interval_minutes=sync_interval_value,
+                onedrive_sync_path=onedrive_sync_path,
+                cloud_provider=cloud_provider,
             )
 
             if status.get('is_ready'):
@@ -86,6 +84,34 @@ def register_setup_routes(app):
 
         status = get_db_config_status()
         return render_template('setup_storage.html', status=status)
+
+    @app.route('/setup/storage/push-backup', methods=['POST'])
+    @require_login
+    def setup_storage_push_backup():
+        pushed = sync_to_gdrive_now()
+        if pushed:
+            flash('Backup push completed: local database copied to cloud backup.', 'success')
+        else:
+            detail = get_last_sync_error()
+            if detail:
+                flash(f'Backup push failed: {detail}', 'warning')
+            else:
+                flash('Backup push skipped or failed. Verify DB Backup path is configured and available.', 'warning')
+        return redirect(url_for('setup_storage'))
+
+    @app.route('/setup/storage/pull-backup', methods=['POST'])
+    @require_login
+    def setup_storage_pull_backup():
+        pulled = sync_from_gdrive_now(force=True)
+        if pulled:
+            flash('Backup read completed: cloud backup copied to local database.', 'success')
+        else:
+            detail = get_last_sync_error()
+            if detail:
+                flash(f'Backup read failed: {detail}', 'warning')
+            else:
+                flash('Backup read skipped or failed. Verify cloud backup file exists and is reachable.', 'warning')
+        return redirect(url_for('setup_storage'))
 
     @app.route('/api/setup/status', methods=['GET'])
     @require_login

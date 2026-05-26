@@ -51,6 +51,15 @@ _browser_monitor_started = False
 _is_quitting = False
 
 
+def _should_shutdown_on_browser_exit() -> bool:
+    """Whether backend should auto-stop when tracked browser process exits.
+
+    Default is disabled because some browsers spawn short-lived launcher
+    processes during startup, which can cause false shutdowns.
+    """
+    return os.getenv("STDYTIME_SHUTDOWN_ON_BROWSER_EXIT", "false").strip().lower() == "true"
+
+
 def _build_icon_image():
     """Generate a simple coloured square as the tray icon (no external file needed)."""
     from PIL import Image, ImageDraw
@@ -98,7 +107,7 @@ def _show_already_running_notice(url):
     try:
         ctypes.windll.user32.MessageBoxW(
             0,
-            f"Stdytime is already running.\n\nOpening existing instance:\n{url}",
+            f"Instance already running on {HOST}:{PORT}.\n\nOpening existing instance:\n{url}",
             "Stdytime",
             0x40,  # MB_ICONINFORMATION
         )
@@ -172,9 +181,11 @@ def _monitor_browser_exit():
 
     try:
         proc.wait()
-        if not _is_quitting:
+        if not _is_quitting and _should_shutdown_on_browser_exit():
             log.info("Browser closed. Stopping Stdytime backend.")
             quit_app(_tray_icon)
+        elif not _is_quitting:
+            log.info("Browser process exited; backend remains running.")
     except Exception as exc:
         log.debug("Browser monitor ended with warning: %s", exc)
 
@@ -187,7 +198,7 @@ def open_browser():
         return
 
     _browser_process = _launch_browser(URL)
-    if _browser_process and not _browser_monitor_started:
+    if _browser_process and not _browser_monitor_started and _should_shutdown_on_browser_exit():
         _browser_monitor_started = True
         threading.Thread(target=_monitor_browser_exit, daemon=True, name="browser-monitor").start()
 
@@ -213,7 +224,7 @@ def main():
     global _server_thread, _tray_icon
 
     if _is_port_open(HOST, PORT):
-        log.info("Existing Stdytime instance detected at %s; opening browser only.", URL)
+        log.info("Instance already running on %s:%s; opening existing browser session.", HOST, PORT)
         _show_already_running_notice(URL)
         open_browser()
         return
@@ -223,8 +234,8 @@ def main():
     _server_thread.start()
     log.info("Stdytime running at %s", URL)
 
-    # Open browser after a short delay (let server bind first)
-    threading.Timer(1.2, open_browser).start()
+    # Open browser after a longer delay on startup to reduce first-run races.
+    threading.Timer(4.0, open_browser).start()
 
     # System tray icon
     try:

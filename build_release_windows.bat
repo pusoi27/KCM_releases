@@ -34,7 +34,11 @@ REM Copy folders
 xcopy templates %RELEASE_DIR%\templates /E /I /Y
 xcopy static %RELEASE_DIR%\static /E /I /Y
 xcopy assets %RELEASE_DIR%\assets /E /I /Y
-xcopy data %RELEASE_DIR%\data /E /I /Y
+
+REM Copy only static data assets (exclude runtime DB, backups, WAL/SHM, temp files)
+mkdir %RELEASE_DIR%\data
+if exist data\award_rules.json copy data\award_rules.json %RELEASE_DIR%\data\
+if exist data\grade_level_criteria.json copy data\grade_level_criteria.json %RELEASE_DIR%\data\
 
 REM Done
 @echo.

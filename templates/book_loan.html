@@ -371,8 +371,8 @@ function clearLoan(bookId, studentId, bookTitle, studentName) {
       currentStudent = null;
       setStudentStatus('');
       studentSelect.value = '';
-      // refresh book details
-      await refreshBook();
+      // Refresh page so server-rendered "Currently Loaned Books" section updates immediately
+      window.location.reload();
     } catch (err) {
       showAlert(err.message, 'danger');
     } finally {
@@ -392,7 +392,8 @@ function clearLoan(bookId, studentId, bookTitle, studentName) {
       const data = await resp.json();
       if (!resp.ok) throw new Error(data.error || 'Return failed');
       showAlert('Book checked in successfully.', 'success');
-      await refreshBook();
+      // Refresh page so server-rendered "Currently Loaned Books" section updates immediately
+      window.location.reload();
     } catch (err) {
       showAlert(err.message, 'danger');
     } finally {

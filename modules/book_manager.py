@@ -190,8 +190,14 @@ def add_book(title, author, publisher, isbn=None, isbn13=None, available=1, read
             """,
             (title, author, publisher, isbn, isbn13, available, reading_level, copies),
         )
+        book_id = c.lastrowid
+        # Only generate QR code if not already present
+        existing_qr = get_book_qr_code(book_id)
+        if not existing_qr:
+            # If you have a QR code generation logic, add it here
+            pass  # No QR code generation if one exists
         conn.commit()
-        return c.lastrowid
+        return book_id
 
 
 def update_book(book_id, title=None, author=None, publisher=None, isbn=None, isbn13=None, available=None, reading_level=None, copies=None, borrower_id=None):
@@ -239,7 +245,7 @@ def update_book(book_id, title=None, author=None, publisher=None, isbn=None, isb
 
         row = c.execute(
             "SELECT isbn, isbn13, copies, borrower_id FROM books WHERE id = ?",
-            (book_id),
+            (book_id,),
         ).fetchone()
 
         if row:
@@ -256,7 +262,7 @@ def update_book(book_id, title=None, author=None, publisher=None, isbn=None, isb
                            available = 0
                      WHERE id = ?
                     """,
-                    (book_id),
+                    (book_id,),
                 )
             else:
                 desired_available = 1 if (_has_isbn(current_isbn, current_isbn13) and not current_borrower_id) else 0
@@ -273,7 +279,7 @@ def delete_book(book_id):
     """Delete a book."""
     with sqlite3.connect(DB_PATH) as conn:
         c = conn.cursor()
-        c.execute("DELETE FROM books WHERE id = ?", (book_id))
+        c.execute("DELETE FROM books WHERE id = ?", (book_id,))
         conn.commit()
         return c.rowcount > 0
 
@@ -346,7 +352,7 @@ def loan_book(book_id: int, student_id: int):
 
         student_exists = c.execute(
             "SELECT id FROM students WHERE id = ?",
-            (student_id),
+            (student_id,),
         ).fetchone()
         if not student_exists:
             return None
@@ -378,13 +384,13 @@ def return_book(book_id: int):
         c = conn.cursor()
         borrower_row = c.execute(
             "SELECT borrower_id FROM books WHERE id = ?",
-            (book_id),
+            (book_id,),
         ).fetchone()
         borrower_id = borrower_row[0] if borrower_row else None
 
         c.execute(
             "UPDATE books SET available = 1, borrower_id = NULL WHERE id = ?",
-            (book_id),
+            (book_id,),
         )
 
         c.execute(
@@ -539,7 +545,7 @@ def clear_active_loan(book_id: int, student_id: int):
 
         book_row = c.execute(
             "SELECT isbn, isbn13, copies FROM books WHERE id = ?",
-            (book_id),
+            (book_id,),
         ).fetchone()
 
         if book_row:

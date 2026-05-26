@@ -10,7 +10,7 @@ def register_dashboard_routes(app):
     """Register dashboard and helper routes."""
     
     def get_active_students():
-        """Return (name, subject, level) for currently active students."""
+        """Return (name, subject) for currently active students."""
         rows = student_manager.get_all_students()
         active_list = []
         for r in rows:
@@ -26,8 +26,8 @@ def register_dashboard_routes(app):
                     ).fetchone()
                     active_flag = active_row[0] if active_row else 0
             if active_flag == 1:
-                name, subj, lvl = r[1], r[2], r[3]
-                active_list.append((name, subj, lvl))
+                name, subj = r[1], r[2]
+                active_list.append((name, subj))
         return active_list
 
     @app.route("/")

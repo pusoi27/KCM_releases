@@ -12,7 +12,7 @@ from modules.database import DB_PATH
 import json
 _ALLOWED_PHOTO_EXTS = {'jpg', 'jpeg', 'png', 'gif', 'webp'}
 MAX_SUBJECTS = 3
-MAX_SCHEDULE_DAYS = 7
+MAX_SCHEDULE_DAYS = 6
 
 
 def _vcf_escape(value: str) -> str:
@@ -128,12 +128,14 @@ def _normalize_schedule_json(schedule_json_str):
             continue
         seen_days.add(day)
         cleaned.append({"day": day, "time": time})
+        if len(cleaned) >= MAX_SCHEDULE_DAYS:
+            break
 
     return json.dumps(cleaned)
 
 
 def _extract_days(schedule_json_str):
-    """Preserve legacy day1/day2 fields from the first two schedule entries."""
+    """Preserve up to six day/time fields from the schedule entries."""
     entries = []
     if schedule_json_str:
         try:
@@ -150,11 +152,16 @@ def _extract_days(schedule_json_str):
         if day:
             normalized.append((day, time))
 
-    day1 = normalized[0][0] if len(normalized) > 0 else ""
-    day1_time = normalized[0][1] if len(normalized) > 0 else ""
-    day2 = normalized[1][0] if len(normalized) > 1 else ""
-    day2_time = normalized[1][1] if len(normalized) > 1 else ""
-    return day1, day2, day1_time, day2_time
+    normalized = normalized[:MAX_SCHEDULE_DAYS]
+    result = {}
+    for idx in range(1, MAX_SCHEDULE_DAYS + 1):
+        if idx <= len(normalized):
+            result[f"day{idx}"] = normalized[idx - 1][0]
+            result[f"day{idx}_time"] = normalized[idx - 1][1]
+        else:
+            result[f"day{idx}"] = ""
+            result[f"day{idx}_time"] = ""
+    return result
 
 
 def _students_list_cache_key() -> str:
@@ -365,7 +372,7 @@ def register_student_routes(app, upload_folder):
                 return redirect(url_for("students_add"))
 
             _sched_json = _normalize_schedule_json(request.form.get("schedule_json", ""))
-            _d1, _d2, _dt1, _dt2 = _extract_days(_sched_json)
+            schedule_fields = _extract_days(_sched_json)
             student_id = student_manager.add_student(
                 request.form["name"],
                 subjects[0],
@@ -376,10 +383,7 @@ def register_student_routes(app, upload_folder):
                 pi=int(bool(request.form.get("pi"))),
                 v=int(bool(request.form.get("v"))),
                 ind=int(bool(request.form.get("ind"))),
-                day1=_d1,
-                day2=_d2,
-                day1_time=_dt1,
-                day2_time=_dt2,
+                **schedule_fields,
                 subjects=subjects,
                 subject_minutes=subject_minutes,
                 schedule_json=_sched_json,
@@ -419,7 +423,7 @@ def register_student_routes(app, upload_folder):
                 return redirect(url_for("students_edit", sid=sid))
 
             _sched_json = _normalize_schedule_json(request.form.get("schedule_json", ""))
-            _d1, _d2, _dt1, _dt2 = _extract_days(_sched_json)
+            schedule_fields = _extract_days(_sched_json)
             student_manager.update_student(
                 sid,
                 request.form["name"],
@@ -431,10 +435,7 @@ def register_student_routes(app, upload_folder):
                 pi=int(bool(request.form.get("pi"))),
                 v=int(bool(request.form.get("v"))),
                 ind=int(bool(request.form.get("ind"))),
-                day1=_d1,
-                day2=_d2,
-                day1_time=_dt1,
-                day2_time=_dt2,
+                **schedule_fields,
                 subjects=subjects,
                 subject_minutes=subject_minutes,
                 schedule_json=_sched_json,
@@ -505,6 +506,14 @@ def register_student_routes(app, upload_folder):
                 student_schedule.append({'day': stu[12], 'time': stu[14] or ''})
             if stu[13]:
                 student_schedule.append({'day': stu[13], 'time': stu[15] or ''})
+            if len(stu) > 25 and stu[25]:
+                student_schedule.append({'day': stu[25], 'time': stu[26] or ''})
+            if len(stu) > 27 and stu[27]:
+                student_schedule.append({'day': stu[27], 'time': stu[28] or ''})
+            if len(stu) > 29 and stu[29]:
+                student_schedule.append({'day': stu[29], 'time': stu[30] or ''})
+            if len(stu) > 31 and stu[31]:
+                student_schedule.append({'day': stu[31], 'time': stu[32] or ''})
         student_schedule = student_schedule[:MAX_SCHEDULE_DAYS]
         return render_template(
             "student_form.html",

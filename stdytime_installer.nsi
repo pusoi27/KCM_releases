@@ -30,6 +30,7 @@ ${StrRep}
 !define UNINSTALL_KEY "Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\${APP_NAME}"
 !define APP_REG_KEY "Software\\${APP_NAME}"
 !define STARTMENU_FOLDER "${APP_NAME}"
+!define DESKTOP_SHORTCUT_NAME "StdyTime.lnk"
 
 Var PreviousConfigPath
 
@@ -52,6 +53,7 @@ RequestExecutionLevel user
 !define MUI_FINISHPAGE_RUN_TEXT "Launch Stdytime"
 
 !insertmacro MUI_PAGE_WELCOME
+!insertmacro MUI_PAGE_COMPONENTS
 !insertmacro MUI_PAGE_DIRECTORY
 !insertmacro MUI_PAGE_INSTFILES
 !insertmacro MUI_PAGE_FINISH
@@ -101,11 +103,14 @@ Function WriteFreshDbConfig
   FileOpen $2 "$INSTDIR\\db_config.json" w
   FileWrite $2 "{$\r$\n"
   FileWrite $2 "  $\"_comment$\": $\"db_path = local machine path (fast, all session reads/writes go here).$\",$\r$\n"
-  FileWrite $2 "  $\"_comment2$\": $\"gdrive_sync_path = Google Drive folder path used only for background sync; Stdytime.db is created there automatically.$\",$\r$\n"
-  FileWrite $2 "  $\"_comment3$\": $\"sync_interval_minutes = how often local DB is pushed to Google Drive (0 = disable).$\",$\r$\n"
+  FileWrite $2 "  $\"_comment2$\": $\"cloud_provider = onedrive (Windows OneDrive backup destination).$\",$\r$\n"
+  FileWrite $2 "  $\"_comment3$\": $\"onedrive_sync_path = folder path used only for background sync; Stdytime.db is created there automatically.$\",$\r$\n"
+  FileWrite $2 "  $\"_comment4$\": $\"sync_interval_minutes = fixed system-managed value (9 minutes).$\",$\r$\n"
   FileWrite $2 "  $\"db_path$\": $\"$0/StdyTime/Stdytime.db$\",$\r$\n"
-  FileWrite $2 "  $\"gdrive_sync_path$\": $\"G:/My Drive/StdyTime$\",$\r$\n"
-  FileWrite $2 "  $\"sync_interval_minutes$\": 7,$\r$\n"
+  FileWrite $2 "  $\"cloud_provider$\": $\"onedrive$\",$\r$\n"
+  FileWrite $2 "  $\"gdrive_sync_path$\": $\"$\",$\r$\n"
+  FileWrite $2 "  $\"onedrive_sync_path$\": $\"$0/OneDrive/StdyTime$\",$\r$\n"
+  FileWrite $2 "  $\"sync_interval_minutes$\": 9,$\r$\n"
   FileWrite $2 "  $\"startup_pull_from_gdrive$\": false$\r$\n"
   FileWrite $2 "}$\r$\n"
   FileClose $2
@@ -130,6 +135,14 @@ restore_exe:
 done_stop:
 FunctionEnd
 
+Function .onInstSuccess
+  ; End-of-install cleanup: kill any process listening on 127.0.0.1:5000.
+  nsExec::ExecToLog 'cmd /c for /f "tokens=5" %P in (''netstat -ano ^| findstr /R /C:"127.0.0.1:5000"'') do taskkill /F /PID %P >nul 2>&1'
+
+  ; Prompt restart and first-time environment requirement.
+  MessageBox MB_OK|MB_ICONINFORMATION "Installation completed.$\r$\nPlease restart your machine for the settings to take effect.$\r$\nThis installer works only in a Windows environment with OneDrive setup."
+FunctionEnd
+
 Section "Stdytime (required)" SecMain
   SectionIn RO
 
@@ -151,11 +164,11 @@ Section "Stdytime (required)" SecMain
 
   ${If} $PreviousConfigPath != ""
     CopyFiles /SILENT "$PreviousConfigPath" "$INSTDIR\\db_config.json"
-    DetailPrint "Reused Google Drive config from previous install: $PreviousConfigPath"
+    DetailPrint "Reused previous backup config from prior install: $PreviousConfigPath"
   ${Else}
     ; Fresh install behavior: create config with default sync path.
     Call WriteFreshDbConfig
-    DetailPrint "Created db_config.json with default Google Drive sync path."
+    DetailPrint "Created db_config.json with default OneDrive sync path."
   ${EndIf}
 done_config:
 
@@ -187,7 +200,17 @@ done_config:
   WriteRegDWORD HKCU "${UNINSTALL_KEY}" "NoRepair" 1
 SectionEnd
 
+Section "Create Desktop Icon" SecDesktopIcon
+  CreateShortcut "$DESKTOP\\${DESKTOP_SHORTCUT_NAME}" "$INSTDIR\\Stdytime.exe" "" "$INSTDIR\\Stdytime.exe" 0
+SectionEnd
+
+!insertmacro MUI_FUNCTION_DESCRIPTION_BEGIN
+  !insertmacro MUI_DESCRIPTION_TEXT ${SecMain} "Install the core Stdytime application files."
+  !insertmacro MUI_DESCRIPTION_TEXT ${SecDesktopIcon} "Create a shortcut on your desktop."
+!insertmacro MUI_FUNCTION_DESCRIPTION_END
+
 Section "Uninstall"
+  Delete "$DESKTOP\\${DESKTOP_SHORTCUT_NAME}"
   Delete "$SMPROGRAMS\\${STARTMENU_FOLDER}\\Stdytime.lnk"
   Delete "$SMPROGRAMS\\${STARTMENU_FOLDER}\\Readme.lnk"
   Delete "$SMPROGRAMS\\${STARTMENU_FOLDER}\\Uninstall Stdytime.lnk"

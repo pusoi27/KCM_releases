@@ -17,6 +17,8 @@ from dotenv import load_dotenv
 from flask_wtf.csrf import CSRFProtect, generate_csrf
 import logging
 import atexit
+import threading
+import ctypes
 
 # Load environment variables from .env file
 load_dotenv()
@@ -26,7 +28,6 @@ from modules.database import (
     DB_PATH,
     GDriveLockError,
     get_db_config_status,
-    sync_to_gdrive_now,
     record_app_version,
     get_version_compatibility_warning,
 )
@@ -91,6 +92,50 @@ _DEV_TRACE_HANDLE = None
 _ORIGINAL_STDOUT = sys.stdout
 _ORIGINAL_STDERR = sys.stderr
 _EXIT_SHUTDOWN_IN_PROGRESS = False
+_POST_LAUNCH_STARTUP_DONE = threading.Event()
+_STARTUP_MINIMIZE_DONE = False
+_STARTUP_MINIMIZE_TIMER = None
+_STARTUP_MINIMIZE_LOCK = threading.Lock()
+
+
+def _minimize_console_window_once():
+    """Minimize console window one time on packaged Windows startup."""
+    global _STARTUP_MINIMIZE_DONE
+
+    with _STARTUP_MINIMIZE_LOCK:
+        if _STARTUP_MINIMIZE_DONE:
+            return
+        _STARTUP_MINIMIZE_DONE = True
+
+    # Keep local/dev workflow unchanged; apply only to packaged app on Windows.
+    if os.name != 'nt' or not getattr(sys, 'frozen', False):
+        return
+
+    try:
+        hwnd = ctypes.windll.kernel32.GetConsoleWindow()
+        if hwnd:
+            SW_MINIMIZE = 6
+            ctypes.windll.user32.ShowWindow(hwnd, SW_MINIMIZE)
+            print("[startup] Console window minimized to taskbar.")
+    except Exception as exc:
+        print(f"[startup] WARNING: could not minimize console window: {exc}", file=sys.stderr)
+
+
+def _schedule_startup_console_minimize():
+    """Debounce minimize: trigger 3s after the latest startup request."""
+    global _STARTUP_MINIMIZE_TIMER
+
+    with _STARTUP_MINIMIZE_LOCK:
+        if _STARTUP_MINIMIZE_DONE:
+            return
+        if _STARTUP_MINIMIZE_TIMER is not None:
+            try:
+                _STARTUP_MINIMIZE_TIMER.cancel()
+            except Exception:
+                pass
+        _STARTUP_MINIMIZE_TIMER = threading.Timer(3.0, _minimize_console_window_once)
+        _STARTUP_MINIMIZE_TIMER.daemon = True
+        _STARTUP_MINIMIZE_TIMER.start()
 
 
 def _is_debugger_attached():
@@ -496,6 +541,56 @@ def before_request_enforce_first_run_setup():
 
     return redirect(url_for('setup_requirements'))
 
+
+@app.before_request
+def before_request_startup_gate():
+        """Show temporary startup page while deferred startup tasks are running."""
+        if _POST_LAUNCH_STARTUP_DONE.is_set():
+                return None
+
+        allowed_endpoints = {
+                'static',
+                'healthz',
+                'api_csrf_token',
+                'not_found',
+        }
+        if request.endpoint in allowed_endpoints or request.path.startswith('/static/'):
+                return None
+
+        if request.path.startswith('/api/'):
+                return jsonify({
+                        'status': 'starting',
+                        'message': 'Wait while the configuration is complete',
+                }), 503
+
+        html = """
+        <!doctype html>
+        <html lang=\"en\">
+        <head>
+            <meta charset=\"utf-8\" />
+            <meta http-equiv=\"refresh\" content=\"2\" />
+            <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\" />
+            <title>Stdytime is starting</title>
+            <style>
+                body { font-family: Arial, sans-serif; margin: 0; background:#f6f8fb; color:#1f2937; }
+                .wrap { min-height: 100vh; display:flex; align-items:center; justify-content:center; padding:24px; }
+                .card { background:#fff; border:1px solid #e5e7eb; border-radius:12px; max-width:560px; width:100%; padding:24px; box-shadow:0 8px 20px rgba(0,0,0,.05); }
+                h1 { font-size: 1.1rem; margin: 0 0 10px; }
+                p { margin: 0; line-height: 1.5; color:#4b5563; }
+            </style>
+        </head>
+        <body>
+            <div class=\"wrap\">
+                <div class=\"card\">
+                    <h1>Stdytime is starting…</h1>
+                    <p>Wait while the configuration is complete</p>
+                </div>
+            </div>
+        </body>
+        </html>
+        """
+        return html, 503
+
 @app.after_request
 def after_request_profiler(response):
     """Log request after it completes."""
@@ -503,20 +598,13 @@ def after_request_profiler(response):
     endpoint = request.path
     profiler.log_request(request.method, endpoint, response.status_code)
     app.logger.debug("[request] <- %s %s %s", request.method, endpoint, response.status_code)
+
+    # After startup finishes, minimize console 3s after the final burst request.
+    if _POST_LAUNCH_STARTUP_DONE.is_set() and not _STARTUP_MINIMIZE_DONE:
+        _schedule_startup_console_minimize()
+
     return response
 
-
-@app.after_request
-def after_request_immediate_backup_sync(response):
-    """Immediately push local DB to cloud backup after successful write operations."""
-    try:
-        is_write = request.method in ('POST', 'PUT', 'PATCH', 'DELETE')
-        is_success = 200 <= int(response.status_code) < 400
-        if is_write and is_success:
-            sync_to_gdrive_now()
-    except Exception as exc:
-        app.logger.warning("[sync] Immediate post-write backup push failed: %s", exc)
-    return response
 
 # Prevent client/proxies from caching API responses
 @app.after_request
@@ -858,9 +946,6 @@ def _clear_state_on_startup():
         print("[startup] clear_state error:", e)
 
 
-_clear_state_on_startup()
-
-
 # ================================================================
 #  Auto-bump version on startup if source files changed
 # ================================================================
@@ -882,11 +967,7 @@ def _check_version_on_startup():
         print(
             f"[version] Local app v{current_version} is older than recorded DB backup version v{recorded_version}."
         )
-    # Push immediately so backup DB carries the latest compatible app version marker.
-    sync_to_gdrive_now()
     print(f"[startup] Stdytime version: {current_version}")
-
-_check_version_on_startup()
 
 
 # ================================================================
@@ -935,9 +1016,6 @@ def _auto_generate_missing_qr_codes():
         print("[startup] auto_generate_qr_codes error:", e)
 
 
-_auto_generate_missing_qr_codes()
-
-
 # ================================================================
 #  LemonSqueezy license verify on startup
 # ================================================================
@@ -950,6 +1028,34 @@ def _startup_verify_ls_license():
         print(f"[startup] LS license check skipped: {exc}")
 
 _startup_verify_ls_license()
+
+
+def _run_post_launch_startup_tasks():
+    """Run non-critical startup work after the app begins serving requests."""
+    try:
+        _clear_state_on_startup()
+    except Exception as exc:
+        print(f"[startup] deferred clear-state failed: {exc}", file=sys.stderr)
+
+    try:
+        _check_version_on_startup()
+    except Exception as exc:
+        print(f"[startup] deferred version check failed: {exc}", file=sys.stderr)
+
+    try:
+        _auto_generate_missing_qr_codes()
+    except Exception as exc:
+        print(f"[startup] deferred qr generation failed: {exc}", file=sys.stderr)
+
+    _POST_LAUNCH_STARTUP_DONE.set()
+    print("[startup] Deferred startup tasks complete.")
+
+
+threading.Thread(
+    target=_run_post_launch_startup_tasks,
+    daemon=True,
+    name="post-launch-startup",
+).start()
 
 
 # ================================================================

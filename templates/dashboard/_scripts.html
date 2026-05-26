@@ -400,16 +400,21 @@ function toggleStaffAndRefresh(assistantId, rowEl) {
     const others = [];
     
     availableStudents.forEach(s => {
-      // Check if scheduled for today
-      const isScheduledToday = (s.day1 === today || s.day2 === today);
-      
-      if (isScheduledToday) {
-        // Get the time for today
-        let time = null;
-        if (s.day1 === today) time = s.day1_time;
-        else if (s.day2 === today) time = s.day2_time;
-        
-        scheduledToday.push({ student: s, time: time });
+      const scheduleEntries = Array.isArray(s.schedule)
+        ? s.schedule
+        : [
+            { day: s.day1, time: s.day1_time },
+            { day: s.day2, time: s.day2_time },
+            { day: s.day3, time: s.day3_time },
+            { day: s.day4, time: s.day4_time },
+            { day: s.day5, time: s.day5_time },
+            { day: s.day6, time: s.day6_time }
+          ].filter(entry => entry.day);
+
+      const todayEntry = scheduleEntries.find(entry => entry && entry.day === today);
+
+      if (todayEntry) {
+        scheduledToday.push({ student: s, time: todayEntry.time || null });
       } else {
         others.push(s);
       }

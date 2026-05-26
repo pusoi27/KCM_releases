@@ -47,6 +47,17 @@ _LEGACY_DB_CONFIG_FILE = os.path.join(_APP_ROOT, "db_config.json")
 _GDRIVE_DISCOVERY_ATTEMPTED = False
 _FIXED_SYNC_INTERVAL_MINUTES = 9
 _APP_VERSION_META_KEY = "app_version"
+_LAST_SYNC_ERROR = ""
+
+
+def _set_last_sync_error(message: str) -> None:
+    global _LAST_SYNC_ERROR
+    _LAST_SYNC_ERROR = str(message or "").strip()
+
+
+def get_last_sync_error() -> str:
+    """Return the most recent sync failure reason for UI feedback."""
+    return _LAST_SYNC_ERROR
 
 
 def _ensure_app_metadata_table(conn: sqlite3.Connection) -> None:
@@ -278,35 +289,18 @@ def _is_onedrive_location(path: str) -> bool:
 
 def _is_supported_cloud_location(path: str, provider: str) -> bool:
     provider = (provider or "").strip().lower()
-    if provider == "google_drive":
-        return _is_google_drive_location(path)
     if provider == "onedrive":
         return _is_onedrive_location(path)
-    return _is_google_drive_location(path) or _is_onedrive_location(path)
+    return _is_onedrive_location(path)
 
 
 def _resolve_cloud_provider_and_path(cfg: dict) -> tuple[str, str]:
     provider = str(cfg.get("cloud_provider", "") or "").strip().lower()
-    gdrive_sync_path = _normalize_path(str(cfg.get("gdrive_sync_path", "") or ""))
     onedrive_sync_path = _normalize_path(str(cfg.get("onedrive_sync_path", "") or ""))
 
-    if provider == "onedrive":
-        if onedrive_sync_path:
-            return "onedrive", onedrive_sync_path
-        if gdrive_sync_path:
-            return "google_drive", gdrive_sync_path
-
-    if provider == "google_drive":
-        if gdrive_sync_path:
-            return "google_drive", gdrive_sync_path
-        if onedrive_sync_path:
-            return "onedrive", onedrive_sync_path
-
-    if gdrive_sync_path:
-        return "google_drive", gdrive_sync_path
     if onedrive_sync_path:
         return "onedrive", onedrive_sync_path
-    return "google_drive", ""
+    return "onedrive", ""
 
 
 def _cloud_label(sync_path: str) -> str:
@@ -431,18 +425,9 @@ def get_db_config_status() -> dict:
         db_path = _default_local_db_path_for_runtime().replace("\\", "/")
     else:
         db_path = _to_absolute_path(db_path).replace("\\", "/")
-    gdrive_sync_path = _normalize_path(str(cfg.get("gdrive_sync_path", "") or ""))
+    gdrive_sync_path = ""
     onedrive_sync_path = _normalize_path(str(cfg.get("onedrive_sync_path", "") or ""))
     cloud_provider, cloud_sync_path = _resolve_cloud_provider_and_path(cfg)
-    if cloud_provider == "google_drive" and not cloud_sync_path:
-        discovered_gdrive = _hydrate_missing_gdrive_sync_path(cfg, db_path)
-        if discovered_gdrive:
-            gdrive_sync_path = discovered_gdrive
-            cloud_provider, cloud_sync_path = _resolve_cloud_provider_and_path({
-                "cloud_provider": cloud_provider,
-                "gdrive_sync_path": gdrive_sync_path,
-                "onedrive_sync_path": onedrive_sync_path,
-            })
 
     issues: list[str] = []
     warnings: list[str] = []
@@ -453,18 +438,13 @@ def get_db_config_status() -> dict:
 
     if not cloud_sync_path:
         issues.append(
-            "Cloud backup folder path is required. Choose either Google Drive (My Drive/StdyTime) or OneDrive (OneDrive/StdyTime)."
+            "OneDrive backup folder path is required. Example: C:/Users/YourName/OneDrive/StdyTime."
         )
     else:
         if not _is_supported_cloud_location(cloud_sync_path, cloud_provider):
-            if cloud_provider == "onedrive":
-                issues.append(
-                    "OneDrive folder path must point to your OneDrive folder, for example: C:/Users/YourName/OneDrive/StdyTime."
-                )
-            else:
-                issues.append(
-                    "Google Drive folder path must point to Google Drive/My Drive, for example: G:/My Drive/StdyTime."
-                )
+            issues.append(
+                "OneDrive folder path must point to your OneDrive folder, for example: C:/Users/YourName/OneDrive/StdyTime."
+            )
         elif not _cloud_path_exists(cloud_sync_path):
             issues.append(
                 "Configured cloud backup path does not exist yet. Create the folder first, then save again."
@@ -485,7 +465,6 @@ def get_db_config_status() -> dict:
         },
         "example": {
             "db_path": "C:/Users/YourName/AppData/Local/StdyTime/Stdytime.db",
-            "gdrive_sync_path": "G:/My Drive/StdyTime",
             "onedrive_sync_path": "C:/Users/YourName/OneDrive/StdyTime",
         },
     }
@@ -496,13 +475,13 @@ def save_db_config_paths(
     db_path: str | None,
     gdrive_sync_path: str,
     onedrive_sync_path: str = "",
-    cloud_provider: str = "google_drive",
+    cloud_provider: str = "onedrive",
 ) -> dict:
     """Persist db_path and cloud sync path settings to db_config.json and return updated status."""
     db_path = _normalize_path(db_path or "")
-    gdrive_sync_path = _normalize_path(gdrive_sync_path or "")
+    gdrive_sync_path = ""
     onedrive_sync_path = _normalize_path(onedrive_sync_path or "")
-    cloud_provider = (cloud_provider or "google_drive").strip().lower()
+    cloud_provider = "onedrive"
 
     cfg = _read_db_config()
     existing_db_path = str(cfg.get("db_path", "") or "").strip().replace("\\", "/")
@@ -512,21 +491,14 @@ def save_db_config_paths(
     db_path = _to_absolute_path(db_path).replace("\\", "/")
 
     cfg["_comment"] = "db_path = local machine path (fast, all session reads/writes go here)."
-    cfg["_comment2"] = "cloud_provider = choose google_drive or onedrive for backup/sync destination."
+    cfg["_comment2"] = "cloud_provider = onedrive (Windows OneDrive backup destination)."
     cfg["_comment3"] = "sync_interval_minutes = fixed system-managed value (9 minutes)."
-    cfg["_comment4"] = "gdrive_sync_path / onedrive_sync_path = folder path used only for background sync; Stdytime.db is created there automatically."
-
-    if cloud_provider not in ("google_drive", "onedrive"):
-        cloud_provider = "google_drive"
-    if cloud_provider == "google_drive" and not gdrive_sync_path and onedrive_sync_path:
-        cloud_provider = "onedrive"
-    if cloud_provider == "onedrive" and not onedrive_sync_path and gdrive_sync_path:
-        cloud_provider = "google_drive"
+    cfg["_comment4"] = "onedrive_sync_path = folder path used only for background sync; Stdytime.db is created there automatically."
 
     cfg["db_path"] = db_path
-    cfg["gdrive_sync_path"] = gdrive_sync_path
+    cfg["gdrive_sync_path"] = ""
     cfg["onedrive_sync_path"] = onedrive_sync_path
-    cfg["cloud_provider"] = cloud_provider
+    cfg["cloud_provider"] = "onedrive"
     cfg["sync_interval_minutes"] = _FIXED_SYNC_INTERVAL_MINUTES
 
     _write_db_config(cfg)
@@ -623,6 +595,38 @@ def _sqlite_backup(src_path: str, dst_path: str):
         dst_conn.close()
         src_conn.close()
     os.replace(tmp, dst_path)
+
+
+def _sqlite_restore_live(src_path: str, dst_path: str, retries: int = 3, retry_delay: float = 1.5) -> None:
+    """Restore src SQLite DB into a live destination DB path.
+
+    Unlike file replacement, this writes pages through SQLite's backup API
+    directly into the destination database, which avoids Windows file-replace
+    access-denied errors when the app process already has the DB file open.
+    """
+    attempts = max(1, int(retries))
+    last_exc: Exception | None = None
+
+    for attempt in range(1, attempts + 1):
+        try:
+            with sqlite3.connect(src_path) as src_conn, sqlite3.connect(dst_path, timeout=30) as dst_conn:
+                dst_conn.execute("PRAGMA busy_timeout=30000")
+                src_conn.backup(dst_conn)
+                dst_conn.commit()
+            return
+        except sqlite3.OperationalError as exc:
+            # Typical transient case while other requests are writing.
+            last_exc = exc
+            if attempt < attempts:
+                time.sleep(retry_delay)
+                continue
+            raise
+        except Exception as exc:
+            last_exc = exc
+            raise
+
+    if last_exc:
+        raise last_exc
 
 
 def _db_summary(db_path: str) -> str:
@@ -876,7 +880,11 @@ def sync_from_gdrive(local_path: str, gdrive_path: str, force: bool = False) -> 
     Returns True if a pull was performed.
     """
     gdrive_path = _resolve_gdrive_sync_target(gdrive_path)
-    if not gdrive_path or not os.path.exists(gdrive_path):
+    if not gdrive_path:
+        _set_last_sync_error("Cloud backup path is not configured.")
+        return False
+    if not os.path.exists(gdrive_path):
+        _set_last_sync_error(f"Cloud backup database was not found at: {gdrive_path}")
         return False
     try:
         cloud_name = _cloud_label(gdrive_path)
@@ -886,14 +894,17 @@ def sync_from_gdrive(local_path: str, gdrive_path: str, force: bool = False) -> 
         if should_pull:
             reason = "forced startup override" if force else "cloud backup is newer"
             print(f"[sync] Pulling DB from {cloud_name} ({reason}): {gdrive_path}")
-            _sqlite_backup(gdrive_path, local_path)
+            _sqlite_restore_live(gdrive_path, local_path)
             print("[sync] Pull complete.")
+            _set_last_sync_error("")
             return True
         else:
             print("[sync] Local DB is up-to-date; no pull needed.")
+            _set_last_sync_error("No pull needed because local database is already up to date.")
             return False
     except Exception as exc:
         print(f"[sync] WARNING: pull from GDrive failed: {exc}", file=sys.stderr)
+        _set_last_sync_error(str(exc))
         return False
 
 
@@ -907,10 +918,12 @@ def sync_to_gdrive(local_path: str, gdrive_path: str, retries: int = 0, retry_de
     """
     gdrive_path = _resolve_gdrive_sync_target(gdrive_path)
     if not gdrive_path:
+        _set_last_sync_error("Cloud backup path is not configured.")
         return False
     if not os.path.exists(local_path):
         if not silent:
             print("[sync] WARNING: local DB does not exist yet; skipping push.", file=sys.stderr)
+        _set_last_sync_error(f"Local database was not found at: {local_path}")
         return False
     cloud_name = _cloud_label(gdrive_path)
     attempts = retries + 1
@@ -923,6 +936,7 @@ def sync_to_gdrive(local_path: str, gdrive_path: str, retries: int = 0, retry_de
                     f"[sync] Pushed DB to {cloud_name}: {gdrive_path}\n"
                     f"[sync] Snapshot -> {summary}"
                 )
+            _set_last_sync_error("")
             return True
         except PermissionError as exc:
             if attempt <= retries:
@@ -936,10 +950,12 @@ def sync_to_gdrive(local_path: str, gdrive_path: str, retries: int = 0, retry_de
             else:
                 if not silent:
                     print(f"[sync] WARNING: push to GDrive failed after {attempts} attempt(s): {exc}", file=sys.stderr)
+                _set_last_sync_error(str(exc))
                 return False
         except Exception as exc:
             if not silent:
                 print(f"[sync] WARNING: push to GDrive failed: {exc}", file=sys.stderr)
+            _set_last_sync_error(str(exc))
             return False
     return False
 
@@ -1092,47 +1108,13 @@ _start_background_sync(DB_PATH, GDRIVE_SYNC_PATH, _SYNC_INTERVAL)
 # On clean exit: release lock then do one final push
 def _sync_on_exit():
     """
-    Called by atexit. Releases the GDrive lock then pushes the local DB to
-    Google Drive.  If GDrive has a file lock (Drive client is mid-sync) it
-    retries up to 12 times (1 minute total) and prints a visible warning
-    so the user knows NOT to shut down the machine yet.
+    Called by atexit. Releases the cloud lock.
+
+    Backup synchronization is intentionally handled by:
+    - the background scheduler (every 9 minutes), and
+    - explicit/manual push actions from setup routes.
     """
     release_gdrive_lock(GDRIVE_SYNC_PATH)
-
-    gdrive_target = _resolve_gdrive_sync_target(GDRIVE_SYNC_PATH or "")
-    if not gdrive_target or not os.path.exists(DB_PATH):
-        return
-
-    _MAX_ATTEMPTS = 12
-    _RETRY_DELAY  = 5   # seconds between retries
-
-    for attempt in range(1, _MAX_ATTEMPTS + 1):
-        try:
-            _sqlite_backup(DB_PATH, gdrive_target)
-            summary = _db_summary(DB_PATH)
-            print(
-                f"[sync] Final exit push to {_cloud_label(gdrive_target)} complete: {gdrive_target}\n"
-                f"[sync] Snapshot -> {summary}"
-            )
-            return
-        except PermissionError:
-            remaining = (_MAX_ATTEMPTS - attempt) * _RETRY_DELAY
-            print(
-                f"\n*** StdyTime: Google Drive file is busy (attempt {attempt}/{_MAX_ATTEMPTS}). "
-                f"Please wait ~{remaining}s before shutting down this machine. ***",
-                file=sys.stderr,
-            )
-            time.sleep(_RETRY_DELAY)
-        except Exception as exc:
-            print(f"[sync] WARNING: final exit push failed: {exc}", file=sys.stderr)
-            return
-
-    print(
-        "\n*** StdyTime WARNING: Could not push DB to Google Drive after exit. "
-        "Your latest data is safe locally but NOT yet synced to Google Drive. "
-        "Restart the app when Google Drive is available to sync. ***",
-        file=sys.stderr,
-    )
 
 
 atexit.register(_sync_on_exit)
@@ -1698,16 +1680,9 @@ def init_db():
                 f.write("name,email,phone,guardian,M,R,W,classification\n")
                 f.write("Example Student,example@example.com,123456789,Jane Doe,x,x,,Monitored\n")
 
-    # Ensure an initial sync exists right after DB init/migrations complete.
-    # This avoids waiting for the background interval before the first backup appears.
-    if GDRIVE_SYNC_PATH:
-        pushed = sync_to_gdrive(DB_PATH, GDRIVE_SYNC_PATH)
-        if not pushed:
-            print(
-                "[sync] WARNING: initial post-init push to cloud backup did not complete. "
-                "Background sync/exit sync will retry.",
-                file=sys.stderr,
-            )
+    # Automatic cloud writes are intentionally not triggered here.
+    # Sync is handled by the fixed 9-minute background scheduler and
+    # explicit manual push/read actions.
 
 
 # ====================================================================

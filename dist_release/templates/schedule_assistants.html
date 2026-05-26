@@ -82,7 +82,9 @@
                     {% for asst in day['assistants'] %}
                     <div class="assistant-tag badge text-white d-flex justify-content-between align-items-center"
                          data-assistant-id="{{ asst[0] }}" data-date="{{ day['date'] }}"
-                         title="{{ asst[1] }}">
+                      data-assistant-name="{{ asst[1] }}"
+                      data-loading="{{ asst[5] if asst|length > 5 else 1 }}"
+                      title="{{ asst[1] }} · Loading {{ asst[5] if asst|length > 5 else 1 }}">
                       <span class="assistant-name">{{ asst[1] }}</span>
                       <button type="button" class="btn-close btn-close-white remove-assistant" title="Remove"></button>
                     </div>
@@ -106,7 +108,7 @@
                             {% endif %}
                           {% endfor %}
                           {% if not ns.is_scheduled %}
-                          <option value="{{ asst[0] }}">{{ asst[1] }}{% if asst[2] %} ({{ asst[2] }}){% endif %}</option>
+                          <option value="{{ asst[0] }}" data-assistant-name="{{ asst[1] }}" data-loading="{{ asst[5] if asst|length > 5 else 1 }}">{{ asst[1] }}{% if asst[2] %} ({{ asst[2] }}){% endif %} · Load {{ asst[5] if asst|length > 5 else 1 }}</option>
                           {% endif %}
                         {% endfor %}
                         <option value="__center_closed__">🚫 Holiday / Center Closed</option>
@@ -273,9 +275,11 @@ document.querySelectorAll('.assistant-select').forEach(select => {
     const assistantId = parseInt(selectedValue);
     if (!assistantId) return;
 
-    const assistantName = e.target.options[e.target.selectedIndex].text.split(' (')[0];
+    const selectedOption = e.target.options[e.target.selectedIndex];
+    const assistantName = selectedOption?.dataset.assistantName || selectedOption?.text.split(' (')[0] || '';
+    const assistantLoading = selectedOption?.dataset.loading || '1';
 
-    assignAssistant(assistantId, assistantName, date, e.target);
+    assignAssistant(assistantId, assistantName, assistantLoading, date, e.target);
     e.target.value = '';
   });
 });
@@ -347,7 +351,7 @@ function reopenCenter(date, selectElement) {
 }
 
 // Helper function: assign staff member to date
-function assignAssistant(assistantId, assistantName, date, selectElement) {
+function assignAssistant(assistantId, assistantName, assistantLoading, date, selectElement) {
   const token = document.querySelector('input[name=csrf_token]')?.value || 
                 document.querySelector('meta[name=csrf_token]')?.content;
 
@@ -380,7 +384,9 @@ function assignAssistant(assistantId, assistantName, date, selectElement) {
         badge.className = 'assistant-tag badge text-white d-flex justify-content-between align-items-center';
         badge.dataset.assistantId = assistantId;
         badge.dataset.date = date;
-        badge.title = assistantName;
+        badge.dataset.assistantName = assistantName;
+        badge.dataset.loading = assistantLoading;
+        badge.title = `${assistantName} · Loading ${assistantLoading}`;
         badge.innerHTML = `
           <span class="assistant-name">${assistantName}</span>
           <button type="button" class="btn-close btn-close-white remove-assistant" title="Remove"></button>
@@ -439,10 +445,13 @@ function removeAssistant(assistantId, date, badgeElement) {
 
         // Re-add this assistant to the dropdown
         if (select) {
-          const assistantName = badgeElement.querySelector('span').textContent;
+          const assistantName = badgeElement.dataset.assistantName || badgeElement.querySelector('span').textContent;
+          const assistantLoading = badgeElement.dataset.loading || '1';
           const option = document.createElement('option');
           option.value = assistantId;
-          option.textContent = assistantName;
+          option.dataset.assistantName = assistantName;
+          option.dataset.loading = assistantLoading;
+          option.textContent = `${assistantName} · Load ${assistantLoading}`;
           select.appendChild(option);
           select.value = '';
         }

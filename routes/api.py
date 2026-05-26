@@ -51,8 +51,8 @@ def _extract_photo_blob_and_mime(student_row):
 
     # Known row shapes used across the app:
     # - get_student():      ... photo_blob(19), photo_mime(20), ...
-    # - get_all_students(): ... total_study_minutes(20), photo_blob(21), photo_mime(22)
-    candidate_pairs = [(21, 22), (19, 20), (20, 21)]
+    # - get_all_students(): ... total_study_minutes(19), photo_blob(20), photo_mime(21)
+    candidate_pairs = [(20, 21), (19, 20), (21, 22)]
 
     def _as_blob(value):
         if isinstance(value, memoryview):
@@ -110,8 +110,8 @@ def _subjects_from_student_row(student_row) -> list:
     if not student_row:
         return []
 
-    # Current get_all_students() shape stores subjects_json at index 18.
-    raw_subjects = student_row[18] if len(student_row) > 18 else None
+    # Current get_all_students() shape stores subjects_json at index 17.
+    raw_subjects = student_row[17] if len(student_row) > 17 else None
     if raw_subjects:
         try:
             parsed = json.loads(raw_subjects)
@@ -138,14 +138,14 @@ def _total_study_minutes_from_student_row(student_row) -> int:
         return 30
 
     try:
-        total_minutes = int(student_row[20]) if len(student_row) > 20 and student_row[20] is not None else 0
+        total_minutes = int(student_row[19]) if len(student_row) > 19 and student_row[19] is not None else 0
     except (TypeError, ValueError):
         total_minutes = 0
     if total_minutes > 0:
         return total_minutes
 
     # Fallback: sum subject_minutes_json when total column is missing/invalid.
-    raw_minutes = student_row[19] if len(student_row) > 19 else None
+    raw_minutes = student_row[18] if len(student_row) > 18 else None
     if raw_minutes:
         try:
             parsed = json.loads(raw_minutes)
@@ -160,6 +160,46 @@ def _total_study_minutes_from_student_row(student_row) -> int:
     # Final fallback: subjects count * 30 minutes.
     subjects = _subjects_from_student_row(student_row)
     return max(30, len(subjects) * 30)
+
+
+def _schedule_entries_from_student_row(student_row) -> list:
+    """Return normalized scheduled day/time entries for get_all_students() rows."""
+    if not student_row:
+        return []
+
+    entries = []
+    seen_days = set()
+
+    raw_schedule_json = student_row[23] if len(student_row) > 23 else None
+    if raw_schedule_json:
+        try:
+            parsed = json.loads(raw_schedule_json)
+        except (TypeError, ValueError, json.JSONDecodeError):
+            parsed = []
+        if isinstance(parsed, list):
+            for entry in parsed:
+                if not isinstance(entry, dict):
+                    continue
+                day = str(entry.get('day') or '').strip()
+                time = str(entry.get('time') or '').strip()
+                if not day or day in seen_days:
+                    continue
+                seen_days.add(day)
+                entries.append({'day': day, 'time': time})
+                if len(entries) >= 6:
+                    return entries
+
+    for day_idx, time_idx in ((13, 14), (15, 16), (24, 25), (26, 27), (28, 29), (30, 31)):
+        day = str(student_row[day_idx] or '').strip() if len(student_row) > day_idx else ''
+        time = str(student_row[time_idx] or '').strip() if len(student_row) > time_idx else ''
+        if not day or day in seen_days:
+            continue
+        seen_days.add(day)
+        entries.append({'day': day, 'time': time})
+        if len(entries) >= 6:
+            break
+
+    return entries
 
 def _format_checkout_timestamp(value: str) -> str:
     """Format ISO-ish timestamps for human-readable emails."""
@@ -341,6 +381,7 @@ def register_api_routes(app):
                 start_time = None
                 total_seconds = None
                 dur = latest_duration.get(sid)
+                schedule_entries = _schedule_entries_from_student_row(s)
 
                 if sid in active_map:
                     status = "active"
@@ -354,17 +395,25 @@ def register_api_routes(app):
                     "id": sid,
                     "name": s[1],
                     "subject": s[2],
-                    "level": s[3],
-                    "email": s[4],
-                    "phone": s[5],
-                    "guardian": s[6] if len(s) > 6 else '',
-                    "active": s[8] if len(s) > 8 else 0,
-                    "book_loaned": s[9] if len(s) > 9 else 0,
-                    "device_loaned": s[10] if len(s) > 10 else 0,
-                    "day1": s[14] if len(s) > 14 else None,
-                    "day1_time": s[15] if len(s) > 15 else None,
-                    "day2": s[16] if len(s) > 16 else None,
-                    "day2_time": s[17] if len(s) > 17 else None,
+                    "email": s[3],
+                    "phone": s[4],
+                    "guardian": s[5] if len(s) > 5 else '',
+                    "active": s[7] if len(s) > 7 else 0,
+                    "book_loaned": s[8] if len(s) > 8 else 0,
+                    "device_loaned": s[9] if len(s) > 9 else 0,
+                    "day1": schedule_entries[0]["day"] if len(schedule_entries) > 0 else None,
+                    "day1_time": schedule_entries[0]["time"] if len(schedule_entries) > 0 else None,
+                    "day2": schedule_entries[1]["day"] if len(schedule_entries) > 1 else None,
+                    "day2_time": schedule_entries[1]["time"] if len(schedule_entries) > 1 else None,
+                    "day3": schedule_entries[2]["day"] if len(schedule_entries) > 2 else None,
+                    "day3_time": schedule_entries[2]["time"] if len(schedule_entries) > 2 else None,
+                    "day4": schedule_entries[3]["day"] if len(schedule_entries) > 3 else None,
+                    "day4_time": schedule_entries[3]["time"] if len(schedule_entries) > 3 else None,
+                    "day5": schedule_entries[4]["day"] if len(schedule_entries) > 4 else None,
+                    "day5_time": schedule_entries[4]["time"] if len(schedule_entries) > 4 else None,
+                    "day6": schedule_entries[5]["day"] if len(schedule_entries) > 5 else None,
+                    "day6_time": schedule_entries[5]["time"] if len(schedule_entries) > 5 else None,
+                    "schedule": schedule_entries,
                     "subjects": _subjects_from_student_row(s),
                     "status": status,
                     "start_time": start_time,
@@ -560,7 +609,6 @@ def register_api_routes(app):
                 "id": sid,
                 "name": s[1],
                 "subject": s[2],
-                "level": s[3],
                 "book_loaned": s[8] if len(s) > 8 else 0,
                 "device_loaned": s[9] if len(s) > 9 else 0,
                 "start_time": start,
@@ -737,6 +785,7 @@ def register_api_routes(app):
                     role=a[2] if len(a) > 2 else "",
                     email=a[3] if len(a) > 3 else "",
                     phone=a[4] if len(a) > 4 else "",
+                    loading=a[5] if len(a) > 5 else 1,
                 )
                 for a in rows
             ]
@@ -804,6 +853,7 @@ def register_api_routes(app):
                         role=a[2] if len(a) > 2 else "",
                         email=a[3] if len(a) > 3 else "",
                         phone=a[4] if len(a) > 4 else "",
+                        loading=a[5] if len(a) > 5 else 1,
                         on_duty=aid in open_map,
                         start_time=open_map.get(aid),
                     )

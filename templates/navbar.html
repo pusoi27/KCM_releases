@@ -89,6 +89,7 @@
     <li><span class="dropdown-item-text text-muted small px-3">Settings</span></li>
     <li><a class="dropdown-item ps-4" href="{{ url_for('qr_scanner') }}">Scanner</a></li>
     <li><a class="dropdown-item ps-4" href="{{ url_for('setup_storage') }}">DB Backup</a></li>
+    <li><a class="dropdown-item ps-4" href="{{ url_for('license_page') }}"><i class="bi bi-key me-2"></i>Upgrade License</a></li>
     {% endif %}
     {% if dev_trace_enabled %}
     <li><hr class="dropdown-divider"></li>

@@ -150,11 +150,13 @@ def add_material(title, author, publisher, qr_code=None, available=1, reading_le
         )
         material_id = c.lastrowid
 
-        if not qr_code:
-            qr_code = _build_material_qr_code(material_id)
-            c.execute("UPDATE materials SET qr_code = ? WHERE id = ?", (qr_code, material_id))
-
-        _ensure_material_qr_image(material_id, title, qr_code, cursor=c)
+        # Only generate QR code if not already present
+        existing_qr = get_material_qr_code_blob(material_id)
+        if not existing_qr:
+            if not qr_code:
+                qr_code = _build_material_qr_code(material_id)
+                c.execute("UPDATE materials SET qr_code = ? WHERE id = ?", (qr_code, material_id))
+            _ensure_material_qr_image(material_id, title, qr_code, cursor=c)
         _sync_material_availability(c, material_id)
         conn.commit()
         return material_id

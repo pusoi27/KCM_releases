@@ -321,7 +321,8 @@ function clearLoan(materialId, studentId, materialTitle, studentName) {
       currentStudent = null;
       setStudentStatus('');
       studentSelect.value = '';
-      await refreshMaterial();
+      // Refresh page so server-rendered "Currently Loaned Devices" section updates immediately
+      window.location.reload();
     } catch (err) {
       showAlert(err.message, 'danger');
     } finally { setStatus(''); }
@@ -339,7 +340,8 @@ function clearLoan(materialId, studentId, materialTitle, studentName) {
       const data = await resp.json();
       if (!resp.ok) throw new Error(data.error || 'Return failed');
       showAlert('Material checked in successfully.', 'success');
-      await refreshMaterial();
+      // Refresh page so server-rendered "Currently Loaned Devices" section updates immediately
+      window.location.reload();
     } catch (err) {
       showAlert(err.message, 'danger');
     } finally { setStatus(''); }

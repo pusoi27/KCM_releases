@@ -29,25 +29,26 @@ The app runs only on this Windows PC and listens on localhost by default.
 
 If you want to create a shortcut, pin the executable, or place it in a Start Menu folder, those are optional Windows conveniences only.
 
-GOOGLE DRIVE DATABASE BACKUP SETUP
-----------------------------------
+GOOGLE DRIVE / ONEDRIVE DATABASE BACKUP SETUP
+---------------------------------------------
 Stdytime uses a LOCAL database for speed.
-Google Drive is used as backup/sync storage only.
+Google Drive or OneDrive is used as backup/sync storage only.
 
 Important:
 - The local database should be the main working database.
-- Google Drive should be used as a backup destination.
+- Cloud drive (Google Drive or OneDrive) should be used as a backup destination.
 - Do not place the live working database directly inside a syncing folder.
 
-STEP 1 - INSTALL GOOGLE DRIVE FOR DESKTOP
-- Install and sign in to Google Drive for desktop on the Windows machine.
-- Make sure your Google Drive folder is available in File Explorer.
+STEP 1 - CHOOSE YOUR CLOUD DRIVE
+- Option A: Install and sign in to Google Drive for desktop.
+- Option B: Use your local OneDrive folder.
 
-STEP 2 - LOCATE YOUR GOOGLE DRIVE PATH
+STEP 2 - LOCATE YOUR CLOUD FOLDER PATH
 Common examples:
 - G:/My Drive/StdyTime/Stdytime.db
 - C:/Users/YourName/My Drive/StdyTime/Stdytime.db
 - C:/Users/YourName/Google Drive/StdyTime/Stdytime.db
+- C:/Users/YourName/OneDrive/StdyTime/Stdytime.db
 
 STEP 3 - CONFIGURE THE DATABASE PATHS
 In the Stdytime install folder, locate:
@@ -60,8 +61,10 @@ Edit db_config.json so it looks similar to this:
 
 {
   "db_path": "C:/Users/YourName/AppData/Local/StdyTime/Stdytime.db",
+  "cloud_provider": "google_drive",
   "gdrive_sync_path": "G:/My Drive/StdyTime/Stdytime.db",
-  "sync_interval_minutes": 5,
+  "onedrive_sync_path": "C:/Users/YourName/OneDrive/StdyTime/Stdytime.db",
+  "sync_interval_minutes": 9,
   "startup_pull_from_gdrive": false
 }
 
@@ -73,9 +76,12 @@ WHAT THESE SETTINGS MEAN
 - gdrive_sync_path:
   The Google Drive backup copy.
 
+- onedrive_sync_path:
+  The OneDrive backup copy.
+
 - sync_interval_minutes:
-  How often the local database is pushed to Google Drive.
-  Example: 5 means every 5 minutes.
+  System-managed fixed value.
+  Stdytime syncs every 9 minutes.
 
 - startup_pull_from_gdrive:
   If false, the local database remains the source of truth on startup.
@@ -85,7 +91,7 @@ RECOMMENDED SETTINGS
 --------------------
 For most Windows users:
 - Keep db_path on the local hard drive.
-- Use Google Drive only for backup/sync.
+- Use Google Drive or OneDrive for backup/sync.
 - Keep startup_pull_from_gdrive set to false.
 
 BEST PRACTICES
@@ -104,6 +110,11 @@ If the app says the database path is not writable:
 If backup does not appear in Google Drive:
 - Recheck gdrive_sync_path in db_config.json.
 - Make sure the Google Drive folder is available locally in File Explorer.
+- Restart the app after saving db_config.json.
+
+If backup does not appear in OneDrive:
+- Recheck onedrive_sync_path in db_config.json.
+- Make sure the OneDrive folder is available locally in File Explorer.
 - Restart the app after saving db_config.json.
 
 FILES YOU MAY NEED

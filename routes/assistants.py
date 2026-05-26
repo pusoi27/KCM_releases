@@ -70,7 +70,8 @@ def register_assistant_routes(app):
                     request.form["name"],
                     request.form.get("role", ""),
                     request.form.get("email", ""),
-                    request.form.get("phone", "")
+                    request.form.get("phone", ""),
+                    request.form.get("loading", "1"),
                 )
                 
                 # Handle photo upload if provided
@@ -109,7 +110,8 @@ def register_assistant_routes(app):
                     request.form["name"],
                     request.form.get("role", ""),
                     request.form.get("email", ""),
-                    request.form.get("phone", "")
+                    request.form.get("phone", ""),
+                    request.form.get("loading", "1"),
                 )
                 
                 # Handle photo upload if provided

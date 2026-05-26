@@ -7,9 +7,10 @@ import pandas as pd
 import sqlite3
 from pathlib import Path
 import sys
+import os
 
 # Paths
-EXCEL_DIR = Path(r"C:\Users\octav\OneDrive\ODI Learning\Award Ceremony\award_ceremony_analysis\data")
+EXCEL_DIR = Path(os.getenv("STDYTIME_LEVELS_EXCEL_DIR", r"C:\Users\octav\OneDrive\ODI Learning\Stdytime\data"))
 DB_PATH = Path(__file__).parent.parent / "data" / "Stdytime.db"
 
 LEVELS_BY_GRADE_FILE = EXCEL_DIR / "Levels_By_grade.xlsx"
@@ -22,7 +23,7 @@ def load_levels_by_grade():
     
     # Read the Excel file - try different sheet names
     try:
-        # Try 'grade_table' sheet first (common in award_ceremony_analysis)
+        # Try 'grade_table' sheet first (common in shared levels workbooks)
         df = pd.read_excel(LEVELS_BY_GRADE_FILE, sheet_name='grade_table')
         print(f"  Loaded 'grade_table' sheet with {len(df)} rows")
     except Exception as e:

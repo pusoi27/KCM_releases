@@ -12,51 +12,67 @@
                 </div>
                 <div class="card-body">
                     <p class="text-muted">
-                        Configure Google Drive backup/sync path for this machine.
+                        Configure OneDrive backup/sync path for this Windows machine.
                     </p>
 
                     <div class="alert alert-info" role="alert">
-                        <div class="fw-semibold mb-1">Google Drive folder path is mandatory for setup completion</div>
-                        <div class="mb-2">
-                            If Google Drive for Desktop is not installed yet, install it first:
-                            <a href="https://ipv4.google.com/intl/en_zm/drive/download/" target="_blank" rel="noopener noreferrer" class="fw-semibold">Google Drive Desktop Download</a>
-                        </div>
+                        <div class="fw-semibold mb-1">OneDrive backup folder path is mandatory for setup completion</div>
+                        <div class="mb-2">This installer works in a Windows environment with OneDrive setup.</div>
                         <ol class="mb-2 ps-3">
-                            <li>Install <strong>Google Drive for Desktop</strong> and sign in.</li>
-                            <li>Create folder <strong>My Drive/StdyTime</strong>.</li>
-                            <li>Set <strong>Google Drive folder path</strong> to <code>.../My Drive/StdyTime</code>.</li>
+                            <li>Install/sign in to Microsoft OneDrive on Windows.</li>
+                            <li>Use a folder such as <code>C:/Users/YourName/OneDrive/StdyTime</code>.</li>
+                            <li>The backup file is created automatically as <code>Stdytime.db</code>.</li>
                         </ol>
-                        <div class="small">The backup file will be created automatically there as <code>Stdytime.db</code> on the first backup.</div>
+                        <div class="small">
+                            Download link:
+                            <a href="https://www.microsoft.com/microsoft-365/onedrive/download" target="_blank" rel="noopener noreferrer" class="fw-semibold">OneDrive</a>
+                        </div>
+                    </div>
+
+                    <div class="card border-0 bg-light mb-3">
+                        <div class="card-body">
+                            <h6 class="mb-2"><i class="bi bi-arrow-left-right"></i> Manual DB Backup Actions</h6>
+                            <p class="text-muted small mb-3">
+                                Use these only when needed. They are available on this DB Backup screen.
+                            </p>
+                            <div class="d-flex flex-wrap gap-2">
+                                <form method="POST" action="{{ url_for('setup_storage_push_backup') }}" class="m-0">
+                                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                    <button class="btn btn-outline-primary btn-sm" type="submit">
+                                        Push data to backup
+                                    </button>
+                                </form>
+                                <form method="POST" action="{{ url_for('setup_storage_pull_backup') }}" class="m-0">
+                                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                    <button class="btn btn-outline-warning btn-sm" type="submit">
+                                        Read data from backup
+                                    </button>
+                                </form>
+                            </div>
+                        </div>
                     </div>
 
                     <form method="POST" action="{{ url_for('setup_storage') }}">
                         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
 
+                        <input type="hidden" name="cloud_provider" value="onedrive">
+                        <input type="hidden" name="gdrive_sync_path" value="">
+
                         <div class="mb-3">
-                            <label class="form-label" for="gdrive_sync_path">Google Drive folder path</label>
+                            <label class="form-label" for="onedrive_sync_path">OneDrive folder path</label>
                             <input
                                 class="form-control"
                                 type="text"
-                                id="gdrive_sync_path"
-                                name="gdrive_sync_path"
-                                value="{{ status.config.gdrive_sync_path if status and status.config else '' }}"
-                                placeholder="G:/My Drive/StdyTime"
-                                required
+                                id="onedrive_sync_path"
+                                name="onedrive_sync_path"
+                                value="{{ status.config.onedrive_sync_path if status and status.config else '' }}"
+                                placeholder="C:/Users/YourName/OneDrive/StdyTime"
                             >
-                            <div class="form-text">Required. Use the installer link above, then set this to {{ status.example.gdrive_sync_path if status and status.example else 'G:/My Drive/StdyTime' }}. The database file will be created automatically.</div>
+                            <div class="form-text">Required only when provider is OneDrive. Example: {{ status.example.onedrive_sync_path if status and status.example else 'C:/Users/YourName/OneDrive/StdyTime' }}.</div>
                         </div>
 
-                        <div class="mb-3">
-                            <label class="form-label" for="sync_interval_minutes">Sync interval (minutes)</label>
-                            <input
-                                class="form-control"
-                                type="number"
-                                min="0"
-                                id="sync_interval_minutes"
-                                name="sync_interval_minutes"
-                                value="{{ status.config.sync_interval_minutes if status and status.config else 7 }}"
-                            >
-                            <div class="form-text">Set to 0 to disable background push sync.</div>
+                        <div class="alert alert-secondary" role="alert">
+                            Background backup sync runs automatically every <strong>9 minutes</strong>.
                         </div>
 
                         {% if status and status.issues %}

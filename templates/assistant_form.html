@@ -21,6 +21,11 @@
       <input name="phone" class="form-control" value="{{ assistant[4] if assistant else '' }}">
     </div>
     <div class="mb-3">
+      <label class="form-label">Loading- maximum assigned number of students</label>
+      <input name="loading" type="number" min="0" step="1" class="form-control" value="{{ assistant[5] if assistant and assistant|length > 5 else 1 }}">
+      <div class="form-text">Maximum Assisted + Monitored students this staff member can support per 30-minute slot.</div>
+    </div>
+    <div class="mb-3">
       <label class="form-label">Photo</label>
       <input type="file" id="photoInput" name="photo" class="form-control" accept="image/jpeg,image/png,image/gif,image/webp" style="display:none;">
       <div class="card p-3" style="cursor:pointer; border: 2px dashed #dee2e6; text-align: center;" onclick="document.getElementById('photoInput').click();">

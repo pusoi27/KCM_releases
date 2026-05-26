@@ -41,7 +41,7 @@
   <table class="table table-sm table-striped align-middle">
     <thead class="table-primary">
       <tr>
-        <th>Photo</th><th>Name</th><th>Role</th><th>Email</th><th>Phone</th><th>QR</th><th>Actions</th>
+        <th>Photo</th><th>Name</th><th>Role</th><th>Email</th><th>Phone</th><th>Loading</th><th>QR</th><th>Actions</th>
       </tr>
     </thead>
     <tbody>
@@ -54,6 +54,7 @@
         <td>{{ a[2] }}</td>
         <td>{{ a[3] }}</td>
         <td>{{ a[4] }}</td>
+        <td>{{ a[5] if a|length > 5 else 1 }}</td>
         <td>
           {% set qr_file = 'assistant_' ~ a[0] ~ '.png' %}
           <img src="{{ url_for('serve_staff_qr', aid=a[0]) }}?v={{ date_str|replace(',', '')|replace(' ', '') }}{{ time_str|replace(':', '')|replace(' ', '') }}" alt="QR" width="64" height="64" loading="lazy" decoding="async" onerror="this.onerror=null;this.src='{{ url_for('static', filename='img/logo.png') }}';">

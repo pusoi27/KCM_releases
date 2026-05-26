@@ -1,9 +1,12 @@
 {
   "_comment": "Copy this file to db_config.json.",
-  "_comment2": "Use a local db_path for runtime speed; gdrive_sync_path is backup/sync only and may be a Google Drive folder path.",
-  "_comment3": "Set startup_pull_from_gdrive=true only if you want GDrive to overwrite local DB on launch when newer.",
+  "_comment2": "Use a local db_path for runtime speed; cloud_provider is onedrive for backup/sync.",
+  "_comment3": "Set onedrive_sync_path to a folder path; Stdytime.db is created there automatically.",
+  "_comment4": "Set startup_pull_from_gdrive=true only if you want cloud backup to overwrite local DB on launch when newer.",
   "db_path": "C:/Users/YourName/AppData/Local/StdyTime/Stdytime.db",
-  "gdrive_sync_path": "G:/My Drive/StdyTime",
-  "sync_interval_minutes": 7,
+  "cloud_provider": "onedrive",
+  "gdrive_sync_path": "",
+  "onedrive_sync_path": "C:/Users/YourName/OneDrive/StdyTime",
+  "sync_interval_minutes": 9,
   "startup_pull_from_gdrive": false
 }

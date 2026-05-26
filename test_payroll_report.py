@@ -10,6 +10,14 @@ from modules.reports import get_assistant_hours_between, get_assistant_sessions_
 from modules.database import DB_PATH
 import sqlite3
 
+
+def _default_date_range():
+    """Return a stable default date range for automated tests."""
+    today = datetime.today().date()
+    start_date = (today - timedelta(days=30)).isoformat()
+    end_date = today.isoformat()
+    return start_date, end_date
+
 def check_database():
     """Check if database exists and has required tables."""
     print("\n=== DATABASE CHECK ===")
@@ -43,8 +51,8 @@ def check_database():
         print(f"✗ Database error: {e}")
         return False
 
-def test_hours_between(start_date, end_date):
-    """Test get_assistant_hours_between function."""
+def _run_hours_between_test(start_date, end_date):
+    """Run get_assistant_hours_between verification for a given date range."""
     print(f"\n=== TEST: Hours Between ({start_date} to {end_date}) ===")
     try:
         result = get_assistant_hours_between(start_date, end_date)
@@ -67,8 +75,15 @@ def test_hours_between(start_date, end_date):
         traceback.print_exc()
         return False
 
-def test_sessions_between(start_date, end_date):
-    """Test get_assistant_sessions_between function."""
+
+def test_hours_between():
+    """Pytest entry point for get_assistant_hours_between."""
+    start_date, end_date = _default_date_range()
+    assert _run_hours_between_test(start_date, end_date)
+
+
+def _run_sessions_between_test(start_date, end_date):
+    """Run get_assistant_sessions_between verification for a given date range."""
     print(f"\n=== TEST: Sessions Between ({start_date} to {end_date}) ===")
     try:
         result = get_assistant_sessions_between(start_date, end_date)
@@ -91,6 +106,12 @@ def test_sessions_between(start_date, end_date):
         traceback.print_exc()
         return False
 
+
+def test_sessions_between():
+    """Pytest entry point for get_assistant_sessions_between."""
+    start_date, end_date = _default_date_range()
+    assert _run_sessions_between_test(start_date, end_date)
+
 def test_routes():
     """Test Flask routes."""
     print(f"\n=== TEST: Flask Routes ===")
@@ -103,10 +124,10 @@ def test_routes():
         
         # We can't test without authentication, but we can verify the app loads
         print("✓ Flask app loaded successfully")
-        return True
+        assert True
     except Exception as e:
         print(f"⚠ Route test skipped (Flask test client limitation): {e}")
-        return True  # Not a failure, just can't test auth-protected routes
+        assert True  # Not a failure, just can't test auth-protected routes
 
 def main():
     print("=" * 60)
@@ -126,13 +147,17 @@ def main():
     # Test 1: Last 30 days
     start_date = (today - timedelta(days=30)).isoformat()
     end_date = today.isoformat()
-    results.append(test_hours_between(start_date, end_date))
+    results.append(_run_hours_between_test(start_date, end_date))
     
     # Test 2: Detailed sessions
-    results.append(test_sessions_between(start_date, end_date))
+    results.append(_run_sessions_between_test(start_date, end_date))
     
     # Test 3: Routes
-    results.append(test_routes())
+    try:
+        test_routes()
+        results.append(True)
+    except AssertionError:
+        results.append(False)
     
     # Summary
     print("\n" + "=" * 60)

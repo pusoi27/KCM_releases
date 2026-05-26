@@ -25,6 +25,24 @@ import sqlite3
 from modules.database import DB_PATH
 import requests
 import re
+import time
+from threading import Lock
+
+
+BOOK_LEVEL_ORDER = ["1", "2", "3", "4", "5", "6", "7", "A", "B", "C", "D", "E", "F", "G", "H", "I", "J", "K"]
+ISBN_LOOKUP_CACHE_TTL_SECONDS = 12 * 60 * 60
+ISBN_LOOKUP_RATE_LIMIT_COOLDOWN_KEY = "books:isbn_lookup:rate_limited:v1"
+_isbn_lookup_locks = {}
+_isbn_lookup_locks_guard = Lock()
+
+
+class IsbnLookupError(RuntimeError):
+    """Structured lookup error with HTTP status metadata."""
+
+    def __init__(self, message: str, status_code: int = 502, retry_after_seconds: int = 0):
+        super().__init__(message)
+        self.status_code = int(status_code)
+        self.retry_after_seconds = max(0, int(retry_after_seconds or 0))
 
 
 def _parse_non_negative_int(value, default=0):
@@ -47,6 +65,55 @@ def _book_detail_prefix() -> str:
 
 def _students_list_cache_key() -> str:
     return server_cache.STUDENTS_LIST_CACHE_KEY
+
+
+def _isbn_lookup_cache_key(isbn: str) -> str:
+    return f"books:isbn_lookup:v1:{isbn}"
+
+
+def _get_isbn_lookup_lock(isbn: str) -> Lock:
+    with _isbn_lookup_locks_guard:
+        lock = _isbn_lookup_locks.get(isbn)
+        if lock is None:
+            lock = Lock()
+            _isbn_lookup_locks[isbn] = lock
+        return lock
+
+
+def _cache_isbn_lookup_result(isbn: str, data: dict) -> None:
+    """Cache lookup result for requested ISBN and discovered ISBN aliases."""
+    aliases = {str(isbn or '').strip()}
+    if isinstance(data, dict):
+        aliases.add(str(data.get('isbn') or '').strip())
+        aliases.add(str(data.get('isbn13') or '').strip())
+
+    for alias in aliases:
+        alias = _sanitize_isbn(alias)
+        if not alias:
+            continue
+        server_cache.set_cache(
+            _isbn_lookup_cache_key(alias),
+            data,
+            policy="book_catalog",
+            ttl_seconds=ISBN_LOOKUP_CACHE_TTL_SECONDS,
+        )
+
+
+def _lookup_isbn_online_cached(isbn: str) -> dict:
+    """Single-flight cached lookup to ensure one Google call per ISBN key."""
+    cached = server_cache.get_cache(_isbn_lookup_cache_key(isbn))
+    if cached is not None:
+        return cached
+
+    lock = _get_isbn_lookup_lock(isbn)
+    with lock:
+        cached = server_cache.get_cache(_isbn_lookup_cache_key(isbn))
+        if cached is not None:
+            return cached
+
+        data = _lookup_isbn_online(isbn)
+        _cache_isbn_lookup_result(isbn, data)
+        return data
 
 def _invalidate_books_cache(book_id=None):
     """Invalidate books catalog lane and optionally one book detail lane."""
@@ -203,9 +270,23 @@ def register_book_routes(app):
         try:
             conn = sqlite3.connect(DB_PATH)
             c = conn.cursor()
-            c.execute("SELECT DISTINCT reading_level FROM books WHERE reading_level IS NOT NULL ORDER BY reading_level")
-            levels = [row[0] for row in c.fetchall()]
+            c.execute("SELECT DISTINCT reading_level FROM books WHERE reading_level IS NOT NULL")
+            raw_levels = [str(row[0]).strip() for row in c.fetchall() if str(row[0] or '').strip()]
             conn.close()
+
+            level_rank = {level: idx for idx, level in enumerate(BOOK_LEVEL_ORDER)}
+            normalized = []
+            seen = set()
+            for level in raw_levels:
+                if level in seen:
+                    continue
+                seen.add(level)
+                normalized.append(level)
+
+            levels = sorted(
+                normalized,
+                key=lambda lv: (level_rank.get(lv, len(BOOK_LEVEL_ORDER)), lv)
+            )
             return jsonify({'levels': levels})
         except Exception as e:
             return jsonify({'error': str(e)}), 500
@@ -269,6 +350,19 @@ def register_book_routes(app):
             suggestions = [{'id': row[0], 'name': row[1]} for row in rows]
             return jsonify({'suggestions': suggestions})
 
+    @app.route("/api/students/active")
+    @require_login
+    def api_students_active():
+        """Return all active students ordered by name for dropdown selection."""
+        with sqlite3.connect(DB_PATH) as conn:
+            c = conn.cursor()
+            rows = c.execute(
+                "SELECT id, name FROM students WHERE active = 1 ORDER BY name",
+                (),
+            ).fetchall()
+            students = [{'id': row[0], 'name': row[1]} for row in rows]
+            return jsonify({'students': students})
+
     @app.route("/api/students/lookup")
     @require_login
     def api_students_lookup():
@@ -315,8 +409,29 @@ def register_book_routes(app):
         if not isbn or len(isbn) not in (10, 13):
             return jsonify({'error': 'Please scan or enter a valid ISBN-10 or ISBN-13.'}), 400
 
+        cooldown = server_cache.get_cache(ISBN_LOOKUP_RATE_LIMIT_COOLDOWN_KEY)
+        if cooldown:
+            retry_after = int(cooldown.get('retry_after_seconds', 5)) if isinstance(cooldown, dict) else 5
+            return jsonify({
+                'error': 'Google Books is rate-limiting requests. Please retry shortly.',
+                'retry_after_seconds': retry_after,
+            }), 429
+
         try:
-            data = _lookup_isbn_online(isbn)
+            data = _lookup_isbn_online_cached(isbn)
+        except IsbnLookupError as e:
+            if e.status_code == 429:
+                retry_after = max(1, e.retry_after_seconds or 5)
+                server_cache.set_cache(
+                    ISBN_LOOKUP_RATE_LIMIT_COOLDOWN_KEY,
+                    {'retry_after_seconds': retry_after},
+                    ttl_seconds=retry_after,
+                )
+                return jsonify({
+                    'error': 'Google Books is rate-limiting requests. Please retry shortly.',
+                    'retry_after_seconds': retry_after,
+                }), 429
+            return jsonify({'error': f"Lookup failed: {e}"}), 502
         except Exception as e:
             return jsonify({'error': f"Lookup failed: {e}"}), 502
 
@@ -361,12 +476,6 @@ def register_book_routes(app):
         copies = _parse_non_negative_int(payload.get('copies'), default=1)
         existing_id = payload.get('id')
 
-        # If existing_id not provided, try to find by title to prevent duplicates
-        if not existing_id and title:
-            existing = find_book_by_title(title)
-            if existing:
-                existing_id = existing[0]
-
         # Existing book: update provided fields
         if existing_id:
             try:
@@ -387,6 +496,35 @@ def register_book_routes(app):
                 return jsonify({'status': 'updated', 'id': existing_id})
             except Exception as e:
                 return jsonify({'error': str(e)}), 500
+
+        # Add flow (no explicit id): merge copies only when BOTH title and ISBN match.
+        incoming_title_key = _normalize_title_key(title)
+        incoming_isbn_tokens = _isbn_tokens(isbn, isbn13)
+        if incoming_title_key and incoming_isbn_tokens:
+            isbn_match_row = None
+            for token in incoming_isbn_tokens:
+                isbn_match_row = find_book_by_isbn(token)
+                if isbn_match_row:
+                    break
+
+            if isbn_match_row:
+                existing_title_key = _normalize_title_key(isbn_match_row[1] if len(isbn_match_row) > 1 else '')
+                existing_isbn_tokens = _isbn_tokens(
+                    isbn_match_row[5] if len(isbn_match_row) > 5 else None,
+                    isbn_match_row[6] if len(isbn_match_row) > 6 else None,
+                )
+                has_same_isbn = bool(existing_isbn_tokens.intersection(incoming_isbn_tokens))
+
+                if existing_title_key == incoming_title_key and has_same_isbn:
+                    existing_book_id = isbn_match_row[0]
+                    existing_copies = _parse_non_negative_int(
+                        isbn_match_row[8] if len(isbn_match_row) > 8 else 0,
+                        default=0,
+                    )
+                    new_copies = existing_copies + max(1, copies)
+                    update_book(existing_book_id, copies=new_copies)
+                    _invalidate_books_cache(existing_book_id)
+                    return jsonify({'status': 'updated', 'id': existing_book_id, 'new_copies': new_copies})
 
         # New book: require title and level
         if not title:
@@ -483,7 +621,7 @@ def register_book_routes(app):
                         c = conn.cursor()
                         row = c.execute(
                             "SELECT id, name FROM students WHERE lower(name)=lower(?) LIMIT 1",
-                            (student_input)
+                            (student_input,)
                         ).fetchone()
                         if row:
                             student_row = (row[0], row[1])
@@ -637,6 +775,26 @@ def _sanitize_isbn(value: str):
 
 
 def _lookup_isbn_online(isbn: str):
+    """Fetch book details using provider chain: Google Books -> Open Library fallback."""
+    try:
+        return _lookup_isbn_google(isbn)
+    except IsbnLookupError as google_err:
+        should_fallback = google_err.status_code in (404, 429, 500, 502, 503, 504)
+        if not should_fallback:
+            raise
+
+        try:
+            return _lookup_isbn_open_library(isbn)
+        except IsbnLookupError as openlib_err:
+            retry_after_seconds = google_err.retry_after_seconds if google_err.status_code == 429 else 0
+            raise IsbnLookupError(
+                f"Lookup failed (Google: {google_err}; Open Library: {openlib_err})",
+                status_code=502,
+                retry_after_seconds=retry_after_seconds,
+            )
+
+
+def _lookup_isbn_google(isbn: str):
     """Fetch book details from Google Books API using ISBN."""
     url = "https://www.googleapis.com/books/v1/volumes"
     params = {
@@ -645,18 +803,58 @@ def _lookup_isbn_online(isbn: str):
     headers = {
         "User-Agent": "Mozilla/5.0 (compatible; Stdytime/1.0)",
     }
-    resp = requests.get(url, params=params, headers=headers, timeout=10)
-    if resp.status_code != 200:
-        raise RuntimeError(f"Google Books API returned {resp.status_code}")
+
+    max_attempts = 4
+    backoff_seconds = [0.4, 0.9, 1.8]
+    resp = None
+    last_retry_after = 0
+
+    for attempt in range(max_attempts):
+        try:
+            resp = requests.get(url, params=params, headers=headers, timeout=10)
+        except requests.RequestException as exc:
+            raise IsbnLookupError("Google Books request failed", status_code=502) from exc
+        if resp.status_code == 200:
+            break
+
+        if resp.status_code == 429:
+            retry_after_header = str(resp.headers.get("Retry-After", "")).strip()
+            retry_after = 0
+            if retry_after_header.isdigit():
+                retry_after = max(0, int(retry_after_header))
+
+            backoff = backoff_seconds[min(attempt, len(backoff_seconds) - 1)]
+            sleep_seconds = min(8.0, max(float(retry_after), backoff))
+            last_retry_after = max(last_retry_after, int(round(sleep_seconds)))
+
+            if attempt < (max_attempts - 1):
+                time.sleep(sleep_seconds)
+                continue
+
+            raise IsbnLookupError(
+                "Google Books API returned 429",
+                status_code=429,
+                retry_after_seconds=max(1, last_retry_after),
+            )
+
+        if resp.status_code in (500, 502, 503, 504) and attempt < (max_attempts - 1):
+            time.sleep(backoff_seconds[min(attempt, len(backoff_seconds) - 1)])
+            continue
+
+        raise IsbnLookupError(f"Google Books API returned {resp.status_code}", status_code=resp.status_code)
+
+    if resp is None or resp.status_code != 200:
+        status_code = resp.status_code if resp is not None else 502
+        raise IsbnLookupError(f"Google Books API returned {status_code}", status_code=status_code)
 
     try:
         payload = resp.json()
     except Exception as exc:
-        raise RuntimeError("Invalid JSON response from Google Books API") from exc
+        raise IsbnLookupError("Invalid JSON response from Google Books API") from exc
 
     items = payload.get("items") or []
     if not items:
-        raise RuntimeError("No results found on Google Books for this ISBN")
+        raise IsbnLookupError("No results found on Google Books for this ISBN", status_code=404)
 
     first_book = items[0] or {}
     volume_info = first_book.get("volumeInfo") or {}
@@ -689,7 +887,7 @@ def _lookup_isbn_online(isbn: str):
             isbn13 = isbn
 
     if not title:
-        raise RuntimeError("No book title found in Google Books response")
+        raise IsbnLookupError("No book title found in Google Books response")
 
     return {
         'title': title.strip(),
@@ -700,8 +898,141 @@ def _lookup_isbn_online(isbn: str):
     }
 
 
+def _lookup_isbn_open_library(isbn: str):
+    """Fallback lookup via Open Library (ISBN API first, then search API)."""
+    headers = {
+        "User-Agent": "Mozilla/5.0 (compatible; Stdytime/1.0)",
+    }
+
+    details_url = "https://openlibrary.org/api/books"
+    details_params = {
+        "bibkeys": f"ISBN:{isbn}",
+        "format": "json",
+        "jscmd": "data",
+    }
+
+    try:
+        resp = requests.get(details_url, params=details_params, headers=headers, timeout=10)
+    except requests.RequestException as exc:
+        raise IsbnLookupError("Open Library request failed", status_code=502) from exc
+
+    if resp.status_code not in (200, 404):
+        raise IsbnLookupError(f"Open Library returned {resp.status_code}", status_code=resp.status_code)
+
+    payload = {}
+    if resp.status_code == 200:
+        try:
+            payload = resp.json() or {}
+        except Exception as exc:
+            raise IsbnLookupError("Invalid JSON response from Open Library") from exc
+
+    item = payload.get(f"ISBN:{isbn}") if isinstance(payload, dict) else None
+    if item:
+        title = str(item.get("title") or "").strip()
+        authors = item.get("authors") or []
+        publishers = item.get("publishers") or []
+        identifiers = item.get("identifiers") or {}
+
+        author = ""
+        if isinstance(authors, list) and authors:
+            first_author = authors[0]
+            if isinstance(first_author, dict):
+                author = str(first_author.get("name") or "").strip()
+            else:
+                author = str(first_author or "").strip()
+
+        publisher = ""
+        if isinstance(publishers, list) and publishers:
+            first_publisher = publishers[0]
+            if isinstance(first_publisher, dict):
+                publisher = str(first_publisher.get("name") or "").strip()
+            else:
+                publisher = str(first_publisher or "").strip()
+
+        isbn10 = None
+        isbn13 = None
+        if isinstance(identifiers, dict):
+            isbn10_list = identifiers.get("isbn_10") or []
+            isbn13_list = identifiers.get("isbn_13") or []
+            isbn10 = str(isbn10_list[0]).strip() if isbn10_list else None
+            isbn13 = str(isbn13_list[0]).strip() if isbn13_list else None
+
+        if not isbn10 and not isbn13:
+            if len(isbn) == 10:
+                isbn10 = isbn
+            elif len(isbn) == 13:
+                isbn13 = isbn
+
+        if title:
+            return {
+                'title': title,
+                'author': author,
+                'publisher': publisher,
+                'isbn': isbn10,
+                'isbn13': isbn13,
+            }
+
+    # Secondary fallback: Open Library search endpoint
+    search_url = "https://openlibrary.org/search.json"
+    search_params = {"isbn": isbn}
+    try:
+        search_resp = requests.get(search_url, params=search_params, headers=headers, timeout=10)
+    except requests.RequestException as exc:
+        raise IsbnLookupError("Open Library search request failed", status_code=502) from exc
+
+    if search_resp.status_code != 200:
+        raise IsbnLookupError(f"Open Library search returned {search_resp.status_code}", status_code=search_resp.status_code)
+
+    try:
+        search_payload = search_resp.json() or {}
+    except Exception as exc:
+        raise IsbnLookupError("Invalid JSON response from Open Library search") from exc
+
+    docs = search_payload.get("docs") or []
+    if not docs:
+        raise IsbnLookupError("No results found on Open Library for this ISBN", status_code=404)
+
+    first = docs[0] or {}
+    title = str(first.get("title") or "").strip()
+    if not title:
+        raise IsbnLookupError("No book title found in Open Library response")
+
+    authors = first.get("author_name") or []
+    publishers = first.get("publisher") or []
+    isbn_values = [str(v).strip().upper() for v in (first.get("isbn") or []) if str(v).strip()]
+    isbn10 = next((v for v in isbn_values if len(v) == 10), None)
+    isbn13 = next((v for v in isbn_values if len(v) == 13), None)
+
+    if not isbn10 and not isbn13:
+        if len(isbn) == 10:
+            isbn10 = isbn
+        elif len(isbn) == 13:
+            isbn13 = isbn
+
+    return {
+        'title': title,
+        'author': str(authors[0]).strip() if authors else "",
+        'publisher': str(publishers[0]).strip() if publishers else "",
+        'isbn': isbn10,
+        'isbn13': isbn13,
+    }
+
+
 def _first_text(items):
     return items[0].strip() if items else None
+
+
+def _normalize_title_key(value: str) -> str:
+    return str(value or '').strip().lower()
+
+
+def _isbn_tokens(isbn: str, isbn13: str) -> set[str]:
+    tokens = set()
+    for token in (isbn, isbn13):
+        clean = _sanitize_isbn(token) if token else None
+        if clean:
+            tokens.add(clean)
+    return tokens
 
 
 def _book_row_to_dict(row):

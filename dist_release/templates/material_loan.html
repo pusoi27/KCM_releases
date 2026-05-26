@@ -48,14 +48,14 @@
     <div class="card-body">
       <div id="loanAvailable" class="d-none">
         <div class="row g-3 align-items-end">
-          <div class="col-md-6">
-            <label class="form-label">Student (name or QR/id)</label>
-            <input type="text" id="studentInput" class="form-control" placeholder="Type student name or scan QR" list="studentSuggestions" autocomplete="off">
-            <datalist id="studentSuggestions"></datalist>
+          <div class="col-md-8">
+            <label class="form-label">Student (active students)</label>
+            <select id="studentSelect" class="form-select">
+              <option value="">Select student...</option>
+            </select>
             <div class="small text-muted mt-1" id="studentStatus"></div>
           </div>
-          <div class="col-md-3"><button class="btn btn-outline-info w-100" id="findStudentBtn"><i class="bi bi-search"></i> Find Student</button></div>
-          <div class="col-md-3"><button class="btn btn-success w-100" id="checkoutBtn" disabled><i class="bi bi-box-arrow-right"></i> Check Out</button></div>
+          <div class="col-md-4"><button class="btn btn-success w-100" id="checkoutBtn" disabled><i class="bi bi-box-arrow-right"></i> Check Out</button></div>
         </div>
       </div>
       <div id="loanBorrowed" class="d-none">
@@ -141,50 +141,24 @@ function clearLoan(materialId, studentId, materialTitle, studentName) {
   const loanCard = document.getElementById('loanCard');
   const loanAvailable = document.getElementById('loanAvailable');
   const loanBorrowed = document.getElementById('loanBorrowed');
-  const studentInput = document.getElementById('studentInput');
-  const findStudentBtn = document.getElementById('findStudentBtn');
+  const studentSelect = document.getElementById('studentSelect');
   const checkoutBtn = document.getElementById('checkoutBtn');
   const returnBtn = document.getElementById('returnBtn');
   const alertBox = document.getElementById('alertBox');
   const studentStatus = document.getElementById('studentStatus');
-  const studentSuggestions = document.getElementById('studentSuggestions');
 
   let currentMaterialId = null;
   let studentReady = false;
   let currentStudent = null;
-  let suggestionTimeout = null;
+  let activeStudentsLoaded = false;
 
   findMaterialBtn.addEventListener('click', findMaterial);
   materialSearch.addEventListener('keypress', e => { if (e.key === 'Enter') { e.preventDefault(); findMaterial(); } });
-  findStudentBtn.addEventListener('click', confirmStudent);
-  studentInput.addEventListener('keypress', e => { if (e.key === 'Enter') { e.preventDefault(); confirmStudent(); } });
-
-  studentInput.addEventListener('input', async function() {
-    const val = this.value.trim();
-    if (val.length >= 3 && !val.startsWith('ID:')) {
-      clearTimeout(suggestionTimeout);
-      suggestionTimeout = setTimeout(async () => {
-        try {
-          const resp = await fetch(`/api/students/suggest?q=${encodeURIComponent(val)}`);
-          const data = await resp.json();
-          studentSuggestions.innerHTML = '';
-          if (data.suggestions && data.suggestions.length > 0) {
-            data.suggestions.forEach(student => {
-              const option = document.createElement('option');
-              option.value = student.name;
-              option.textContent = `${student.name} (ID: ${student.id})`;
-              studentSuggestions.appendChild(option);
-            });
-          }
-        } catch (err) { console.error('Failed to fetch suggestions:', err); }
-      }, 300);
-    } else {
-      studentSuggestions.innerHTML = '';
-    }
-  });
+  studentSelect.addEventListener('change', handleStudentSelection);
 
   checkoutBtn.addEventListener('click', checkoutMaterial);
   returnBtn.addEventListener('click', returnMaterial);
+  loadActiveStudents();
   materialSearch.focus();
 
   function setStatus(msg) { statusText.textContent = msg || ''; }
@@ -199,6 +173,49 @@ function clearLoan(materialId, studentId, materialTitle, studentName) {
     studentStatus.className = 'small mt-1 text-' + (type === 'muted' ? 'muted' : type);
   }
   function setCheckoutEnabled(enabled) { checkoutBtn.disabled = !enabled; }
+
+  async function loadActiveStudents(forceReload = false) {
+    if (activeStudentsLoaded && !forceReload) {
+      return;
+    }
+    try {
+      const resp = await fetch('/api/students/active');
+      const data = await resp.json();
+      if (!resp.ok) throw new Error(data.error || 'Failed to load active students');
+
+      studentSelect.innerHTML = '<option value="">Select student...</option>';
+      (data.students || []).forEach(student => {
+        const option = document.createElement('option');
+        option.value = String(student.id);
+        option.textContent = student.name;
+        option.dataset.name = student.name;
+        studentSelect.appendChild(option);
+      });
+      activeStudentsLoaded = true;
+    } catch (err) {
+      showAlert(err.message, 'danger');
+    }
+  }
+
+  function handleStudentSelection() {
+    const selectedOption = studentSelect.options[studentSelect.selectedIndex];
+    const studentId = studentSelect.value;
+    if (!studentId || !selectedOption) {
+      currentStudent = null;
+      studentReady = false;
+      setCheckoutEnabled(false);
+      setStudentStatus('');
+      return;
+    }
+
+    currentStudent = {
+      id: parseInt(studentId, 10),
+      name: selectedOption.dataset.name || selectedOption.textContent || '',
+    };
+    studentReady = true;
+    setCheckoutEnabled(true);
+    setStudentStatus(`Student: ${currentStudent.name} (ID ${currentStudent.id})`, 'primary');
+  }
 
   function renderMaterial(material) {
     document.getElementById('materialTitle').textContent = material.title || 'Untitled';
@@ -225,7 +242,11 @@ function clearLoan(materialId, studentId, materialTitle, studentName) {
       setCheckoutEnabled(false);
       currentStudent = null;
       setStudentStatus('');
-      studentInput.focus();
+      studentSelect.value = '';
+      if (!activeStudentsLoaded) {
+        loadActiveStudents();
+      }
+      studentSelect.focus();
     } else if (material.borrower_name) {
       loanAvailable.classList.add('d-none');
       loanBorrowed.classList.remove('d-none');
@@ -272,6 +293,7 @@ function clearLoan(materialId, studentId, materialTitle, studentName) {
       setCheckoutEnabled(false);
       currentStudent = null;
       setStudentStatus('');
+      studentSelect.value = '';
       renderMaterial(material);
       setStatus('Ready');
     } catch (err) {
@@ -280,39 +302,16 @@ function clearLoan(materialId, studentId, materialTitle, studentName) {
     }
   }
 
-  async function confirmStudent() {
-    if (!currentMaterialId) { showAlert('Find a material first.', 'warning'); return; }
-    const studentVal = studentInput.value.trim();
-    if (!studentVal) { showAlert('Enter student name or scan QR, then click Find Student.', 'warning'); return; }
-    setStatus('Finding student...');
-    try {
-      const resp = await fetch(`/api/students/lookup?q=${encodeURIComponent(studentVal)}`);
-      const data = await resp.json();
-      if (!resp.ok) throw new Error(data.error || 'Lookup failed');
-      currentStudent = data.student;
-      studentReady = true;
-      setCheckoutEnabled(true);
-      setStudentStatus(`Student: ${currentStudent.name} (ID ${currentStudent.id})`, 'primary');
-      showAlert('Student captured. You can now check out the material.', 'info');
-    } catch (err) {
-      currentStudent = null;
-      studentReady = false;
-      setCheckoutEnabled(false);
-      setStudentStatus('');
-      showAlert(err.message, 'danger');
-    } finally { setStatus(''); }
-  }
-
   async function checkoutMaterial() {
     if (!currentMaterialId) { showAlert('Find a material first.', 'warning'); return; }
-    if (!studentReady || !currentStudent) { showAlert('Click Find Student after entering/scanning the student.', 'warning'); return; }
+    if (!studentReady || !currentStudent) { showAlert('Select a student from the dropdown first.', 'warning'); return; }
 
     setStatus('Checking out...');
     try {
       const resp = await fetch('/api/materials/loan', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ material_id: currentMaterialId, student_input: studentInput.value.trim(), student_id: currentStudent.id })
+        body: JSON.stringify({ material_id: currentMaterialId, student_input: currentStudent.name, student_id: currentStudent.id })
       });
       const data = await resp.json();
       if (!resp.ok) throw new Error(data.error || 'Checkout failed');
@@ -321,7 +320,9 @@ function clearLoan(materialId, studentId, materialTitle, studentName) {
       setCheckoutEnabled(false);
       currentStudent = null;
       setStudentStatus('');
-      await refreshMaterial();
+      studentSelect.value = '';
+      // Refresh page so server-rendered "Currently Loaned Devices" section updates immediately
+      window.location.reload();
     } catch (err) {
       showAlert(err.message, 'danger');
     } finally { setStatus(''); }
@@ -339,7 +340,8 @@ function clearLoan(materialId, studentId, materialTitle, studentName) {
       const data = await resp.json();
       if (!resp.ok) throw new Error(data.error || 'Return failed');
       showAlert('Material checked in successfully.', 'success');
-      await refreshMaterial();
+      // Refresh page so server-rendered "Currently Loaned Devices" section updates immediately
+      window.location.reload();
     } catch (err) {
       showAlert(err.message, 'danger');
     } finally { setStatus(''); }

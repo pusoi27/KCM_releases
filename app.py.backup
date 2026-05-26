@@ -332,7 +332,7 @@ def api_students_list():
             total_secs = int(total_secs_row[0]) if total_secs_row and total_secs_row[0] is not None else 0
 
         data.append(dict(id=sid, name=name, subject=subj,
-                         level=lvl, photo=photo, status=status, total_seconds=total_secs))
+                 photo=photo, status=status, total_seconds=total_secs))
     return jsonify(data)
 
 
@@ -347,15 +347,15 @@ def api_student_start(sid):
     with sqlite3.connect(DB_PATH) as conn:
         c = conn.cursor()
         row = c.execute(
-            "SELECT id,name,subject,level,photo FROM students WHERE id=?", (sid,)
+            "SELECT id,name,subject,photo FROM students WHERE id=?", (sid,)
         ).fetchone()
     if not row:
         return jsonify({"error": "Student not found"}), 404
 
-    # row may include photo at index 4
-    photo = row[4] if len(row) > 4 else None
+    # row may include photo at index 3
+    photo = row[3] if len(row) > 3 else None
     active_students_cache.append(
-        dict(id=row[0], name=row[1], subject=row[2], level=row[3], photo=photo)
+        dict(id=row[0], name=row[1], subject=row[2], photo=photo)
     )
     return jsonify({"success": True})
 
@@ -373,18 +373,17 @@ def api_student_stop(sid):
     with sqlite3.connect(DB_PATH) as conn:
         c = conn.cursor()
         row = c.execute(
-            "SELECT id,name,subject,level,photo FROM students WHERE id=?", (sid,)
+            "SELECT id,name,subject,photo FROM students WHERE id=?", (sid,)
         ).fetchone()
     if not row:
         return jsonify({"error": "Student not found"}), 404
 
-    photo = row[4] if len(row) > 4 else None
+    photo = row[3] if len(row) > 3 else None
     checked_out_cache.append(
         dict(
             id=row[0],
             name=row[1],
             subject=row[2],
-            level=row[3],
             photo=photo,
             duration=result["duration"],
         )
@@ -409,7 +408,6 @@ def api_sessions_active():
             "id": sid,
             "name": s.get("name"),
             "subject": s.get("subject"),
-            "level": s.get("level"),
             "photo": s.get("photo"),
             "start_time": start_time
         })
