@@ -54,6 +54,9 @@ CACHE_POLICIES = {
 	"default": {"ttl": 300, "jitter": 30},
 	# Example: student check-in data => 1h + rand(0..30m)
 	"checkin": {"ttl": 3600, "jitter": 1800},
+	# Dashboard/student attendance view should reflect new active sessions quickly,
+	# even when a session is started from another tab or machine.
+	"checkin_live": {"ttl": 2, "jitter": 0},
 	# Books catalog/details are mostly static and can live longer.
 	"book_catalog": {"ttl": 21600, "jitter": 1800},
 	# Assistant profiles are mostly static.

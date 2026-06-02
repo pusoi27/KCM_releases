@@ -434,7 +434,7 @@ def register_api_routes(app):
         result = server_cache.get_or_set(
             cache_key,
             _build_students_list_payload,
-            policy="checkin",
+            policy="checkin_live",
         )
 
         checked_count = sum(1 for student in result if student.get("status") == "checked")

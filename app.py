@@ -588,33 +588,7 @@ def before_request_startup_gate():
                         'message': 'Wait while the configuration is complete',
                 }), 503
 
-        html = """
-        <!doctype html>
-        <html lang=\"en\">
-        <head>
-            <meta charset=\"utf-8\" />
-            <meta http-equiv=\"refresh\" content=\"2\" />
-            <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\" />
-            <title>Stdytime is starting</title>
-            <style>
-                body { font-family: Arial, sans-serif; margin: 0; background:#f6f8fb; color:#1f2937; }
-                .wrap { min-height: 100vh; display:flex; align-items:center; justify-content:center; padding:24px; }
-                .card { background:#fff; border:1px solid #e5e7eb; border-radius:12px; max-width:560px; width:100%; padding:24px; box-shadow:0 8px 20px rgba(0,0,0,.05); }
-                h1 { font-size: 1.1rem; margin: 0 0 10px; }
-                p { margin: 0; line-height: 1.5; color:#4b5563; }
-            </style>
-        </head>
-        <body>
-            <div class=\"wrap\">
-                <div class=\"card\">
-                    <h1>Stdytime is starting…</h1>
-                    <p>Wait while the configuration is complete</p>
-                </div>
-            </div>
-        </body>
-        </html>
-        """
-        return html, 503
+        return render_template("startup_loading.html"), 503
 
 @app.after_request
 def after_request_profiler(response):

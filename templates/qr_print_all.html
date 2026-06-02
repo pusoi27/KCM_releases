@@ -53,7 +53,7 @@
 function printStudentQR() {
   const sid = document.getElementById('studentSelect').value;
   if (!sid) { alert('Please select a student'); return; }
-  window.open(`/qr/pdf/individual/${sid}`, '_blank');
+  window.open(`/qr/print/individual?sid=${sid}`, '_blank');
 }
 
 function printAllStudentsQR() {

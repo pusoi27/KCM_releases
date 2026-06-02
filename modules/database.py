@@ -7,6 +7,11 @@ from datetime import datetime, timezone
 import json
 import tempfile
 
+try:
+    import ctypes
+except Exception:  # pragma: no cover - platform/runtime defensive guard
+    ctypes = None
+
 DATA_DIR = os.getenv("DATA_DIR", "data")
 LOCAL_FALLBACK_DB_PATH = os.path.join("data", "Stdytime.db")
 
@@ -48,6 +53,8 @@ _GDRIVE_DISCOVERY_ATTEMPTED = False
 _FIXED_SYNC_INTERVAL_MINUTES = 9
 _APP_VERSION_META_KEY = "app_version"
 _LAST_SYNC_ERROR = ""
+_SHUTDOWN_SYNC_COMPLETED = False
+_SHUTDOWN_WAIT_POPUP_SHOWN = False
 
 
 def _set_last_sync_error(message: str) -> None:
@@ -524,6 +531,24 @@ def _can_use_db_parent(path):
         return False, str(exc)
 
 
+def _safe_remove_file(path: str, *, context: str = "temp file", silent: bool = True) -> bool:
+    """Best-effort file deletion helper.
+
+    Returns True when a file was removed, False otherwise.
+    """
+    target = str(path or "").strip()
+    if not target:
+        return False
+    try:
+        if os.path.isfile(target):
+            os.remove(target)
+            return True
+    except Exception as exc:
+        if not silent:
+            print(f"[cleanup] WARNING: could not remove {context} '{target}': {exc}", file=sys.stderr)
+    return False
+
+
 def _resolve_db_path():
     # Priority: db_config.json db_path > DB_PATH env var > DATA_DIR default
     config_path = _read_db_config_path()
@@ -587,6 +612,10 @@ def _sqlite_backup(src_path: str, dst_path: str):
     dst_dir = os.path.dirname(dst_path) or "."
     os.makedirs(dst_dir, exist_ok=True)
     tmp = dst_path + ".syncing"
+
+    # If a previous interrupted run left a sync temp file behind, clear it first.
+    _safe_remove_file(tmp, context="stale sync temp", silent=True)
+
     src_conn = sqlite3.connect(src_path)
     dst_conn = sqlite3.connect(tmp)
     try:
@@ -594,7 +623,13 @@ def _sqlite_backup(src_path: str, dst_path: str):
     finally:
         dst_conn.close()
         src_conn.close()
-    os.replace(tmp, dst_path)
+
+    try:
+        os.replace(tmp, dst_path)
+    finally:
+        # Ensure the temporary sync artifact does not remain on disk,
+        # including replacement failure or interruption scenarios.
+        _safe_remove_file(tmp, context="sync temp", silent=True)
 
 
 def _sqlite_restore_live(src_path: str, dst_path: str, retries: int = 3, retry_delay: float = 1.5) -> None:
@@ -1083,6 +1118,97 @@ def _start_background_sync(local_path: str, gdrive_path: str, interval_minutes: 
     print(f"[sync] Background sync thread started (every {interval_minutes} min -> {gdrive_path})")
 
 
+def flush_cloud_backup_on_shutdown(
+    *,
+    status_after_seconds: int = 8,
+    retry_delay_seconds: int = 3,
+) -> bool:
+    """Block shutdown until local DB has been pushed to cloud backup.
+
+    - Returns True when sync is confirmed.
+    - Returns True immediately when cloud backup is not configured.
+    - Displays a temporary user-facing wait message when sync takes longer than
+      ``status_after_seconds``.
+    """
+    sync_target = _resolve_gdrive_sync_target(GDRIVE_SYNC_PATH or "")
+    if not sync_target:
+        return True
+
+    delay = max(1, int(retry_delay_seconds))
+    warn_after = max(1, int(status_after_seconds))
+    start_ts = time.monotonic()
+    wait_notice_shown = False
+
+    def _show_temporary_wait_popup(timeout_seconds: int = 8) -> None:
+        """Show a temporary non-blocking Windows popup while shutdown waits for sync."""
+        if os.name != 'nt' or ctypes is None:
+            return
+
+        message = (
+            "Stdytime is finishing cloud backup sync before closing.\n\n"
+            "Please wait and do not force-close the app."
+        )
+        title = "Stdytime - Finishing Backup"
+        timeout_ms = max(3000, int(timeout_seconds * 1000))
+
+        def _popup_worker() -> None:
+            try:
+                user32 = ctypes.windll.user32
+                # MessageBoxTimeoutW auto-closes after timeout (milliseconds).
+                msg_timeout = getattr(user32, "MessageBoxTimeoutW", None)
+                if msg_timeout:
+                    msg_timeout.argtypes = [
+                        ctypes.c_void_p,
+                        ctypes.c_wchar_p,
+                        ctypes.c_wchar_p,
+                        ctypes.c_uint,
+                        ctypes.c_ushort,
+                        ctypes.c_uint,
+                    ]
+                    msg_timeout.restype = ctypes.c_int
+                    MB_OK = 0x00000000
+                    MB_ICONINFORMATION = 0x00000040
+                    MB_SETFOREGROUND = 0x00010000
+                    msg_timeout(
+                        None,
+                        message,
+                        title,
+                        MB_OK | MB_ICONINFORMATION | MB_SETFOREGROUND,
+                        0,
+                        timeout_ms,
+                    )
+                    return
+
+                # Fallback when MessageBoxTimeoutW is unavailable.
+                user32.MessageBoxW(None, message, title, 0x00000040)
+            except Exception:
+                pass
+
+        threading.Thread(target=_popup_worker, daemon=True, name="shutdown-sync-popup").start()
+
+    while True:
+        if sync_to_gdrive(DB_PATH, sync_target, retries=0, retry_delay=delay, silent=True):
+            if wait_notice_shown:
+                print("[shutdown] Cloud backup sync completed. Closing application.")
+            return True
+
+        elapsed = int(time.monotonic() - start_ts)
+        if not wait_notice_shown and elapsed >= warn_after:
+            wait_notice_shown = True
+            print(
+                "[shutdown] Final cloud backup is still in progress. "
+                "Please wait before closing.",
+                file=sys.stderr,
+            )
+            global _SHUTDOWN_WAIT_POPUP_SHOWN
+            if not _SHUTDOWN_WAIT_POPUP_SHOWN:
+                _SHUTDOWN_WAIT_POPUP_SHOWN = True
+                _show_temporary_wait_popup(timeout_seconds=8)
+
+        # Requirement: do not shut down until cloud file is available for writing.
+        time.sleep(delay)
+
+
 # ====================================================================
 # Module-level initialisation
 # ====================================================================
@@ -1108,12 +1234,16 @@ _start_background_sync(DB_PATH, GDRIVE_SYNC_PATH, _SYNC_INTERVAL)
 # On clean exit: release lock then do one final push
 def _sync_on_exit():
     """
-    Called by atexit. Releases the cloud lock.
-
-    Backup synchronization is intentionally handled by:
-    - the background scheduler (every 9 minutes), and
-    - explicit/manual push actions from setup routes.
+    Called by atexit.
+    Blocks shutdown until the latest local DB snapshot is successfully pushed
+    to cloud backup, then releases the cloud lock.
     """
+    global _SHUTDOWN_SYNC_COMPLETED
+    if _SHUTDOWN_SYNC_COMPLETED:
+        return
+    _SHUTDOWN_SYNC_COMPLETED = True
+
+    flush_cloud_backup_on_shutdown(status_after_seconds=8, retry_delay_seconds=3)
     release_gdrive_lock(GDRIVE_SYNC_PATH)
 
 

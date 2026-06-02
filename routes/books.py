@@ -225,8 +225,10 @@ def register_book_routes(app):
     @require_feature(auth_manager.FEATURE_BOOKS)
     def api_books_search():
         """API endpoint to search/filter books."""
-        query = request.args.get('q', '').strip().lower()
+        query_raw = request.args.get('q', '').strip()
+        query = query_raw.lower()
         level = request.args.get('level', '').strip()
+        isbn_candidates = _expand_isbn_candidates(query_raw)
         
         try:
             # Normalize DB before search
@@ -237,7 +239,18 @@ def register_book_routes(app):
             # Build dynamic query
             sql = "SELECT id, title, author, available, reading_level, isbn, isbn13, publisher, copies, borrower_id FROM books WHERE 1=1"
             params = []
-            if query:
+
+            # For scanner-friendly ISBN searches, prefer exact normalized ISBN matches
+            # (including ISBN-10/13 equivalent conversion) over broad LIKE matching.
+            if isbn_candidates:
+                placeholders = ",".join(["?" for _ in isbn_candidates])
+                sql += (
+                    f" AND (UPPER(TRIM(COALESCE(isbn, ''))) IN ({placeholders}) "
+                    f"OR UPPER(TRIM(COALESCE(isbn13, ''))) IN ({placeholders}))"
+                )
+                params.extend(isbn_candidates)
+                params.extend(isbn_candidates)
+            elif query:
                 sql += " AND (title LIKE ? OR author LIKE ? OR publisher LIKE ? OR isbn LIKE ? OR isbn13 LIKE ?)"
                 search_term = f"%{query}%"
                 params.extend([search_term, search_term, search_term, search_term, search_term])
@@ -772,6 +785,68 @@ def _sanitize_isbn(value: str):
         return None
     digits = re.sub(r"[^0-9Xx]", "", value)
     return digits.upper()
+
+
+def _isbn10_to_isbn13(isbn10: str | None) -> str | None:
+    """Convert ISBN-10 to ISBN-13 (978 prefix) when input shape is valid."""
+    token = _sanitize_isbn(isbn10)
+    if not token or len(token) != 10:
+        return None
+
+    core = token[:9]
+    if not core.isdigit():
+        return None
+
+    body = f"978{core}"
+    total = 0
+    for idx, ch in enumerate(body):
+        n = int(ch)
+        total += n if idx % 2 == 0 else n * 3
+    check_digit = (10 - (total % 10)) % 10
+    return f"{body}{check_digit}"
+
+
+def _isbn13_to_isbn10(isbn13: str | None) -> str | None:
+    """Convert ISBN-13 to ISBN-10 when the number starts with 978."""
+    token = _sanitize_isbn(isbn13)
+    if not token or len(token) != 13 or not token.isdigit() or not token.startswith("978"):
+        return None
+
+    core9 = token[3:12]
+    total = 0
+    for idx, ch in enumerate(core9, start=1):
+        total += idx * int(ch)
+    remainder = total % 11
+    check_digit = "X" if remainder == 10 else str(remainder)
+    return f"{core9}{check_digit}"
+
+
+def _expand_isbn_candidates(raw_value: str) -> list[str]:
+    """Return normalized ISBN candidates including 10/13 converted equivalents."""
+    token = _sanitize_isbn(raw_value)
+    if not token or len(token) not in (10, 13):
+        return []
+
+    candidates = [token]
+    if len(token) == 10:
+        converted = _isbn10_to_isbn13(token)
+        if converted:
+            candidates.append(converted)
+    else:
+        converted = _isbn13_to_isbn10(token)
+        if converted:
+            candidates.append(converted)
+
+    # Stable de-duplication, preserving input token priority.
+    ordered_unique: list[str] = []
+    seen = set()
+    for candidate in candidates:
+        normalized = str(candidate or '').strip().upper()
+        if not normalized or normalized in seen:
+            continue
+        seen.add(normalized)
+        ordered_unique.append(normalized)
+    return ordered_unique
 
 
 def _lookup_isbn_online(isbn: str):

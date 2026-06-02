@@ -395,7 +395,7 @@
         <td class="col-actions">
           <a href="{{ url_for('students_edit',sid=s.id) }}" class="btn btn-outline-info btn-sm">Edit</a>
           <a href="{{ url_for('students_export_vcf', sid=s.id) }}" class="btn btn-outline-success btn-sm" title="Download VCF contact file (browser save dialog)">VCF</a>
-          <a href="{{ url_for('qr_pdf_individual', sid=s.id) }}" class="btn btn-outline-dark btn-sm" title="Download individual QR PDF">Print QR</a>
+          <a href="{{ url_for('qr_print_individual', sid=s.id) }}" class="btn btn-outline-dark btn-sm" title="Select label slot and download individual QR PDF">Print QR</a>
           {% if current_user and current_user.is_admin() %}
           <form method="POST" action="{{ url_for('students_delete',sid=s.id) }}" class="d-inline">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">

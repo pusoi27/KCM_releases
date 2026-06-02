@@ -239,10 +239,19 @@ def register_qr_routes(app):
     @require_login
     @require_feature(auth_manager.FEATURE_INSTRUCTOR_SETTINGS)
     def qr_pdf_individual(sid):
-        """Generate Avery 8160 PDF for a single student."""
+        """Generate Avery 8160 PDF for a single student.
+
+        Optional query param ``label`` (1-30) selects which Avery 8160 slot
+        the label is printed on so a partially-used sheet can be reused.
+        """
         student = student_manager.get_student(sid)
         if not student:
             return "Student not found", 404
+
+        label_num = request.args.get('label', type=int)
+        if label_num is None:
+            return "Please choose a label position before generating the PDF.", 400
+        label_num = max(1, min(30, label_num))
         
         qr_blob = student_manager.get_student_qr_code(sid)
         if not qr_blob:
@@ -257,7 +266,7 @@ def register_qr_routes(app):
         # Convert bytes to BytesIO for PDF rendering
         qr_io = io.BytesIO(qr_blob) if qr_blob else None
         labels = [{'name': student[1], 'qr_blob': qr_io}]
-        buf = _build_avery_pdf(labels)
+        buf = _build_avery_pdf(labels, start_label=label_num)
         filename = f'student_{sid}_labels.pdf'
         return send_file(buf, mimetype='application/pdf', as_attachment=True, download_name=filename)
 
@@ -539,7 +548,14 @@ def register_qr_routes(app):
     def qr_print_individual():
         """Page to select a student and print their QR code."""
         students = student_manager.get_all_students()
-        return render_template("qr_print_individual.html", students=students)
+        requested_sid = request.args.get('sid', type=int)
+        valid_student_ids = {s[0] for s in students if s and len(s) > 0}
+        preselected_sid = requested_sid if requested_sid in valid_student_ids else None
+        return render_template(
+            "qr_print_individual.html",
+            students=students,
+            preselected_sid=preselected_sid,
+        )
 
     @app.route("/qr/print/all")
     @require_login
@@ -577,7 +593,7 @@ def register_qr_routes(app):
         return render_template("qr_print_all.html", students=students, assistants=assistants, books=books)
 
 
-def _build_avery_pdf(labels):
+def _build_avery_pdf(labels, start_label=1):
     """Build PDF for Avery 8160 (1" x 2.625" labels, 3 columns x 10 rows per page).
     
     Standard 8.5x11 paper layout:
@@ -587,7 +603,14 @@ def _build_avery_pdf(labels):
     - Top/Bottom margins: 0.5"
     
     Labels can have 'qr_blob' (BytesIO) or 'qr_path' (file path) for backward compatibility.
+
+    ``start_label`` (1-30) pads empty slots before the first real label so it
+    lands on the correct Avery 8160 position (numbered left-to-right, top-to-bottom).
     """
+    # Prepend empty placeholder slots so the first real label lands on start_label
+    if start_label > 1:
+        labels = [{}] * (start_label - 1) + list(labels)
+
     buffer = io.BytesIO()
     page_width, page_height = letter  # 8.5" x 11"
     c = canvas.Canvas(buffer, pagesize=(page_width, page_height))
@@ -669,6 +692,7 @@ def _build_avery_pdf(labels):
                         if max_chars > 3 and len(name) > max_chars:
                             name = name[:max_chars-3] + '...'
                     c.drawString(name_x, text_y, name)
+
                 else:
                     pass
                 idx += 1

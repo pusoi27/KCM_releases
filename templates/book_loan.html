@@ -213,6 +213,16 @@ function clearLoan(bookId, studentId, bookTitle, studentName) {
     checkoutBtn.disabled = !enabled;
   }
 
+  function normalizeBookQuery(raw) {
+    const value = String(raw || '').trim();
+    if (!value) return '';
+    const isbnCandidate = value.replace(/[^0-9Xx]/g, '').toUpperCase();
+    if (isbnCandidate.length === 10 || isbnCandidate.length === 13) {
+      return isbnCandidate;
+    }
+    return value;
+  }
+
   async function loadActiveStudents(forceReload = false) {
     if (activeStudentsLoaded && !forceReload) {
       return;
@@ -309,7 +319,7 @@ function clearLoan(bookId, studentId, bookTitle, studentName) {
   async function findBook() {
     showAlert('', 'info');
     setStatus('Searching...');
-    const q = bookSearch.value.trim();
+    const q = normalizeBookQuery(bookSearch.value);
     if (!q) { showAlert('Please enter a title or ISBN.', 'warning'); setStatus(''); return; }
 
     // Always search in local database only (no external API lookup)

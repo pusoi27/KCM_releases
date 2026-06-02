@@ -10,6 +10,9 @@ let lastActivityTime = Date.now();
 let lastAssistantsSnapshot = [];
 let dashboardRefreshToken = 0;
 let seatTimerHandles = [];
+let dashboardFetchInFlight = false;
+let dashboardPollTimer = null;
+const DASHBOARD_POLL_MS = 4000;
 
 function pageIsReadyForScan(){
   return document.visibilityState === 'visible' && document.hasFocus();
@@ -152,46 +155,59 @@ function sessionLimitSeconds(session){
 
 
 async function fetchDashboardData(){
+  if(dashboardFetchInFlight) return;
+  dashboardFetchInFlight = true;
   const refreshToken = ++dashboardRefreshToken;
-
-  const resAll=await fetch('/api/students/list');
-  const students=await resAll.json();
-  const resSess=await fetch('/api/sessions/active');
-  const sessions=await resSess.json();
-  const resAssist=await fetch('/api/assistants/list');
-  const assistants=await resAssist.json();
-  if (refreshToken !== dashboardRefreshToken) {
-    return;
-  }
-  if (Array.isArray(assistants)) {
-    lastAssistantsSnapshot = assistants;
-  }
-  
-  // Deduplicate active sessions by student id (safety against duplicates)
-  const seenActive = new Set();
-  const uniqueSessions = [];
-  for(const s of sessions){
-    const sid = s.id ?? s.student_id ?? s.sid;
-    if(sid == null) continue;
-    if(!seenActive.has(sid)){
-      seenActive.add(sid);
-      uniqueSessions.push(s);
+  try {
+    const resAll=await fetch('/api/students/list', { cache: 'no-store' });
+    const students=await resAll.json();
+    const resSess=await fetch('/api/sessions/active', { cache: 'no-store' });
+    const sessions=await resSess.json();
+    const resAssist=await fetch('/api/assistants/list', { cache: 'no-store' });
+    const assistants=await resAssist.json();
+    if (refreshToken !== dashboardRefreshToken) {
+      return;
     }
-  }
-  const activeIds = seenActive;
-  
-  // Filter lists to ensure exclusivity across columns
-  // Column 1 should show any non-active student (including checked out today)
-  const studentsAvailable = (students||[])
-    .filter(st => !activeIds.has(st.id));
-  const checkedOnly = (students||[])
-    .filter(st => st.status === 'checked' && !activeIds.has(st.id));
-  const daySessionCount = checkedOnly.length + uniqueSessions.length;
+    if (Array.isArray(assistants)) {
+      lastAssistantsSnapshot = assistants;
+    }
+    
+    // Deduplicate active sessions by student id (safety against duplicates)
+    const seenActive = new Set();
+    const uniqueSessions = [];
+    for(const s of sessions){
+      const sid = s.id ?? s.student_id ?? s.sid;
+      if(sid == null) continue;
+      if(!seenActive.has(sid)){
+        seenActive.add(sid);
+        uniqueSessions.push(s);
+      }
+    }
+    const activeIds = seenActive;
+    
+    // Filter lists to ensure exclusivity across columns
+    // Column 1 should show any non-active student (including checked out today)
+    const studentsAvailable = (students||[])
+      .filter(st => !activeIds.has(st.id));
+    const checkedOnly = (students||[])
+      .filter(st => st.status === 'checked' && !activeIds.has(st.id));
+    const daySessionCount = checkedOnly.length + uniqueSessions.length;
 
-  buildStudentList(studentsAvailable);
-  buildSeatGrid(uniqueSessions);
-  buildCheckedList(checkedOnly, daySessionCount);
-  buildAssistantsList(assistants);
+    buildStudentList(studentsAvailable);
+    buildSeatGrid(uniqueSessions);
+    buildCheckedList(checkedOnly, daySessionCount);
+    buildAssistantsList(assistants);
+  } finally {
+    dashboardFetchInFlight = false;
+  }
+}
+
+function startDashboardPolling(){
+  if(dashboardPollTimer) return;
+  dashboardPollTimer = setInterval(() => {
+    if(document.visibilityState !== 'visible') return;
+    fetchDashboardData();
+  }, DASHBOARD_POLL_MS);
 }
 // ---------- Column 2 (Staff) ----------
 function buildAssistantsList(assistants){
@@ -673,6 +689,12 @@ function buildCheckedList(data, daySessionCount){
 }
 
 fetchDashboardData();
+startDashboardPolling();
+document.addEventListener('visibilitychange', () => {
+  if(document.visibilityState === 'visible'){
+    fetchDashboardData();
+  }
+});
 
 // ---------------- Idle Fullscreen Mode ----------------
 function recordActivity(){
@@ -751,6 +773,7 @@ resetIdleTimer();
   let finalizeTimer = null;
   let forceFinalizeTimer = null;
   let lastKeyTs = 0;
+  let redirectInProgress = false;
   const IDLE_MS = 180; // idle gap that indicates scan end
   const FORCE_MS = 1000; // max wait before forcing finalize
   const KEEP_FOCUS_MS = 2000; // refocus interval to keep page ready
@@ -858,6 +881,72 @@ resetIdleTimer();
       .trim();
   }
 
+  function normalizeIsbnToken(str){
+    return String(str || '').replace(/[^0-9Xx]/g, '').toUpperCase();
+  }
+
+  function isValidIsbn10(token){
+    if(!token || token.length !== 10) return false;
+    const body = token.slice(0, 9);
+    const check = token[9];
+    if(!/^\d{9}$/.test(body)) return false;
+    if(!/^(\d|X)$/.test(check)) return false;
+    let sum = 0;
+    for(let i = 0; i < 9; i++){
+      sum += (10 - i) * Number(body[i]);
+    }
+    sum += (check === 'X' ? 10 : Number(check));
+    return (sum % 11) === 0;
+  }
+
+  function isValidIsbn13(token){
+    if(!token || token.length !== 13 || !/^\d{13}$/.test(token)) return false;
+    let sum = 0;
+    for(let i = 0; i < 12; i++){
+      const n = Number(token[i]);
+      sum += (i % 2 === 0) ? n : n * 3;
+    }
+    const expected = (10 - (sum % 10)) % 10;
+    return expected === Number(token[12]);
+  }
+
+  function looksLikeDeviceQrPayload(data){
+    const txt = String(data || '').toUpperCase();
+    // Device QR payloads use MAT:/MATERIAL patterns and/or Code:MAT-...
+    if(/(?:^|\b)(MAT|MATERIAL)\s*[:;=#-]?\s*\d+\b/.test(txt)) return true;
+    if(/\bCODE\s*[:;=]\s*MAT-[A-Z0-9-]+\b/.test(txt)) return true;
+    return false;
+  }
+
+  function extractValidIsbn(data){
+    const txt = String(data || '').trim();
+    if(!txt) return null;
+
+    // Prefer explicit ISBN labels when present.
+    const labeled = txt.match(/ISBN(?:-1[03])?\s*[:;=]?\s*([0-9Xx\-\s]{10,20})/i);
+    if(labeled){
+      const token = normalizeIsbnToken(labeled[1]);
+      if((token.length === 10 && isValidIsbn10(token)) || (token.length === 13 && isValidIsbn13(token))){
+        return token;
+      }
+    }
+
+    // Fallback: whole payload sanitized as ISBN barcode content.
+    const token = normalizeIsbnToken(txt);
+    if((token.length === 10 && isValidIsbn10(token)) || (token.length === 13 && isValidIsbn13(token))){
+      return token;
+    }
+    return null;
+  }
+
+  function routeToLoanPage(url, reason){
+    if(redirectInProgress) return;
+    redirectInProgress = true;
+    logDebug(`ROUTE -> ${url} (${reason})`);
+    showQuickToast(`Scanner shortcut: opening ${reason}...`);
+    setTimeout(() => { window.location.href = url; }, 120);
+  }
+
   function deduplicateRepeatingDigits(numStr){
     if(!numStr || numStr.length < 2) return numStr;
     const uniqCount = new Set(numStr.split('')).size;
@@ -905,6 +994,20 @@ resetIdleTimer();
     const data = normalizePayload(raw);
     if(!data) return;
     logDebug(`RAW=${JSON.stringify(raw)}`);
+
+    // Hidden shortcut routing from class window:
+    // - Device QR payloads -> Device Loan page
+    // - Valid ISBN scans -> Book Loan page
+    if(looksLikeDeviceQrPayload(data)){
+      routeToLoanPage('/materials/loan', 'Device Loan');
+      return;
+    }
+
+    const scannedIsbn = extractValidIsbn(data);
+    if(scannedIsbn){
+      routeToLoanPage('/books/loan', 'Book Loan');
+      return;
+    }
 
     // Parse type and id (supports ID and ASST)
     let type = null;
@@ -1039,7 +1142,7 @@ resetIdleTimer();
   }
 
   function onKeyDown(e){
-    if (!isActiveClassWindow || !pageIsReadyForScan()) return;
+    if (!isActiveClassWindow || !pageIsReadyForScan() || redirectInProgress) return;
     // Block disruptive browser shortcuts (downloads/print/save/open/close)
     if (e.ctrlKey) {
       const kk = (e.key || '').toLowerCase();
