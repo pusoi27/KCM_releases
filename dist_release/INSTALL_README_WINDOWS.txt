@@ -98,7 +98,7 @@ BEST PRACTICES
 --------------
 - Let Stdytime close normally so the final database sync can complete.
 - Do not shut down Windows immediately after closing the app if a sync is in progress.
-- If using multiple computers, make sure only one machine is actively using the shared Google Drive database backup workflow at a time.
+- If using multiple computers, Stdytime only takes the cloud lease during sync events; the lease is released right after the OneDrive/Google Drive backup copy is updated.
 
 TROUBLESHOOTING
 ---------------

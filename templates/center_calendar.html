@@ -335,7 +335,7 @@
               {% endfor %}
             </div>
             {% if not (day_meta and day_meta.is_center_closed) and loading_meta.capacity > 0 %}
-              <div class="loading-summary">A/M + Virtual load: {{ loading_meta.occupied }}/{{ loading_meta.capacity }}</div>
+              <div class="loading-summary">Seats Available: {{ loading_meta.free }}</div>
             {% endif %}
             {% if not (day_meta and day_meta.is_center_closed) and loading_meta.over_capacity > 0 %}
               <div class="over-capacity-warning" title="This slot exceeds available Assisted/Monitored/Virtual loading by {{ loading_meta.over_capacity }} student(s).">

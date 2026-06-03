@@ -598,19 +598,11 @@ function buildSeatGrid(activeSessions){
             try {
               const res = await fetch(`/api/students/stop/${s.id}`,{method:'POST'});
               const j = await res.json().catch(()=>({}));
-              if(!res.ok){
-                showQuickToast(j.error || 'Failed to stop session', true);
-              } else if(j && j.checkout_email_status === 'sent'){
+              if(res.ok && j && j.checkout_email_status === 'sent'){
                 showCheckoutEmailConfirmation(s.name);
-              } else if(j && j.checkout_email_status === 'disabled'){
-                showQuickToast(j.checkout_email_message || 'Checkout email is unavailable', true);
-              } else if(j && j.checkout_email_status === 'no_email'){
-                showQuickToast('No email on file', true);
-              } else if(j && (j.checkout_email_status === 'failed' || j.checkout_email_status === 'error')){
-                showQuickToast(j.checkout_email_message || 'Checkout email failed', true);
               }
             } catch(err){
-              showQuickToast('Failed to stop session', true);
+              console.debug('[dashboard] student checkout request failed', err);
             } finally {
               fetchDashboardData();
             }
@@ -662,19 +654,11 @@ function buildSeatGrid(activeSessions){
           try {
             const res = await fetch(`/api/students/stop/${s.id}`, {method:'POST'});
             const j = await res.json().catch(()=>({}));
-            if(!res.ok){
-              showQuickToast(j.error || 'Failed to stop session', true);
-            } else if(j && j.checkout_email_status === 'sent'){
+            if(res.ok && j && j.checkout_email_status === 'sent'){
               showCheckoutEmailConfirmation(s.name);
-            } else if(j && j.checkout_email_status === 'disabled'){
-              showQuickToast(j.checkout_email_message || 'Checkout email is unavailable', true);
-            } else if(j && j.checkout_email_status === 'no_email'){
-              showQuickToast('No email on file', true);
-            } else if(j && (j.checkout_email_status === 'failed' || j.checkout_email_status === 'error')){
-              showQuickToast(j.checkout_email_message || 'Checkout email failed', true);
             }
           } catch(err){
-            showQuickToast('Failed to stop session', true);
+            console.debug('[dashboard] overflow student checkout request failed', err);
           } finally {
             fetchDashboardData();
           }
@@ -1123,20 +1107,15 @@ resetIdleTimer();
       const j = await res.json().catch(()=>({}));
       if(!res.ok){
         console.warn('[dashboard][scan] toggle failed', j);
-        showQuickToast(`ID ${ident}: ${j.error || 'Toggle failed'}`, true);
         logDebug(`TOGGLE FAIL id=${ident} status=${res.status} body=${JSON.stringify(j)}`);
       } else {
         const action = (j && j.action) ? (j.action==='started'?'Started':'Checked Out') : 'Updated';
-        showQuickToast(`${j.name||('Student '+ident)} — ${action}`);
+        if(j && j.action === 'started'){
+          showQuickToast(`${j.name||('Student '+ident)} — ${action}`);
+        }
         if(j && j.action === 'checked_out'){
           if(j.checkout_email_status === 'sent'){
             showCheckoutEmailConfirmation(j.name || ('Student ' + ident));
-          } else if(j.checkout_email_status === 'disabled'){
-            showQuickToast(j.checkout_email_message || 'Checkout email is unavailable', true);
-          } else if(j.checkout_email_status === 'no_email'){
-            showQuickToast('No email on file', true);
-          } else if(j.checkout_email_status === 'failed' || j.checkout_email_status === 'error'){
-            showQuickToast(j.checkout_email_message || 'Checkout email failed', true);
           }
         }
         logDebug(`TOGGLE OK id=${ident} action=${action}`);
@@ -1144,7 +1123,6 @@ resetIdleTimer();
       fetchDashboardData();
     }catch(err){
       console.error('[dashboard] toggle error', err);
-      showQuickToast('Error toggling session for ID '+ident, true);
       logDebug(`ERROR id=${ident} msg=${err.message}`);
     }
 

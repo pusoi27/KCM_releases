@@ -29,7 +29,6 @@ load_dotenv()
 from modules.database import (
     init_db,
     DB_PATH,
-    GDriveLockError,
     get_db_config_status,
     record_app_version,
     get_version_compatibility_warning,
@@ -342,14 +341,6 @@ app.config['MAX_PHOTO_BYTES'] = _parse_env_int('MAX_PHOTO_MB', 5) * 1024 * 1024
 try:
     init_db()
     print(f"[startup] Database initialized at: {DB_PATH}")
-except GDriveLockError as lock_err:
-    print(
-        f"\n[startup] BLOCKED: {lock_err}\n"
-        "StdyTime cannot start while another machine is using the database.\n"
-        "Close the app on the other machine, then restart here.",
-        file=sys.stderr,
-    )
-    sys.exit(1)
 except Exception as db_init_error:
     print(
         f"[startup] FATAL: Database initialization failed for DB_PATH='{DB_PATH}': {db_init_error}",

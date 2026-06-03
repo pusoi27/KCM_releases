@@ -4,7 +4,7 @@ from modules import student_manager, assistant_manager, timer_manager, auth_mana
 from modules import server_cache
 from modules.email_manager import get_email_manager, render_branded_email_shell, resolve_center_name
 from modules import instructor_profile_manager
-from modules.database import DB_PATH
+from modules.database import DB_PATH, GDRIVE_SYNC_PATH, sync_to_gdrive
 from modules.utils import duration_seconds, time_now
 from datetime import datetime
 import base64
@@ -32,6 +32,48 @@ def _trace_staff_duty(event: str, **fields) -> None:
         print(f"[staff-duty-trace] {event} {details}")
     else:
         print(f"[staff-duty-trace] {event}")
+
+
+def _push_cloud_backup_after_staff_change(aid: int, action: str) -> None:
+    """Best-effort immediate cloud push after staff duty writes.
+
+    This reduces stale cross-machine duty state when a second machine starts
+    before the 9-minute background sync cycle runs.
+    """
+    try:
+        if not GDRIVE_SYNC_PATH:
+            _trace_staff_duty("cloud_push_skipped_no_path", aid=aid, action=action)
+            return
+
+        pushed = sync_to_gdrive(
+            DB_PATH,
+            GDRIVE_SYNC_PATH,
+            retries=1,
+            retry_delay=1,
+            silent=True,
+        )
+        _trace_staff_duty("cloud_push_result", aid=aid, action=action, pushed=bool(pushed))
+    except Exception as exc:
+        _trace_staff_duty("cloud_push_error", aid=aid, action=action, error=str(exc))
+
+
+def _push_cloud_backup_after_student_change(student_id: int, action: str, source: str) -> None:
+    """Best-effort immediate cloud push after main-class checkin/checkout writes."""
+    try:
+        if not GDRIVE_SYNC_PATH:
+            _trace_column3("cloud_push_skipped_no_path", sid=student_id, action=action, source=source)
+            return
+
+        pushed = sync_to_gdrive(
+            DB_PATH,
+            GDRIVE_SYNC_PATH,
+            retries=1,
+            retry_delay=1,
+            silent=True,
+        )
+        _trace_column3("cloud_push_result", sid=student_id, action=action, source=source, pushed=bool(pushed))
+    except Exception as exc:
+        _trace_column3("cloud_push_error", sid=student_id, action=action, source=source, error=str(exc))
 
 
 def _students_list_cache_key() -> str:
@@ -455,6 +497,7 @@ def register_api_routes(app):
         if not student:
             return jsonify({"error": "Student not found"}), 404
         timer_manager.start_session(sid)
+        _push_cloud_backup_after_student_change(sid, "checkin", "api_students_start")
         server_cache.invalidate(_students_list_cache_key())
         return jsonify({"status": "started"})
 
@@ -493,6 +536,7 @@ def register_api_routes(app):
                     (end, duration, sess_id),
                 )
                 conn.commit()
+                _push_cloud_backup_after_student_change(sid, "checkout", "api_students_stop")
                 _trace_column3(
                     "checkout_db_updated",
                     sid=sid,
@@ -696,6 +740,7 @@ def register_api_routes(app):
                             (end, duration, sess_id),
                         )
                         conn.commit()
+                        _push_cloud_backup_after_student_change(student_id, "checkout", "api_sessions_toggle")
                         _trace_column3(
                             "toggle_checkout_db_updated",
                             student_id=student_id,
@@ -725,6 +770,7 @@ def register_api_routes(app):
             else:
                 # Start a new session
                 timer_manager.start_session(student_id)
+                _push_cloud_backup_after_student_change(student_id, "checkin", "api_sessions_toggle")
                 server_cache.invalidate(_students_list_cache_key())
                 return jsonify({
                     "action": "started",
@@ -910,6 +956,7 @@ def register_api_routes(app):
                         (now.isoformat(), duration, sess_id),
                     )
                     conn.commit()
+                    _push_cloud_backup_after_staff_change(aid, "checkout")
                     server_cache.invalidate(_assistants_duty_cache_key())
                     _trace_staff_duty("select_checkout_ok", aid=aid, sess_id=sess_id, duration=duration)
                     return jsonify({"success": True, "on_duty": False, "duration": duration})
@@ -920,6 +967,7 @@ def register_api_routes(app):
                         (aid, now.isoformat()),
                     )
                     conn.commit()
+                    _push_cloud_backup_after_staff_change(aid, "checkin")
                     server_cache.invalidate(_assistants_duty_cache_key())
                     _trace_staff_duty("select_checkin_ok", aid=aid)
                     return jsonify({"success": True, "on_duty": True})

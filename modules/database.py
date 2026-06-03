@@ -57,10 +57,6 @@ _SHUTDOWN_SYNC_COMPLETED = False
 _SHUTDOWN_WAIT_POPUP_SHOWN = False
 _SHUTDOWN_SYNC_LOCK = threading.Lock()
 _CLOUD_SYNC_RUNTIME_READY = False
-_GDRIVE_LOCK_ACQUIRED = False
-_LOCK_HEARTBEAT_STOP = threading.Event()
-_LOCK_HEARTBEAT_THREAD: threading.Thread | None = None
-_LOCK_HEARTBEAT_INTERVAL_SECONDS = 20
 
 
 def _set_last_sync_error(message: str) -> None:
@@ -927,7 +923,19 @@ def sync_from_gdrive(local_path: str, gdrive_path: str, force: bool = False) -> 
     if not os.path.exists(gdrive_path):
         _set_last_sync_error(f"Cloud backup database was not found at: {gdrive_path}")
         return False
+    lock_acquired = False
     try:
+        lock_acquired = acquire_gdrive_lock(
+            gdrive_path,
+            timeout_minutes=60,
+            wait_seconds=0,
+            poll_seconds=3,
+            lease_seconds=300,
+        )
+        if not lock_acquired:
+            _set_last_sync_error("Cloud backup lease is not available.")
+            return False
+
         cloud_name = _cloud_label(gdrive_path)
         gdrive_mtime = os.path.getmtime(gdrive_path)
         local_mtime = os.path.getmtime(local_path) if os.path.exists(local_path) else 0
@@ -947,6 +955,9 @@ def sync_from_gdrive(local_path: str, gdrive_path: str, force: bool = False) -> 
         print(f"[sync] WARNING: pull from GDrive failed: {exc}", file=sys.stderr)
         _set_last_sync_error(str(exc))
         return False
+    finally:
+        if lock_acquired:
+            release_gdrive_lock(gdrive_path)
 
 
 def sync_to_gdrive(local_path: str, gdrive_path: str, retries: int = 0, retry_delay: int = 5, silent: bool = False) -> bool:
@@ -968,8 +979,21 @@ def sync_to_gdrive(local_path: str, gdrive_path: str, retries: int = 0, retry_de
         return False
     cloud_name = _cloud_label(gdrive_path)
     attempts = retries + 1
+    lock_acquired = False
     for attempt in range(1, attempts + 1):
         try:
+            if not lock_acquired:
+                lock_acquired = acquire_gdrive_lock(
+                    gdrive_path,
+                    timeout_minutes=60,
+                    wait_seconds=0,
+                    poll_seconds=3,
+                    lease_seconds=300,
+                )
+                if not lock_acquired:
+                    _set_last_sync_error("Cloud backup lease is not available.")
+                    return False
+
             _sqlite_backup(local_path, gdrive_path)
             if not silent:
                 summary = _db_summary(local_path)
@@ -998,6 +1022,10 @@ def sync_to_gdrive(local_path: str, gdrive_path: str, retries: int = 0, retry_de
                 print(f"[sync] WARNING: push to GDrive failed: {exc}", file=sys.stderr)
             _set_last_sync_error(str(exc))
             return False
+        finally:
+            if lock_acquired:
+                release_gdrive_lock(gdrive_path)
+                lock_acquired = False
     return False
 
 
@@ -1057,39 +1085,6 @@ def _parse_lock_age_seconds(info: dict) -> float:
         return float("inf")
 
 
-def _start_lock_heartbeat(lock_file: str, lease_seconds: int) -> None:
-    """Keep cloud lock fresh while this process is alive."""
-    global _LOCK_HEARTBEAT_THREAD
-
-    if _LOCK_HEARTBEAT_THREAD and _LOCK_HEARTBEAT_THREAD.is_alive():
-        return
-
-    _LOCK_HEARTBEAT_STOP.clear()
-    interval = max(5, min(max(15, int(lease_seconds)) // 3, 30))
-
-    def _loop() -> None:
-        while not _LOCK_HEARTBEAT_STOP.wait(interval):
-            try:
-                info = _read_lock_info(lock_file)
-                if not info:
-                    continue
-                if info.get("machine") != socket.gethostname() or int(info.get("pid") or -1) != os.getpid():
-                    continue
-                info["heartbeat_at"] = datetime.now(timezone.utc).isoformat()
-                info.setdefault("lease_seconds", int(max(15, lease_seconds)))
-
-                tmp_file = lock_file + ".tmp"
-                with open(tmp_file, "w", encoding="utf-8") as fh:
-                    json.dump(info, fh, indent=2)
-                os.replace(tmp_file, lock_file)
-            except Exception:
-                # Heartbeat failures are tolerated; stale timeout + takeover handles recovery.
-                continue
-
-    _LOCK_HEARTBEAT_THREAD = threading.Thread(target=_loop, daemon=True, name="cloud-lock-heartbeat")
-    _LOCK_HEARTBEAT_THREAD.start()
-
-
 def acquire_gdrive_lock(
     gdrive_sync_path: str,
     timeout_minutes: int = 60,
@@ -1099,7 +1094,7 @@ def acquire_gdrive_lock(
     lease_seconds: int = 90,
 ) -> bool:
     """
-    Write a lock file to GDrive claiming this machine owns the DB.
+    Write a short-lived lock file for a single cloud sync event.
     Raises GDriveLockError if another live machine holds the lock.
     Returns False if gdrive_sync_path is not set (no-op).
     """
@@ -1123,7 +1118,6 @@ def acquire_gdrive_lock(
             fd = os.open(lock_file, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
             with os.fdopen(fd, "w", encoding="utf-8") as fh:
                 json.dump(lock_data, fh, indent=2)
-            _start_lock_heartbeat(lock_file, lease_seconds)
             print(f"[lock] Cloud lock acquired on {lock_data['machine']} (PID {lock_data['pid']})")
             return True
         except FileExistsError:
@@ -1138,7 +1132,6 @@ def acquire_gdrive_lock(
 
             # Same process already owns lock.
             if holder == socket.gethostname() and int(pid or -1) == os.getpid():
-                _start_lock_heartbeat(lock_file, lease_seconds)
                 return True
 
             # Stale lock takeover.
@@ -1184,7 +1177,6 @@ def release_gdrive_lock(gdrive_sync_path: str) -> bool:
     if not gdrive_sync_path:
         return False
     lock_file = _lock_path(gdrive_sync_path)
-    _LOCK_HEARTBEAT_STOP.set()
     if not os.path.exists(lock_file):
         return False
     try:
@@ -1352,8 +1344,8 @@ _SYNC_INTERVAL = _FIXED_SYNC_INTERVAL_MINUTES
 DB_PATH = _resolve_db_path()
 
 def _initialize_cloud_sync_runtime() -> None:
-    """Acquire cloud lease, then start sync pull/push runtime exactly once."""
-    global _CLOUD_SYNC_RUNTIME_READY, _GDRIVE_LOCK_ACQUIRED
+    """Start cloud sync runtime without holding the cloud lease open."""
+    global _CLOUD_SYNC_RUNTIME_READY
     if _CLOUD_SYNC_RUNTIME_READY:
         return
 
@@ -1362,28 +1354,15 @@ def _initialize_cloud_sync_runtime() -> None:
         _CLOUD_SYNC_RUNTIME_READY = True
         return
 
-    wait_seconds = max(0, int(os.getenv("CLOUD_LOCK_WAIT_SECONDS", "45") or "45"))
-    poll_seconds = max(1, int(os.getenv("CLOUD_LOCK_POLL_SECONDS", "3") or "3"))
-    lease_seconds = max(15, int(os.getenv("CLOUD_LOCK_LEASE_SECONDS", "90") or "90"))
+    startup_pull_from_gdrive = bool(_cfg.get("startup_pull_from_gdrive", False))
+    if startup_pull_from_gdrive:
+        pulled = sync_from_gdrive(DB_PATH, GDRIVE_SYNC_PATH, force=True)
+        if not pulled:
+            print(f"[sync] Startup override skipped: {_cloud_label(GDRIVE_SYNC_PATH)} DB not found/unavailable.")
 
-    acquired = acquire_gdrive_lock(
-        GDRIVE_SYNC_PATH,
-        timeout_minutes=60,
-        wait_seconds=wait_seconds,
-        poll_seconds=poll_seconds,
-        lease_seconds=lease_seconds,
-    )
-    if not acquired:
-        raise GDriveLockError("Could not acquire cloud DB lease lock.")
-
-    _GDRIVE_LOCK_ACQUIRED = True
-
-    # Once lock is held, pull latest cloud DB and start periodic push loop.
-    pulled = sync_from_gdrive(DB_PATH, GDRIVE_SYNC_PATH, force=True)
-    if not pulled:
-        print(f"[sync] Startup override skipped: {_cloud_label(GDRIVE_SYNC_PATH)} DB not found/unavailable.")
     _start_background_sync(DB_PATH, GDRIVE_SYNC_PATH, _SYNC_INTERVAL)
     _CLOUD_SYNC_RUNTIME_READY = True
+    print("[sync] Cloud sync runtime started.")
 
 # On clean exit: release lock then do one final push
 def _sync_on_exit():
@@ -1405,7 +1384,7 @@ def init_db():
     if db_parent:
         os.makedirs(db_parent, exist_ok=True)
 
-    # Enforce single active machine lease before cloud sync runtime starts.
+    # Start cloud sync runtime; lease is acquired only around sync events.
     _initialize_cloud_sync_runtime()
 
     conn = sqlite3.connect(DB_PATH)

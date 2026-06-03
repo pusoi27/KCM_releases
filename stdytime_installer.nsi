@@ -139,8 +139,9 @@ Function .onInstSuccess
   ; End-of-install cleanup: kill any process listening on 127.0.0.1:5000.
   nsExec::ExecToLog 'cmd /c for /f "tokens=5" %P in (''netstat -ano ^| findstr /R /C:"127.0.0.1:5000"'') do taskkill /F /PID %P >nul 2>&1'
 
-  ; Prompt restart and first-time environment requirement.
-  MessageBox MB_OK|MB_ICONINFORMATION "Installation completed.$\r$\nPlease restart your machine for the settings to take effect.$\r$\nThis installer works only in a Windows environment with OneDrive setup."
+  ; Installation completed without a restart prompt.
+  DetailPrint "Installation completed."
+  DetailPrint "This installer works only in a Windows environment with OneDrive setup."
 FunctionEnd
 
 Section "Stdytime (required)" SecMain
