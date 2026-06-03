@@ -21,6 +21,7 @@ import logging
 import atexit
 import threading
 import ctypes
+import signal
 
 # Load environment variables from .env file
 load_dotenv()
@@ -32,6 +33,7 @@ from modules.database import (
     get_db_config_status,
     record_app_version,
     get_version_compatibility_warning,
+    ensure_blocking_cloud_flush_before_exit,
 )
 from modules import student_manager, timer_manager, qr_generator, assistant_manager, reports, auth_manager, license_manager
 from modules import instructor_profile_manager
@@ -98,6 +100,65 @@ _POST_LAUNCH_STARTUP_DONE = threading.Event()
 _STARTUP_MINIMIZE_DONE = False
 _STARTUP_MINIMIZE_TIMER = None
 _STARTUP_MINIMIZE_LOCK = threading.Lock()
+_SHUTDOWN_FLUSH_STARTED = threading.Event()
+_CONSOLE_CTRL_HANDLER_REF = None
+
+
+def _flush_cloud_before_shutdown_once(reason: str) -> bool:
+    """Run blocking cloud flush once across all shutdown hooks."""
+    if _SHUTDOWN_FLUSH_STARTED.is_set():
+        return True
+    _SHUTDOWN_FLUSH_STARTED.set()
+    try:
+        print(f"[shutdown] Starting blocking cloud flush ({reason})...")
+        ok = ensure_blocking_cloud_flush_before_exit(
+            status_after_seconds=2,
+            retry_delay_seconds=2,
+        )
+        print("[shutdown] Blocking cloud flush completed.")
+        return ok
+    except Exception as exc:
+        print(f"[shutdown] ERROR during blocking cloud flush: {exc}", file=sys.stderr)
+        return False
+
+
+def _install_shutdown_flush_hooks() -> None:
+    """Install signal/console hooks to flush cloud backup before process exit."""
+
+    def _signal_handler(signum, _frame):
+        _flush_cloud_before_shutdown_once(f"signal {signum}")
+        raise SystemExit(0)
+
+    for sig_name in ("SIGINT", "SIGTERM", "SIGBREAK"):
+        sig = getattr(signal, sig_name, None)
+        if sig is None:
+            continue
+        try:
+            signal.signal(sig, _signal_handler)
+        except Exception:
+            pass
+
+    # Windows console close/logoff/shutdown events are not always surfaced via
+    # Python signal handlers, so attach a native console control handler.
+    if os.name == 'nt':
+        try:
+            kernel32 = ctypes.windll.kernel32
+            HANDLER_ROUTINE = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_uint)
+            CTRL_CLOSE_EVENT = 2
+            CTRL_LOGOFF_EVENT = 5
+            CTRL_SHUTDOWN_EVENT = 6
+
+            @HANDLER_ROUTINE
+            def _console_ctrl_handler(ctrl_type):
+                if ctrl_type in (CTRL_CLOSE_EVENT, CTRL_LOGOFF_EVENT, CTRL_SHUTDOWN_EVENT):
+                    _flush_cloud_before_shutdown_once(f"console ctrl {ctrl_type}")
+                return False
+
+            global _CONSOLE_CTRL_HANDLER_REF
+            _CONSOLE_CTRL_HANDLER_REF = _console_ctrl_handler
+            kernel32.SetConsoleCtrlHandler(_CONSOLE_CTRL_HANDLER_REF, True)
+        except Exception as exc:
+            print(f"[shutdown] WARNING: console close hook not installed: {exc}", file=sys.stderr)
 
 
 def _minimize_console_window_once():
@@ -253,6 +314,7 @@ def _close_development_trace():
 
 _setup_development_trace(app)
 atexit.register(_close_development_trace)
+_install_shutdown_flush_hooks()
 
 _raw_secret = os.getenv('SECRET_KEY')
 if not _raw_secret:
@@ -1063,7 +1125,6 @@ threading.Thread(
 @app.route("/exit", methods=["GET", "POST"])
 def exit_app():
     """Handle application exit/shutdown with graceful browser window closure."""
-    import threading
     import time
 
     global _EXIT_SHUTDOWN_IN_PROGRESS
@@ -1087,13 +1148,8 @@ def exit_app():
     def delayed_shutdown(shutdown_callable):
         time.sleep(0.8)
 
-        # Hard-stop guard in case graceful shutdown hangs.
-        def hard_stop_guard():
-            time.sleep(4)
-            print("[EXIT] Force-stopping application process...")
-            os._exit(0)
-
-        threading.Thread(target=hard_stop_guard, daemon=True, name="exit-hard-stop").start()
+        # Explicitly block here until cloud flush succeeds before any process exit.
+        _flush_cloud_before_shutdown_once("/exit route")
 
         if callable(shutdown_callable):
             try:

@@ -9,7 +9,7 @@ let isFullscreenMode = false;
 let lastActivityTime = Date.now();
 let lastAssistantsSnapshot = [];
 let dashboardRefreshToken = 0;
-let seatTimerHandles = [];
+let activeSeatCards = new Map(); // student_id -> { card, timerId }
 let dashboardFetchInFlight = false;
 let dashboardPollTimer = null;
 const DASHBOARD_POLL_MS = 4000;
@@ -509,107 +509,123 @@ function toggleStaffAndRefresh(assistantId, rowEl) {
 
 }
 
-// ---------- Column 2 ----------
+// ---------- Column 2 ----------
 function buildSeatGrid(activeSessions){
-  seatTimerHandles.forEach(timerId => clearInterval(timerId));
-  seatTimerHandles = [];
-
   const grid=document.getElementById("seatGrid");
-  grid.innerHTML="";
   document.getElementById("activeCount").innerText=
     `(${activeSessions.length} active)`;
   const seatLimit = isFullscreenMode ? SEAT_LIMIT_FULLSCREEN : SEAT_LIMIT;
   const seatHeight = isFullscreenMode ? "180px" : "170px";
+  const fontSize = isFullscreenMode ? '42px' : '32px';
+
+  // Identify which student IDs are still active
+  const incomingIds = new Set();
+  activeSessions.forEach(s => {
+    const sid = s.id ?? s.student_id ?? s.sid;
+    if(sid != null) incomingIds.add(sid);
+  });
+
+  // Clear timers only for sessions that ended
+  for(const [sid, handle] of activeSeatCards.entries()){
+    if(!incomingIds.has(sid)){
+      clearInterval(handle.timerId);
+      activeSeatCards.delete(sid);
+    }
+  }
+
+  // Rebuild grid, reusing existing card DOM nodes for ongoing sessions
+  grid.innerHTML="";
+  const newMap = new Map();
+
   for(let i=0;i<seatLimit;i++){
-    const seatLabel="Seat "+(i+1);
+    const seatLabel="Seat "+(i+1);
     const col=document.createElement("div"); col.className="";
     const s=activeSessions[i];
     if(s){
-      const start=new Date((s.start_time||"").replace(/\u202f|\u2009/g," "));
-      const limit = sessionLimitSeconds(s);
-      const badges = [];
-      if (s.subject) {  // Only add subject badge if subject is not empty
-        badges.push(s.subject);
-      }
-      if (s.book_loaned) {
-        badges.push('B');
-      }
-      if (s.device_loaned) {
-        badges.push('D');
-      }
-      const badgeText = badges.join(', ');
-      const fontSize = isFullscreenMode ? '42px' : '32px';
+      const sid = s.id ?? s.student_id ?? s.sid;
+      const existing = activeSeatCards.get(sid);
 
-      const card=document.createElement("div");
-      card.className="card shadow-sm seat-card";
-      card.style.minHeight=seatHeight;
-      card.style.height=seatHeight;
-      card.style.display="flex";
-      card.style.flexDirection="column";
+      if(existing){
+        // Reuse existing card — timer keeps running, no flicker
+        col.appendChild(existing.card);
+        grid.appendChild(col);
+        newMap.set(sid, existing);
+      } else {
+        // New session: build card and start timer
+        const start=new Date((s.start_time||"").replace(/\u202f|\u2009/g," "));
+        const limit = sessionLimitSeconds(s);
 
-      // Build photo HTML
-      const photoSrc = s.photo_data_uri || s.photo_url || '';
-      const safeName = escapeHtmlAttr(s.name || 'Student');
-      const safePhotoSrc = escapeHtmlAttr(photoSrc);
-      const photoHtml = photoSrc
-        ? `<div style="width:48px;height:48px;position:relative;flex-shrink:0;">
-             <img src="${safePhotoSrc}" alt="${safeName}" style="width:48px;height:48px;object-fit:cover;border-radius:50%;border:2px solid #dee2e6;display:block;">
-             <div style="width:48px;height:48px;border-radius:50%;border:2px solid #dee2e6;background:#e9ecef;display:none;align-items:center;justify-content:center;"><i class="bi bi-person" style="font-size:1.4em;color:#adb5bd;"></i></div>
-           </div>`
-        : `<div style="width:48px;height:48px;border-radius:50%;border:2px solid #dee2e6;background:#e9ecef;display:flex;align-items:center;justify-content:center;flex-shrink:0;"><i class="bi bi-person" style="font-size:1.4em;color:#adb5bd;"></i></div>`;
+        const card=document.createElement("div");
+        card.className="card shadow-sm seat-card";
+        card.style.minHeight=seatHeight;
+        card.style.height=seatHeight;
+        card.style.display="flex";
+        card.style.flexDirection="column";
 
-      // Build subjects badges HTML
-      const subjectsList = (s.subjects && s.subjects.length > 0) ? s.subjects : (s.subject ? [s.subject] : []);
-      const subjectsHtml = subjectsList.length > 0
-        ? subjectsList.map(sub => subjectBadgeHtml(sub)).join('')
-        : '';
+        // Build photo HTML
+        const photoSrc = s.photo_data_uri || s.photo_url || '';
+        const safeName = escapeHtmlAttr(s.name || 'Student');
+        const safePhotoSrc = escapeHtmlAttr(photoSrc);
+        const photoHtml = photoSrc
+          ? `<div style="width:48px;height:48px;position:relative;flex-shrink:0;">
+               <img src="${safePhotoSrc}" alt="${safeName}" style="width:48px;height:48px;object-fit:cover;border-radius:50%;border:2px solid #dee2e6;display:block;">
+               <div style="width:48px;height:48px;border-radius:50%;border:2px solid #dee2e6;background:#e9ecef;display:none;align-items:center;justify-content:center;"><i class="bi bi-person" style="font-size:1.4em;color:#adb5bd;"></i></div>
+             </div>`
+          : `<div style="width:48px;height:48px;border-radius:50%;border:2px solid #dee2e6;background:#e9ecef;display:flex;align-items:center;justify-content:center;flex-shrink:0;"><i class="bi bi-person" style="font-size:1.4em;color:#adb5bd;"></i></div>`;
 
-      card.innerHTML=`
-        <div class="d-flex align-items-center gap-2 p-2">
-          ${photoHtml}
-          <div class="flex-grow-1 overflow-hidden">
-            <div class="fw-semibold text-truncate" style="font-size:${fontSize}; line-height:1.2;">${s.name}</div>
-            ${subjectsHtml ? `<div class="mt-1">${subjectsHtml}</div>` : ''}
+        // Build subjects badges HTML
+        const subjectsList = (s.subjects && s.subjects.length > 0) ? s.subjects : (s.subject ? [s.subject] : []);
+        const subjectsHtml = subjectsList.length > 0
+          ? subjectsList.map(sub => subjectBadgeHtml(sub)).join('')
+          : '';
+
+        card.innerHTML=`
+          <div class="d-flex align-items-center gap-2 p-2">
+            ${photoHtml}
+            <div class="flex-grow-1 overflow-hidden">
+              <div class="fw-semibold text-truncate" style="font-size:${fontSize}; line-height:1.2;">${s.name}</div>
+              ${subjectsHtml ? `<div class="mt-1">${subjectsHtml}</div>` : ''}
+            </div>
           </div>
-        </div>
-        <div class="flex-grow-1 d-flex align-items-center justify-content-center">
-          <div class="timer fw-bold text-success" style="font-size:${fontSize}; line-height:1.2;">--:--:--</div>
-        </div>
-        <div class="text-center text-muted" style="font-size:0.7em; padding:0.25rem 0.5rem; border-top:1px solid #e9ecef;">
-          Started: ${start.toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'})}
-        </div>`;
-      card.onclick=async()=>{
-        if(confirm("Stop session for "+s.name+"?")){
-          try {
-            const res = await fetch(`/api/students/stop/${s.id}`,{method:'POST'});
-            const j = await res.json().catch(()=>({}));
-            if(!res.ok){
-              showQuickToast(j.error || 'Failed to stop session', true);
-            } else if(j && j.checkout_email_status === 'sent'){
-              showCheckoutEmailConfirmation(s.name);
-            } else if(j && j.checkout_email_status === 'disabled'){
-              showQuickToast(j.checkout_email_message || 'Checkout email is unavailable', true);
-            } else if(j && j.checkout_email_status === 'no_email'){
-              showQuickToast('No email on file', true);
-            } else if(j && (j.checkout_email_status === 'failed' || j.checkout_email_status === 'error')){
-              showQuickToast(j.checkout_email_message || 'Checkout email failed', true);
+          <div class="flex-grow-1 d-flex align-items-center justify-content-center">
+            <div class="timer fw-bold text-success" style="font-size:${fontSize}; line-height:1.2;">--:--:--</div>
+          </div>
+          <div class="text-center text-muted" style="font-size:0.7em; padding:0.25rem 0.5rem; border-top:1px solid #e9ecef;">
+            Started: ${start.toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'})}
+          </div>`;
+        card.onclick=async()=>{
+          if(confirm("Stop session for "+s.name+"?")){
+            try {
+              const res = await fetch(`/api/students/stop/${s.id}`,{method:'POST'});
+              const j = await res.json().catch(()=>({}));
+              if(!res.ok){
+                showQuickToast(j.error || 'Failed to stop session', true);
+              } else if(j && j.checkout_email_status === 'sent'){
+                showCheckoutEmailConfirmation(s.name);
+              } else if(j && j.checkout_email_status === 'disabled'){
+                showQuickToast(j.checkout_email_message || 'Checkout email is unavailable', true);
+              } else if(j && j.checkout_email_status === 'no_email'){
+                showQuickToast('No email on file', true);
+              } else if(j && (j.checkout_email_status === 'failed' || j.checkout_email_status === 'error')){
+                showQuickToast(j.checkout_email_message || 'Checkout email failed', true);
+              }
+            } catch(err){
+              showQuickToast('Failed to stop session', true);
+            } finally {
+              fetchDashboardData();
             }
-          } catch(err){
-            showQuickToast('Failed to stop session', true);
-          } finally {
-            fetchDashboardData();
           }
-        }
-      };
-      col.appendChild(card); grid.appendChild(col);
-      const tEl=card.querySelector(".timer");
-      const timerId = setInterval(()=>{
-        const diff=Math.floor((new Date()-start)/1000);
-        tEl.textContent=formatHHMMSS(diff);
-        tEl.classList.toggle("text-danger",diff>limit);
-        tEl.classList.toggle("text-success",diff<=limit);
-      },1000);
-      seatTimerHandles.push(timerId);
+        };
+        col.appendChild(card); grid.appendChild(col);
+        const tEl=card.querySelector(".timer");
+        const timerId = setInterval(()=>{
+          const diff=Math.floor((new Date()-start)/1000);
+          tEl.textContent=formatHHMMSS(diff);
+          tEl.classList.toggle("text-danger",diff>limit);
+          tEl.classList.toggle("text-success",diff<=limit);
+        },1000);
+        newMap.set(sid, { card, timerId });
+      }
     }else{
       const emptyCard = document.createElement("div");
       emptyCard.className = "card shadow-sm seat-card seat-empty";
@@ -624,12 +640,15 @@ function buildSeatGrid(activeSessions){
       grid.appendChild(col);
     }
   }
-  
-  // Handle overflow students (21+)
+
+  // Swap in the new map (stale entries already cleared above)
+  activeSeatCards = newMap;
+
+  // Handle overflow students (seatLimit+)
   const overflowContainer = document.getElementById('overflowStudents');
   const overflowList = document.getElementById('overflowList');
   const overflowStudents = activeSessions.slice(seatLimit);
-  
+
   if(overflowStudents.length > 0){
     overflowContainer.style.display = 'block';
     overflowList.innerHTML = '';
@@ -667,6 +686,7 @@ function buildSeatGrid(activeSessions){
     overflowContainer.style.display = 'none';
   }
 }
+
 
 // ---------- Column 3 ----------
 function buildCheckedList(data, daySessionCount){

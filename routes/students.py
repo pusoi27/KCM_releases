@@ -1,12 +1,13 @@
 # routes/students.py
 from io import BytesIO
 
-from flask import abort, jsonify, render_template, request, redirect, url_for, flash, send_file, current_app
+from flask import abort, jsonify, render_template, request, redirect, url_for, flash, send_file, current_app, after_this_request
 from werkzeug.utils import secure_filename
 from modules import student_manager, instructor_profile_manager, server_cache, db_backup_recovery, auth_manager
 from routes.auth import require_login, require_admin
 from routes.operation_utils import flash_scoped_failure, invalidate_scoped_cache
 import os
+import tempfile
 import sqlite3
 from modules.database import DB_PATH
 import json
@@ -601,12 +602,33 @@ def register_student_routes(app, upload_folder):
     @app.route("/students/export")
     @require_login
     def students_export():
-        from flask import send_file
-        export_folder = "exports"
-        export_path = os.path.join(export_folder, "students_export.csv")
-        # Export only this user's students
-        student_manager.export_csv(export_path)
-        return send_file(export_path, as_attachment=True)
+        export_path = None
+        try:
+            with tempfile.NamedTemporaryFile(prefix="students_export_", suffix=".csv", delete=False) as tmp:
+                export_path = tmp.name
+
+            # Export active students to a writable temp location.
+            student_manager.export_csv(export_path)
+
+            @after_this_request
+            def _cleanup_export_file(response):
+                try:
+                    if export_path and os.path.exists(export_path):
+                        os.remove(export_path)
+                except OSError:
+                    pass
+                return response
+
+            return send_file(
+                export_path,
+                as_attachment=True,
+                download_name="students_export.csv",
+                mimetype="text/csv",
+            )
+        except Exception as e:
+            current_app.logger.exception("Student CSV export failed: %s", e)
+            flash("CSV export failed. Please try again.", "danger")
+            return redirect(url_for("students_list"))
 
     @app.route("/students/export-vcf/<int:sid>")
     @require_login
