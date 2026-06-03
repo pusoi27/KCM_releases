@@ -373,6 +373,7 @@ def register_instructor_profile_routes(app):
 
         for day_name in active_days:
             week_date = week_start + timedelta(days=weekday_lookup.get(day_name, 0))
+            is_center_closed = bool(schedule_manager.is_center_closed_date(week_date.isoformat()))
             scheduled_assistants = schedule_manager.get_scheduled_assistants_for_date(week_date.isoformat())
             total_loading = 0
             assistant_lines = []
@@ -385,20 +386,28 @@ def register_instructor_profile_routes(app):
                 assistant_lines.append(f"{assistant[1]} (load {assistant_loading})")
 
             assistant_summary = ", ".join(assistant_lines) if assistant_lines else "No staff scheduled"
-            assistant_tooltip = (
-                f"{day_name} {week_date.strftime('%b %d')}\n"
-                f"Scheduled staff: {assistant_summary}\n"
-                f"Total A/M loading: {total_loading}"
-            )
+            if is_center_closed:
+                assistant_tooltip = (
+                    f"{day_name} {week_date.strftime('%b %d')}\n"
+                    "Center closed for this date"
+                )
+            else:
+                assistant_tooltip = (
+                    f"{day_name} {week_date.strftime('%b %d')}\n"
+                    f"Scheduled staff: {assistant_summary}\n"
+                    f"Total A/M loading: {total_loading}"
+                )
 
             schedule['day_metadata'][day_name] = {
                 'date': week_date.isoformat(),
                 'date_label': week_date.strftime('%b %d'),
                 'assistants': scheduled_assistants,
-                'loading_capacity': total_loading,
+                'loading_capacity': 0 if is_center_closed else total_loading,
                 'assistant_summary': assistant_summary,
                 'assistant_count': len(scheduled_assistants),
                 'assistant_tooltip': assistant_tooltip,
+                'is_center_closed': is_center_closed,
+                'is_open': not is_center_closed,
             }
         
         # Collect virtual students (marked as V=1)
@@ -537,16 +546,24 @@ def register_instructor_profile_routes(app):
                 )
 
         for day in schedule['active_days']:
-            day_capacity = schedule['day_metadata'].get(day, {}).get('loading_capacity', 0)
+            day_meta = schedule['day_metadata'].get(day, {})
+            day_capacity = day_meta.get('loading_capacity', 0)
+            is_open = bool(day_meta.get('is_open', True))
             for time_slot in schedule['time_slots']:
                 slot_students = schedule['calendar'].get(day, {}).get(time_slot, []) or []
-                occupied_count = sum(1 for student in slot_students if student.get('el') or student.get('pi'))
+                occupied_count = sum(
+                    1
+                    for student in slot_students
+                    if student.get('el') or student.get('pi') or student.get('v')
+                )
                 over_capacity = max(0, occupied_count - day_capacity)
+                free_slots = max(0, day_capacity - occupied_count) if is_open else 0
                 schedule['slot_loading'][day][time_slot] = {
                     'capacity': day_capacity,
                     'occupied': occupied_count,
-                    'free': max(0, day_capacity - occupied_count),
+                    'free': free_slots,
                     'over_capacity': over_capacity,
+                    'is_open': is_open,
                 }
         
         total_students = len([

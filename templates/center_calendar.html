@@ -39,6 +39,21 @@
     flex-direction: column;
     gap: 3px;
   }
+  .calendar-cell-closed {
+    background-color: #f8fafc;
+    border-left: 3px solid #94a3b8;
+  }
+  .closed-day-label {
+    display: inline-block;
+    font-size: 0.68rem;
+    color: #475569;
+    background: #e2e8f0;
+    border: 1px solid #cbd5e1;
+    border-radius: 999px;
+    padding: 2px 8px;
+    margin-bottom: 2px;
+    align-self: flex-start;
+  }
   .classification-line {
     display: flex;
     flex-wrap: wrap;
@@ -258,12 +273,16 @@
           <div>{{ day }}</div>
           <span class="loading-day-meta">
             {{ day_meta.date_label if day_meta and day_meta.date_label else '' }}
-            {% if day_meta and day_meta.loading_capacity is not none %}
+            {% if day_meta and day_meta.is_center_closed %}
+              · Closed
+            {% elif day_meta and day_meta.loading_capacity is not none %}
               · Load {{ day_meta.loading_capacity }}
             {% endif %}
           </span>
           <span class="loading-staff-line">
-            {% if day_meta and day_meta.assistant_count %}
+            {% if day_meta and day_meta.is_center_closed %}
+              Center closed
+            {% elif day_meta and day_meta.assistant_count %}
               {{ day_meta.assistant_count }} staff scheduled
             {% else %}
               No staff scheduled
@@ -279,7 +298,10 @@
           {% set day_meta = schedule.day_metadata[day] if schedule.day_metadata and day in schedule.day_metadata else {} %}
             {% set slot_students = schedule.calendar[day][time_slot] if schedule.calendar[day] and schedule.calendar[day][time_slot] else [] %}
           {% set loading_meta = schedule.slot_loading[day][time_slot] if schedule.slot_loading and schedule.slot_loading[day] and time_slot in schedule.slot_loading[day] else {'capacity': 0, 'occupied': 0, 'free': 0, 'over_capacity': 0} %}
-          <div class="calendar-cell" title="{{ day }} {{ time_slot }}&#10;{{ day_meta.assistant_tooltip if day_meta and day_meta.assistant_tooltip else 'No staff scheduled' }}&#10;A/M occupied: {{ loading_meta.occupied }}&#10;Free places: {{ loading_meta.free }}{% if loading_meta.over_capacity > 0 %}&#10;Over capacity by: {{ loading_meta.over_capacity }}{% endif %}">
+          <div class="calendar-cell {% if day_meta and day_meta.is_center_closed %}calendar-cell-closed{% endif %}" title="{{ day }} {{ time_slot }}&#10;{{ day_meta.assistant_tooltip if day_meta and day_meta.assistant_tooltip else 'No staff scheduled' }}{% if not (day_meta and day_meta.is_center_closed) %}&#10;A/M+Virtual occupied: {{ loading_meta.occupied }}&#10;Free places: {{ loading_meta.free }}{% if loading_meta.over_capacity > 0 %}&#10;Over capacity by: {{ loading_meta.over_capacity }}{% endif %}{% endif %}">
+            {% if day_meta and day_meta.is_center_closed %}
+              <span class="closed-day-label">Center closed</span>
+            {% endif %}
             <!-- Assisted students (top line) -->
             <div class="classification-line">
               {% for student in slot_students if student.el %}
@@ -296,6 +318,14 @@
                 </a>
               {% endfor %}
             </div>
+            <!-- Virtual students (middle-lower line) -->
+            <div class="classification-line">
+              {% for student in slot_students if student.v %}
+                <a href="{{ url_for('students_edit', sid=student.id, from_calendar=1) }}" class="student-badge" title="{{ student.name }} - {{ student.subject }} - Virtual" style="text-decoration: none; color: inherit; background-color: #faf5ff; border: 1px solid #e9d5ff; color: #7c3aed;">
+                  {{ student.name }}
+                </a>
+              {% endfor %}
+            </div>
             <!-- Independent students (bottom line) -->
             <div class="classification-line">
               {% for student in slot_students if student.ind %}
@@ -304,23 +334,25 @@
                 </a>
               {% endfor %}
             </div>
-            {% if loading_meta.capacity > 0 %}
-              <div class="loading-summary">A/M load: {{ loading_meta.occupied }}/{{ loading_meta.capacity }}</div>
+            {% if not (day_meta and day_meta.is_center_closed) and loading_meta.capacity > 0 %}
+              <div class="loading-summary">A/M + Virtual load: {{ loading_meta.occupied }}/{{ loading_meta.capacity }}</div>
             {% endif %}
-            {% if loading_meta.over_capacity > 0 %}
-              <div class="over-capacity-warning" title="This slot exceeds available Assisted/Monitored loading by {{ loading_meta.over_capacity }} student(s).">
+            {% if not (day_meta and day_meta.is_center_closed) and loading_meta.over_capacity > 0 %}
+              <div class="over-capacity-warning" title="This slot exceeds available Assisted/Monitored/Virtual loading by {{ loading_meta.over_capacity }} student(s).">
                 <span>⚠</span>
                 <span>Over by {{ loading_meta.over_capacity }}</span>
               </div>
             {% endif %}
-            {% if loading_meta.free > 0 %}
-              <div class="loading-placeholder-row" title="{{ loading_meta.free }} free Assisted/Monitored place(s)">
+            {% if not (day_meta and day_meta.is_center_closed) and loading_meta.free > 0 %}
+              <div class="loading-placeholder-row" title="{{ loading_meta.free }} free Assisted/Monitored/Virtual place(s)">
                 {% for _ in range(loading_meta.free) %}
                   <span class="loading-placeholder-box"></span>
                 {% endfor %}
               </div>
             {% endif %}
-            {% if not slot_students and loading_meta.free == 0 %}
+            {% if not slot_students and (day_meta and day_meta.is_center_closed) %}
+              <span class="empty-slot">Closed</span>
+            {% elif not slot_students and loading_meta.free == 0 %}
               <span class="empty-slot">-</span>
             {% endif %}
           </div>
