@@ -80,6 +80,11 @@
               <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
               <button type="submit" class="btn btn-outline-secondary btn-sm">Re-check License Now</button>
             </form>
+            {% if license_status.activation_limit and license_status.activation_limit >= 2 %}
+            <a href="{{ url_for('license_station_role') }}" class="btn btn-outline-primary btn-sm">
+              Configure Machine Role
+            </a>
+            {% endif %}
           <form method="POST" action="{{ url_for('remove_license') }}" onsubmit="return confirm('Remove the saved license from this machine?');">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <button type="submit" class="btn btn-outline-danger">Remove Saved License</button>

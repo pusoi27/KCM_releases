@@ -2,8 +2,10 @@
 {% block content %}
 <div class="container mt-4">
   <h4 class="mb-3 text-primary">Staff</h4>
+  {% set checkin_only_mode = subscription_access.is_checkin_station if subscription_access is defined else false %}
 
   <!-- Add button -->
+  {% if not checkin_only_mode %}
   <div class="mb-2">
     <a href="{{ url_for('assistants_add') }}" class="btn btn-success btn-sm">Add Staff</a>
     <form action="{{ url_for('qr_assistants_generate_all') }}" method="post" class="d-inline">
@@ -12,6 +14,11 @@
     </form>
     <a href="{{ url_for('qr_assistants_pdf') }}" class="btn btn-outline-secondary btn-sm">Print Staff QRs (Avery 8163)</a>
   </div>
+  {% else %}
+  <div class="alert alert-info py-2">
+    <i class="bi bi-info-circle"></i> Check In/Out Station mode: only Staff On Duty toggles are enabled on this page.
+  </div>
+  {% endif %}
 
   <!-- Staff on Duty Button -->
   <button class="btn btn-primary mb-3" data-bs-toggle="modal" data-bs-target="#staffDutyModal">
@@ -70,12 +77,14 @@
             >
             <label class="form-check-label ms-1 small" for="onDuty_{{ a[0] }}">On Duty</label>
           </div>
+          {% if not checkin_only_mode %}
           <a href="{{ url_for('assistants_edit', aid=a[0]) }}" class="btn btn-outline-info btn-sm">Edit</a>
           {% if current_user and current_user.is_admin() %}
           <form method="POST" action="{{ url_for('assistants_delete', aid=a[0]) }}" class="d-inline">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <button type="submit" class="btn btn-outline-danger btn-sm" onclick="return confirm('Delete staff member?');">Del</button>
           </form>
+          {% endif %}
           {% endif %}
         </td>
       </tr>

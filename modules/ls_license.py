@@ -251,10 +251,49 @@ def _ensure_ls_columns(conn: sqlite3.Connection) -> None:
         ("ls_last_verified_at", "TEXT DEFAULT ''"),
         ("activation_limit", "INTEGER DEFAULT 0"),
         ("activation_usage", "INTEGER DEFAULT 0"),
+        ("station_role", "TEXT DEFAULT ''"),
     ]:
         if col not in existing:
             conn.execute(f"ALTER TABLE app_license ADD COLUMN {col} {definition}")
     conn.commit()
+
+
+def get_station_role() -> str:
+    """Return normalized per-machine station role: 'instructor', 'checkin', or ''."""
+    row = _get_ls_row() or {}
+    role = str(row.get("station_role") or "").strip().lower()
+    if role in {"instructor", "checkin"}:
+        return role
+    return ""
+
+
+def set_station_role(role: str) -> tuple[bool, str]:
+    """Persist station role for this machine when LS multi-machine mode is active."""
+    normalized = (role or "").strip().lower()
+    if normalized not in {"instructor", "checkin"}:
+        return False, "Invalid station role. Choose Instructor or Check In/Out."
+
+    row = _get_ls_row()
+    if not row or not row.get("ls_instance_id"):
+        return False, "No LemonSqueezy license is activated on this machine."
+
+    with sqlite3.connect(DB_PATH) as conn:
+        _ensure_ls_columns(conn)
+        conn.execute(
+            "UPDATE app_license SET station_role = ?, updated_at = ? WHERE id = 1",
+            (normalized, _now_utc().isoformat()),
+        )
+        conn.commit()
+
+    return True, "Station role saved."
+
+
+def requires_station_role_selection() -> bool:
+    """Return True when multi-machine license requires station-role selection on this device."""
+    row = _get_ls_row() or {}
+    if int(row.get("activation_limit") or 0) < 2:
+        return False
+    return get_station_role() == ""
 
 
 def _get_ls_row() -> dict[str, Any] | None:
@@ -588,6 +627,8 @@ def get_ls_license_context() -> dict[str, Any]:
         "grace_hours": int(_grace_window_seconds() / 3600),
         "activation_limit": row.get("activation_limit", 0),
         "activation_usage": row.get("activation_usage", 0),
+        "station_role": get_station_role(),
+        "requires_station_role": requires_station_role_selection(),
         "default_home_endpoint": "dashboard",
     }
 

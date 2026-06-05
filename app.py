@@ -5,7 +5,7 @@ Stdytime: Student class management system with dashboard, QR codes, and PDF labe
 Features: Student management, session tracking, QR generation, Avery 8160 PDF output, staff duty tracking.
 """
 
-from flask import Flask, render_template, request, send_from_directory, jsonify, session, g, redirect, url_for
+from flask import Flask, render_template, request, send_from_directory, jsonify, session, g, redirect, url_for, flash
 from werkzeug.utils import secure_filename
 from werkzeug.exceptions import RequestEntityTooLarge
 from datetime import datetime, timedelta
@@ -433,6 +433,72 @@ class RequestProfiler:
 
 profiler = RequestProfiler()
 
+
+def _is_checkin_station_access_allowed(endpoint: str | None, path: str, method: str) -> bool:
+    """Allow only scanner/check-in flows on check-in/out stations."""
+    ep = (endpoint or '').strip()
+    p = (path or '').strip()
+    m = (method or 'GET').upper()
+
+    allowed_endpoints = {
+        'static',
+        'license_page',
+        'activate_license',
+        'remove_license',
+        'verify_license',
+        'license_expired',
+        'license_status_api',
+        'license_station_role',
+        'lemonsqueezy_webhook',
+        'api_csrf_token',
+        'healthz',
+        'not_found',
+        'qr_scanner',
+    }
+    if ep in allowed_endpoints:
+        return True
+
+    if p.startswith('/static/'):
+        return True
+
+    # Explicit page routes needed on Check In/Out station.
+    allowed_paths = {
+        '/',
+        '/assistants',
+        '/books',
+        '/books/add',
+        '/books/loan',
+        '/materials',
+        '/materials/add',
+        '/materials/loan',
+    }
+    if p in allowed_paths:
+        return True
+
+    # Path-prefix rules for station operations.
+    if p.startswith('/api/books/'):
+        return True
+    if p.startswith('/api/materials/'):
+        return True
+    if p.startswith('/api/assistants/select/') and m == 'POST':
+        return True
+    if p.startswith('/staff/icon/'):
+        return True
+
+    if p in {'/api/students/active', '/api/students/lookup', '/api/students/suggest'} and m == 'GET':
+        return True
+
+    # Scanner-only API allowlist.
+    scanner_api_rules: dict[str, set[str]] = {
+        '/api/sessions/toggle': {'POST'},
+        '/api/students/list': {'GET'},
+        '/api/assistants/list': {'GET'},
+    }
+    if p in scanner_api_rules and m in scanner_api_rules[p]:
+        return True
+
+    return False
+
 @app.before_request
 def before_request_license_state():
     """Load license state via LemonSqueezy (with local cache) and block access when unlicensed."""
@@ -477,6 +543,7 @@ def before_request_license_state():
         'activate_license',
         'remove_license',
         'verify_license',
+        'license_station_role',
         'license_expired',
         'license_status_api',
         'lemonsqueezy_webhook',
@@ -521,6 +588,7 @@ def before_request_capture_email():
         'activate_license',
         'remove_license',
         'verify_license',
+        'license_station_role',
         'license_expired',
         'license_status_api',
         'lemonsqueezy_webhook',
@@ -588,6 +656,7 @@ def before_request_enforce_first_run_setup():
     setup_allowed_endpoints = {
         'static',
         'email_login',
+        'license_station_role',
         'setup_requirements',
         'setup_storage',
         'instructor_profile_edit',
@@ -618,6 +687,53 @@ def before_request_enforce_first_run_setup():
         }), 428
 
     return redirect(url_for('setup_requirements'))
+
+
+@app.before_request
+def before_request_enforce_station_mode():
+    """Enforce machine station-role behavior for multi-machine LemonSqueezy licenses."""
+    status = g.get('license_status') or {}
+    if not status.get('is_valid'):
+        return None
+
+    activation_limit = int(status.get('activation_limit') or 0)
+    if activation_limit < 2:
+        return None
+
+    station_role = str(status.get('station_role') or '').strip().lower()
+
+    if not station_role:
+        if request.endpoint == 'license_station_role':
+            return None
+        if request.path.startswith('/api/'):
+            return jsonify({
+                'error': 'Machine role must be selected for this license.',
+                'setup_url': url_for('license_station_role'),
+            }), 428
+        return redirect(url_for('license_station_role'))
+
+    if station_role == 'checkin':
+        if _is_checkin_station_access_allowed(request.endpoint, request.path, request.method):
+            return None
+        if request.path.startswith('/api/'):
+            return jsonify({
+                'error': 'This machine is configured as Check In/Out Station. Endpoint unavailable on this station.',
+                'station_role': station_role,
+            }), 403
+        flash('This machine is configured as Check In/Out Station. Open scanner-only workflow here.', 'info')
+        return redirect(url_for('qr_scanner'))
+
+    if station_role == 'instructor':
+        # Instructor station has full access except scanner-only station page.
+        if request.endpoint == 'qr_scanner':
+            flash('Scanner workflow is reserved for the Check In/Out Station.', 'warning')
+            return redirect(url_for('dashboard'))
+        if request.path == '/api/sessions/toggle' and request.method.upper() == 'POST':
+            return jsonify({
+                'error': 'Scanner toggle endpoint is reserved for the Check In/Out Station.',
+                'station_role': station_role,
+            }), 403
+    return None
 
 
 @app.before_request
@@ -699,6 +815,9 @@ def inject_current_user():
 def inject_subscription_access():
     """Inject navigation access flags."""
     license_status = g.get('license_status', {})
+    role = str(license_status.get('station_role') or '').strip().lower()
+    activation_limit = int(license_status.get('activation_limit') or 0)
+
     context = {
         'can_access_students': True,
         'can_access_books': True,
@@ -711,7 +830,34 @@ def inject_subscription_access():
         'can_access_instructor_settings': True,
         'can_access_qr': True,
         'default_home_endpoint': 'dashboard',
+        'station_role': role,
+        'is_checkin_station': False,
+        'is_instructor_station': True,
     }
+
+    if activation_limit >= 2 and role == 'checkin':
+        context.update({
+            'can_access_students': False,
+            'can_access_books': True,
+            'can_access_assistants': True,
+            'can_access_stdytimeclass': True,
+            'can_access_utilities_print': False,
+            'can_send_email': False,
+            'can_access_instructor_profile': False,
+            'can_access_instructor_reports': False,
+            'can_access_instructor_settings': True,
+            'can_access_qr': True,
+            'default_home_endpoint': 'qr_scanner',
+            'is_checkin_station': True,
+            'is_instructor_station': False,
+        })
+
+    if activation_limit >= 2 and role == 'instructor':
+        context.update({
+            'is_checkin_station': False,
+            'is_instructor_station': True,
+        })
+
     context['is_licensed'] = bool(license_status.get('is_valid'))
     context['license_status'] = license_status.get('status', 'unlicensed')
     return dict(subscription_access=context)

@@ -33,6 +33,7 @@
       <ul class="navbar-nav me-auto mb-2 mb-lg-0 ms-3">
 
         <!-- Students -->
+        {% if subscription_access.can_access_students %}
         <li class="nav-item dropdown">
           <a class="nav-link dropdown-toggle text-white" href="#" id="studentsMenu"
              role="button" data-bs-toggle="dropdown"><i class="bi bi-people"></i> Students</a>
@@ -41,6 +42,7 @@
             <li><a class="dropdown-item" href="{{ url_for('students_list') }}">Books View / Edit / Delete</a></li>
           </ul>
         </li>
+        {% endif %}
 
         <!-- Books -->
         {% if subscription_access.can_access_books %}
@@ -55,6 +57,12 @@
             <li><a class="dropdown-item" href="{{ url_for('materials_list') }}">Devices View / Edit / Delete</a></li>
             <li><a class="dropdown-item" href="{{ url_for('materials_loan_page') }}">Device Loan</a></li>
           </ul>
+        </li>
+        {% endif %}
+
+        {% if subscription_access.can_access_assistants %}
+        <li class="nav-item">
+          <a class="nav-link text-white" href="{{ url_for('assistants_list') }}"><i class="bi bi-person-badge"></i> Staff Duty</a>
         </li>
         {% endif %}
 
