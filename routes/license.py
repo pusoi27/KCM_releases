@@ -75,7 +75,7 @@ def register_license_routes(app):
             if ok:
                 if role == 'checkin':
                     return redirect(url_for('qr_scanner'))
-                return redirect(url_for('dashboard'))
+                return redirect(url_for('instructor_home'))
             return redirect(url_for('license_station_role'))
 
         return render_template('license_station_role.html', license_status=ls_ctx)

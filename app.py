@@ -727,7 +727,7 @@ def before_request_enforce_station_mode():
         # Instructor station has full access except scanner-only station page.
         if request.endpoint == 'qr_scanner':
             flash('Scanner workflow is reserved for the Check In/Out Station.', 'warning')
-            return redirect(url_for('dashboard'))
+            return redirect(url_for('instructor_home'))
         if request.path == '/api/sessions/toggle' and request.method.upper() == 'POST':
             return jsonify({
                 'error': 'Scanner toggle endpoint is reserved for the Check In/Out Station.',
@@ -854,6 +854,7 @@ def inject_subscription_access():
 
     if activation_limit >= 2 and role == 'instructor':
         context.update({
+            'default_home_endpoint': 'instructor_home',
             'is_checkin_station': False,
             'is_instructor_station': True,
         })

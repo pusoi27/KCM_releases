@@ -1,0 +1,120 @@
+{% extends "base.html" %}
+
+{% block title %} · Instructor Home{% endblock %}
+
+{% block content %}
+<div class="container py-4">
+  <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
+    <div>
+      <h1 class="h3 mb-1">Instructor Home</h1>
+      <p class="text-muted mb-0">Quick access to all menus with fewer clicks.</p>
+    </div>
+    {% if subscription_access.station_role %}
+    <span class="badge rounded-pill {% if subscription_access.is_instructor_station %}text-bg-primary{% else %}text-bg-warning{% endif %} px-3 py-2">
+      {% if subscription_access.is_instructor_station %}
+        <i class="bi bi-mortarboard-fill me-1"></i> Instructor Station
+      {% else %}
+        <i class="bi bi-upc-scan me-1"></i> {{ subscription_access.station_role|title }} Station
+      {% endif %}
+    </span>
+    {% endif %}
+  </div>
+
+  <div class="row g-3">
+    {% if subscription_access.can_access_students %}
+    <div class="col-12 col-md-6 col-xl-4">
+      <div class="card h-100 shadow-sm">
+        <div class="card-body d-flex flex-column">
+          <h2 class="h5"><i class="bi bi-people me-2"></i>Students</h2>
+          <p class="text-muted small">Add and manage student records.</p>
+          <div class="mt-auto d-grid gap-2">
+            <a class="btn btn-success" href="{{ url_for('students_add') }}">Add Student</a>
+            <a class="btn btn-outline-success" href="{{ url_for('students_list') }}">View / Edit / Delete</a>
+          </div>
+        </div>
+      </div>
+    </div>
+    {% endif %}
+
+    {% if subscription_access.can_access_books %}
+    <div class="col-12 col-md-6 col-xl-4">
+      <div class="card h-100 shadow-sm">
+        <div class="card-body d-flex flex-column">
+          <h2 class="h5"><i class="bi bi-journal-bookmark me-2"></i>Books / Devices</h2>
+          <p class="text-muted small">Manage books and devices quickly.</p>
+          <div class="mt-auto d-grid gap-2">
+            <a class="btn btn-success" href="{{ url_for('books_add') }}">Add Book</a>
+            <a class="btn btn-outline-success" href="{{ url_for('books_list') }}">Books View / Edit / Delete</a>
+            <a class="btn btn-outline-secondary" href="{{ url_for('books_loan_page') }}">Book Loan</a>
+            <a class="btn btn-outline-secondary" href="{{ url_for('materials_list') }}">Devices View / Edit / Delete</a>
+          </div>
+        </div>
+      </div>
+    </div>
+    {% endif %}
+
+    {% if subscription_access.can_access_instructor_reports %}
+    <div class="col-12 col-md-6 col-xl-4">
+      <div class="card h-100 shadow-sm">
+        <div class="card-body d-flex flex-column">
+          <h2 class="h5"><i class="bi bi-bar-chart-line me-2"></i>Reports</h2>
+          <p class="text-muted small">Open reports in one click.</p>
+          <div class="mt-auto d-grid gap-2">
+            <a class="btn btn-outline-primary" href="{{ url_for('reports_assistants') }}">Payroll Staff Hours</a>
+            <a class="btn btn-outline-primary" href="{{ url_for('class_attendance_page') }}">Class Attendance</a>
+            <a class="btn btn-outline-primary" href="{{ url_for('student_attendance_page') }}">Student Attendance</a>
+            <a class="btn btn-outline-primary" href="{{ url_for('reports_loans') }}">Loans Report</a>
+          </div>
+        </div>
+      </div>
+    </div>
+    {% endif %}
+
+    {% if subscription_access.can_access_instructor_profile %}
+    <div class="col-12 col-md-6 col-xl-4">
+      <div class="card h-100 shadow-sm">
+        <div class="card-body d-flex flex-column">
+          <h2 class="h5"><i class="bi bi-tools me-2"></i>Utilities</h2>
+          <p class="text-muted small">Profile and calendar workflows.</p>
+          <div class="mt-auto d-grid gap-2">
+            <a class="btn btn-outline-dark" href="{{ url_for('instructor_profile') }}">Center Profile</a>
+            <a class="btn btn-outline-dark" href="{{ url_for('center_calendar') }}">Students Calendar</a>
+            {% if subscription_access.can_access_assistants %}
+            <a class="btn btn-outline-dark" href="{{ url_for('assistants_list') }}">Manage Staff</a>
+            <a class="btn btn-outline-dark" href="{{ url_for('schedule_assistants') }}">Staff Calendar</a>
+            {% endif %}
+          </div>
+        </div>
+      </div>
+    </div>
+    {% endif %}
+
+    {% if subscription_access.can_access_instructor_settings %}
+    <div class="col-12 col-md-6 col-xl-4">
+      <div class="card h-100 shadow-sm">
+        <div class="card-body d-flex flex-column">
+          <h2 class="h5"><i class="bi bi-gear me-2"></i>Settings</h2>
+          <p class="text-muted small">System and license controls.</p>
+          <div class="mt-auto d-grid gap-2">
+            <a class="btn btn-outline-secondary" href="{{ url_for('setup_storage') }}">DB Backup</a>
+            <a class="btn btn-outline-secondary" href="{{ url_for('license_page') }}">Manage License</a>
+          </div>
+        </div>
+      </div>
+    </div>
+    {% endif %}
+
+    <div class="col-12 col-md-6 col-xl-4">
+      <div class="card h-100 border-success-subtle shadow-sm">
+        <div class="card-body d-flex flex-column">
+          <h2 class="h5"><i class="bi bi-grid me-2"></i>Main Class Screen</h2>
+          <p class="text-muted small">Still available when needed, but not your default home.</p>
+          <div class="mt-auto d-grid">
+            <a class="btn btn-outline-success" href="{{ url_for('dashboard') }}">Open Class Screen</a>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
