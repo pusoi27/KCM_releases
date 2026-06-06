@@ -74,7 +74,7 @@ def register_license_routes(app):
             flash(msg, 'success' if ok else 'danger')
             if ok:
                 if role == 'checkin':
-                    return redirect(url_for('qr_scanner'))
+                    return redirect(url_for('checkin_home'))
                 return redirect(url_for('instructor_home'))
             return redirect(url_for('license_station_role'))
 

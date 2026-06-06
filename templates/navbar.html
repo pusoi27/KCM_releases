@@ -118,17 +118,26 @@
       <div class="d-flex align-items-center text-white small">
         <span class="me-3"><i class="bi bi-calendar3"></i> {{ date_str }}</span>
         <span class="me-3"><i class="bi bi-clock"></i> {{ time_str }}</span>
-        {% if ls_nav_badge and ls_nav_badge.visible %}
-          <span
-            class="badge rounded-pill me-3 text-bg-{{ ls_nav_badge.tone }}"
-            title="{{ ls_nav_badge.tooltip }}"
-          >
-            {{ ls_nav_badge.label }} · age {{ ls_nav_badge.age_text }} · ttl {{ ls_nav_badge.cache_remaining_text }} · {{ 'grace' if ls_nav_badge.grace_mode else 'live' }}
-          </span>
+        {% if (license_status.activation_limit or 0)|int < 2 %}
+          <a class="btn btn-sm btn-warning me-3 fw-semibold" href="{{ url_for('instructor_home') }}" title="Open Instructor Station view">
+            <i class="bi bi-mortarboard-fill me-1"></i>Instructor View
+          </a>
         {% endif %}
         {% if license_status and license_status.activation_limit %}
           <span class="badge rounded-pill bg-info me-3" title="Activation Limit: {{ license_status.activation_usage }}/{{ license_status.activation_limit }} machines active">
             <i class="bi bi-pc-display"></i> {{ license_status.activation_usage }}/{{ license_status.activation_limit }}
+          </span>
+        {% endif %}
+        {% if subscription_access and subscription_access.station_role %}
+          <span
+            class="badge rounded-pill me-3 {% if subscription_access.is_checkin_station %}text-bg-warning{% else %}text-bg-primary{% endif %}"
+            title="{% if subscription_access.is_checkin_station %}Recommended for high-frequency session toggles and duty changes.{% else %}Recommended for slower administrative updates.{% endif %}"
+          >
+            {% if subscription_access.is_checkin_station %}
+              <i class="bi bi-upc-scan"></i> Check In/Out Station
+            {% else %}
+              <i class="bi bi-mortarboard-fill"></i> Instructor Station
+            {% endif %}
           </span>
         {% endif %}
         

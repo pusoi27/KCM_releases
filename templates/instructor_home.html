@@ -3,7 +3,7 @@
 {% block title %} · Instructor Home{% endblock %}
 
 {% block content %}
-<div class="container py-4">
+<div class="container py-4 instructor-home-page">
   <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
     <div>
       <h1 class="h3 mb-1">Instructor Home</h1>
@@ -28,7 +28,7 @@
           <h2 class="h5"><i class="bi bi-people me-2"></i>Students</h2>
           <p class="text-muted small">Add and manage student records.</p>
           <div class="mt-auto d-grid gap-2">
-            <a class="btn btn-success" href="{{ url_for('students_add') }}">Add Student</a>
+            <a class="btn btn-outline-success" href="{{ url_for('students_add') }}">Add Student</a>
             <a class="btn btn-outline-success" href="{{ url_for('students_list') }}">View / Edit / Delete</a>
           </div>
         </div>
@@ -43,7 +43,7 @@
           <h2 class="h5"><i class="bi bi-journal-bookmark me-2"></i>Books / Devices</h2>
           <p class="text-muted small">Manage books and devices quickly.</p>
           <div class="mt-auto d-grid gap-2">
-            <a class="btn btn-success" href="{{ url_for('books_add') }}">Add Book</a>
+            <a class="btn btn-outline-success" href="{{ url_for('books_add') }}">Add Book</a>
             <a class="btn btn-outline-success" href="{{ url_for('books_list') }}">Books View / Edit / Delete</a>
             <a class="btn btn-outline-secondary" href="{{ url_for('books_loan_page') }}">Book Loan</a>
             <a class="btn btn-outline-secondary" href="{{ url_for('materials_list') }}">Devices View / Edit / Delete</a>

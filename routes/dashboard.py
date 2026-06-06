@@ -55,6 +55,12 @@ def register_dashboard_routes(app):
         """Landing page for instructor-station quick menu access."""
         return render_template("instructor_home.html")
 
+    @app.route("/checkin/home")
+    @require_login
+    def checkin_home():
+        """Landing page for check-in/out station workflows."""
+        return render_template("checkin_home.html")
+
     @app.context_processor
     def inject_now():
         """Inject current date/time into all templates."""

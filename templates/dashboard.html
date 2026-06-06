@@ -21,14 +21,15 @@
   {% endif %}
 
   <div class="dash-topbar-right d-flex align-items-center ms-auto">
-    {% if ls_nav_badge and ls_nav_badge.visible %}
-    <span
-      class="badge rounded-pill text-bg-{{ ls_nav_badge.tone }}"
-      title="{{ ls_nav_badge.tooltip }}"
+    {% if (license_status.activation_limit or 0)|int < 2 %}
+    <a
+      class="btn btn-sm btn-warning fw-semibold"
+      href="{{ url_for('instructor_home') }}"
+      title="Open Instructor Station view"
       style="margin-right:.5rem;"
     >
-      {{ ls_nav_badge.label }} · {{ ls_nav_badge.age_text }} · {{ ls_nav_badge.cache_remaining_text }} · {{ 'grace' if ls_nav_badge.grace_mode else 'live' }}
-    </span>
+      <i class="bi bi-mortarboard-fill me-1"></i>Instructor View
+    </a>
     {% endif %}
     {% if license_status and license_status.activation_limit %}
     <span

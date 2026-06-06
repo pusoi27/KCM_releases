@@ -454,6 +454,7 @@ def _is_checkin_station_access_allowed(endpoint: str | None, path: str, method: 
         'healthz',
         'not_found',
         'qr_scanner',
+        'checkin_home',
     }
     if ep in allowed_endpoints:
         return True
@@ -464,6 +465,7 @@ def _is_checkin_station_access_allowed(endpoint: str | None, path: str, method: 
     # Explicit page routes needed on Check In/Out station.
     allowed_paths = {
         '/',
+        '/checkin/home',
         '/assistants',
         '/books',
         '/books/add',
@@ -720,8 +722,8 @@ def before_request_enforce_station_mode():
                 'error': 'This machine is configured as Check In/Out Station. Endpoint unavailable on this station.',
                 'station_role': station_role,
             }), 403
-        flash('This machine is configured as Check In/Out Station. Open scanner-only workflow here.', 'info')
-        return redirect(url_for('qr_scanner'))
+        flash('This machine is configured as Check In/Out Station. Use the station home to start scanner workflows.', 'info')
+        return redirect(url_for('checkin_home'))
 
     if station_role == 'instructor':
         # Instructor station has full access except scanner-only station page.
@@ -847,7 +849,7 @@ def inject_subscription_access():
             'can_access_instructor_reports': False,
             'can_access_instructor_settings': True,
             'can_access_qr': True,
-            'default_home_endpoint': 'qr_scanner',
+            'default_home_endpoint': 'checkin_home',
             'is_checkin_station': True,
             'is_instructor_station': False,
         })
