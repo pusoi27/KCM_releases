@@ -33,69 +33,116 @@
       <ul class="navbar-nav me-auto mb-2 mb-lg-0 ms-3">
 
         <!-- Students -->
-        {% if subscription_access.can_access_students %}
         <li class="nav-item dropdown">
           <a class="nav-link dropdown-toggle text-white" href="#" id="studentsMenu"
              role="button" data-bs-toggle="dropdown"><i class="bi bi-people"></i> Students</a>
           <ul class="dropdown-menu">
-            <li><a class="dropdown-item" href="{{ url_for('students_add') }}">Add Student</a></li>
-            <li><a class="dropdown-item" href="{{ url_for('students_list') }}">Books View / Edit / Delete</a></li>
+            <li>
+              <a
+                class="dropdown-item{% if not subscription_access.can_add_student %} disabled text-muted menu-item-disabled{% endif %}"
+                href="{% if subscription_access.can_add_student %}{{ url_for('students_add') }}{% else %}#{% endif %}"
+                {% if not subscription_access.can_add_student %}aria-disabled="true" tabindex="-1"{% endif %}
+              >Add Student</a>
+            </li>
+            <li>
+              <a
+                class="dropdown-item{% if not subscription_access.can_manage_students %} disabled text-muted menu-item-disabled{% endif %}"
+                href="{% if subscription_access.can_manage_students %}{{ url_for('students_list') }}{% else %}#{% endif %}"
+                {% if not subscription_access.can_manage_students %}aria-disabled="true" tabindex="-1"{% endif %}
+              >Students View / Edit / Delete</a>
+            </li>
           </ul>
         </li>
-        {% endif %}
 
         <!-- Books -->
-        {% if subscription_access.can_access_books %}
         <li class="nav-item dropdown">
           <a class="nav-link dropdown-toggle text-white" href="#" id="booksMenu" role="button" data-bs-toggle="dropdown"><i class="bi bi-journal-bookmark"></i> Books/Devices</a>
           <ul class="dropdown-menu">
-            <li><a class="dropdown-item" href="{{ url_for('books_add') }}">Add Book</a></li>
-            <li><a class="dropdown-item" href="{{ url_for('books_list') }}">Books View / Edit / Delete</a></li>
-            <li><a class="dropdown-item" href="{{ url_for('books_loan_page') }}">Book Loan</a></li>
+            <li>
+              <a
+                class="dropdown-item{% if not subscription_access.can_add_book %} disabled text-muted menu-item-disabled{% endif %}"
+                href="{% if subscription_access.can_add_book %}{{ url_for('books_add') }}{% else %}#{% endif %}"
+                {% if not subscription_access.can_add_book %}aria-disabled="true" tabindex="-1"{% endif %}
+              >Add Book</a>
+            </li>
+            <li>
+              <a
+                class="dropdown-item{% if not subscription_access.can_manage_books %} disabled text-muted menu-item-disabled{% endif %}"
+                href="{% if subscription_access.can_manage_books %}{{ url_for('books_list') }}{% else %}#{% endif %}"
+                {% if not subscription_access.can_manage_books %}aria-disabled="true" tabindex="-1"{% endif %}
+              >Books View / Edit / Delete</a>
+            </li>
+            <li>
+              <a
+                class="dropdown-item{% if not subscription_access.can_access_book_loan %} disabled text-muted menu-item-disabled{% endif %}"
+                href="{% if subscription_access.can_access_book_loan %}{{ url_for('books_loan_page') }}{% else %}#{% endif %}"
+                {% if not subscription_access.can_access_book_loan %}aria-disabled="true" tabindex="-1"{% endif %}
+              >Book Loan</a>
+            </li>
             <li><hr class="dropdown-divider"></li>
-            <li><a class="dropdown-item" href="{{ url_for('materials_add') }}">Add Device</a></li>
-            <li><a class="dropdown-item" href="{{ url_for('materials_list') }}">Devices View / Edit / Delete</a></li>
-            <li><a class="dropdown-item" href="{{ url_for('materials_loan_page') }}">Device Loan</a></li>
+            <li>
+              <a
+                class="dropdown-item{% if not subscription_access.can_add_device %} disabled text-muted menu-item-disabled{% endif %}"
+                href="{% if subscription_access.can_add_device %}{{ url_for('materials_add') }}{% else %}#{% endif %}"
+                {% if not subscription_access.can_add_device %}aria-disabled="true" tabindex="-1"{% endif %}
+              >Add Device</a>
+            </li>
+            <li>
+              <a
+                class="dropdown-item{% if not subscription_access.can_manage_devices %} disabled text-muted menu-item-disabled{% endif %}"
+                href="{% if subscription_access.can_manage_devices %}{{ url_for('materials_list') }}{% else %}#{% endif %}"
+                {% if not subscription_access.can_manage_devices %}aria-disabled="true" tabindex="-1"{% endif %}
+              >Devices View / Edit / Delete</a>
+            </li>
+            <li>
+              <a
+                class="dropdown-item{% if not subscription_access.can_access_device_loan %} disabled text-muted menu-item-disabled{% endif %}"
+                href="{% if subscription_access.can_access_device_loan %}{{ url_for('materials_loan_page') }}{% else %}#{% endif %}"
+                {% if not subscription_access.can_access_device_loan %}aria-disabled="true" tabindex="-1"{% endif %}
+              >Device Loan</a>
+            </li>
           </ul>
         </li>
-        {% endif %}
 
-        {% if subscription_access.can_access_assistants %}
         <li class="nav-item">
-          <a class="nav-link text-white" href="{{ url_for('assistants_list') }}"><i class="bi bi-person-badge"></i> Staff Duty</a>
+          <a
+            class="nav-link text-white{% if not subscription_access.can_access_staff_duty %} disabled text-white-50{% endif %}"
+            href="{% if subscription_access.can_access_staff_duty %}{{ url_for('assistants_list') }}{% else %}#{% endif %}"
+            {% if not subscription_access.can_access_staff_duty %}aria-disabled="true" tabindex="-1"{% endif %}
+          ><i class="bi bi-person-badge"></i> Staff Duty</a>
         </li>
-        {% endif %}
 
         
 
         <!-- Reports -->
-        {% if subscription_access.can_access_instructor_reports %}
         <li class="nav-item dropdown">
-          <a class="nav-link dropdown-toggle text-white" href="#" id="reportsMenu" role="button" data-bs-toggle="dropdown"><i class="bi bi-bar-chart-line"></i> Reports</a>
+          <a class="nav-link dropdown-toggle text-white{% if not subscription_access.can_access_reports_menu %} disabled text-white-50{% endif %}" href="#" id="reportsMenu" role="button" {% if subscription_access.can_access_reports_menu %}data-bs-toggle="dropdown"{% else %}aria-disabled="true" tabindex="-1"{% endif %}><i class="bi bi-bar-chart-line"></i> Reports</a>
           <ul class="dropdown-menu" aria-labelledby="reportsMenu">
-            <li><a class="dropdown-item" href="{{ url_for('reports_assistants') }}">Payroll Staff Hours</a></li>
-            <li><a class="dropdown-item" href="{{ url_for('class_attendance_page') }}">Class Attendance</a></li>
-            <li><a class="dropdown-item" href="{{ url_for('student_attendance_page') }}">Student Attendance</a></li>
-            <li><a class="dropdown-item" href="{{ url_for('reports_loans') }}">Loans Report</a></li>
+            <li><a class="dropdown-item{% if not subscription_access.can_access_reports_menu %} disabled text-muted menu-item-disabled{% endif %}" href="{% if subscription_access.can_access_reports_menu %}{{ url_for('reports_assistants') }}{% else %}#{% endif %}" {% if not subscription_access.can_access_reports_menu %}aria-disabled="true" tabindex="-1"{% endif %}>Payroll Staff Hours</a></li>
+            <li><a class="dropdown-item{% if not subscription_access.can_access_reports_menu %} disabled text-muted menu-item-disabled{% endif %}" href="{% if subscription_access.can_access_reports_menu %}{{ url_for('class_attendance_page') }}{% else %}#{% endif %}" {% if not subscription_access.can_access_reports_menu %}aria-disabled="true" tabindex="-1"{% endif %}>Class Attendance</a></li>
+            <li><a class="dropdown-item{% if not subscription_access.can_access_reports_menu %} disabled text-muted menu-item-disabled{% endif %}" href="{% if subscription_access.can_access_reports_menu %}{{ url_for('student_attendance_page') }}{% else %}#{% endif %}" {% if not subscription_access.can_access_reports_menu %}aria-disabled="true" tabindex="-1"{% endif %}>Student Attendance</a></li>
+            <li><a class="dropdown-item{% if not subscription_access.can_access_reports_menu %} disabled text-muted menu-item-disabled{% endif %}" href="{% if subscription_access.can_access_reports_menu %}{{ url_for('reports_loans') }}{% else %}#{% endif %}" {% if not subscription_access.can_access_reports_menu %}aria-disabled="true" tabindex="-1"{% endif %}>Loans Report</a></li>
           </ul>
         </li>
-        {% endif %}
 
 <!-- Utilities menu -->
-{% if subscription_access.can_access_instructor_profile %}
 <li class="nav-item dropdown">
   <a class="nav-link dropdown-toggle text-white" href="#" id="instMenu" role="button" data-bs-toggle="dropdown">Utilities</a>
   <ul class="dropdown-menu" aria-labelledby="instMenu">
-    <li><a class="dropdown-item" href="{{ url_for('instructor_profile') }}">Center Profile</a></li>
-    <li><a class="dropdown-item" href="{{ url_for('center_calendar') }}">Students Calendar</a></li>
-    {% if subscription_access.can_access_assistants %}
-    <li><a class="dropdown-item" href="{{ url_for('assistants_list') }}">Manage Staff</a></li>
-    <li><a class="dropdown-item" href="{{ url_for('schedule_assistants') }}">Staff Calendar</a></li>
-    {% endif %}
+    <li><a class="dropdown-item{% if not subscription_access.can_access_utilities_profile %} disabled text-muted menu-item-disabled{% endif %}" href="{% if subscription_access.can_access_utilities_profile %}{{ url_for('instructor_profile') }}{% else %}#{% endif %}" {% if not subscription_access.can_access_utilities_profile %}aria-disabled="true" tabindex="-1"{% endif %}>Center Profile</a></li>
+    <li><a class="dropdown-item{% if not subscription_access.can_access_utilities_students_calendar %} disabled text-muted menu-item-disabled{% endif %}" href="{% if subscription_access.can_access_utilities_students_calendar %}{{ url_for('center_calendar') }}{% else %}#{% endif %}" {% if not subscription_access.can_access_utilities_students_calendar %}aria-disabled="true" tabindex="-1"{% endif %}>Students Calendar</a></li>
+    <li><a class="dropdown-item{% if not subscription_access.can_access_utilities_manage_staff %} disabled text-muted menu-item-disabled{% endif %}" href="{% if subscription_access.can_access_utilities_manage_staff %}{{ url_for('assistants_list') }}{% else %}#{% endif %}" {% if not subscription_access.can_access_utilities_manage_staff %}aria-disabled="true" tabindex="-1"{% endif %}>Manage Staff</a></li>
+    <li><a class="dropdown-item{% if not subscription_access.can_access_utilities_staff_calendar %} disabled text-muted menu-item-disabled{% endif %}" href="{% if subscription_access.can_access_utilities_staff_calendar %}{{ url_for('schedule_assistants') }}{% else %}#{% endif %}" {% if not subscription_access.can_access_utilities_staff_calendar %}aria-disabled="true" tabindex="-1"{% endif %}>Staff Calendar</a></li>
     {% if subscription_access.can_access_instructor_settings %}
     <li><hr class="dropdown-divider"></li>
     <li><span class="dropdown-item-text text-muted small px-3">Settings</span></li>
-    <li><a class="dropdown-item ps-4" href="{{ url_for('qr_scanner') }}">Scanner</a></li>
+    <li>
+      <a
+        class="dropdown-item ps-4{% if not subscription_access.can_access_scanner %} disabled text-muted menu-item-disabled{% endif %}"
+        href="{% if subscription_access.can_access_scanner %}{{ url_for('qr_scanner') }}{% else %}#{% endif %}"
+        {% if not subscription_access.can_access_scanner %}aria-disabled="true" tabindex="-1"{% endif %}
+      >Scanner</a>
+    </li>
     <li><a class="dropdown-item ps-4" href="{{ url_for('setup_storage') }}">DB Backup</a></li>
     <li><a class="dropdown-item ps-4" href="{{ url_for('license_page') }}"><i class="bi bi-key me-2"></i>Upgrade License</a></li>
     {% endif %}
@@ -110,7 +157,6 @@
     {% endif %}
   </ul>
 </li>
-{% endif %}
 
       </ul>
 
@@ -404,6 +450,10 @@ function downloadAssistantCSV(){
 }
 .dropdown-submenu > .dropdown-menu[style*="display: block"] {
   display: block !important; /* Only show when explicitly set */
+}
+.menu-item-disabled {
+  opacity: 0.55;
+  pointer-events: none;
 }
 @media (max-width: 991.98px) { /* stack vertically on mobile */
   .dropdown-submenu > .dropdown-menu {

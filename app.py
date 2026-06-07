@@ -15,6 +15,7 @@ import secrets
 import sys
 import shutil
 import ipaddress
+import re
 from dotenv import load_dotenv
 from flask_wtf.csrf import CSRFProtect, generate_csrf
 import logging
@@ -465,22 +466,21 @@ def _is_checkin_station_access_allowed(endpoint: str | None, path: str, method: 
     # Explicit page routes needed on Check In/Out station.
     allowed_paths = {
         '/',
-        '/checkin/home',
         '/assistants',
-        '/books',
-        '/books/add',
         '/books/loan',
-        '/materials',
-        '/materials/add',
         '/materials/loan',
     }
     if p in allowed_paths:
         return True
 
     # Path-prefix rules for station operations.
-    if p.startswith('/api/books/'):
+    if p in {'/api/books/search', '/api/books/loan', '/api/books/return', '/api/books/clear-loan'}:
         return True
-    if p.startswith('/api/materials/'):
+    if p in {'/api/materials/search', '/api/materials/loan', '/api/materials/return', '/api/materials/clear-loan'}:
+        return True
+    if re.fullmatch(r'/api/books/\d+', p):
+        return True
+    if re.fullmatch(r'/api/materials/\d+', p):
         return True
     if p.startswith('/api/assistants/select/') and m == 'POST':
         return True
@@ -722,19 +722,59 @@ def before_request_enforce_station_mode():
                 'error': 'This machine is configured as Check In/Out Station. Endpoint unavailable on this station.',
                 'station_role': station_role,
             }), 403
-        flash('This machine is configured as Check In/Out Station. Use the station home to start scanner workflows.', 'info')
-        return redirect(url_for('checkin_home'))
+        flash('This machine is configured as Check In/Out Station. Restricted menu actions are disabled on this station.', 'info')
+        return redirect(url_for('dashboard'))
 
     if station_role == 'instructor':
-        # Instructor station has full access except scanner-only station page.
+        # Instructor station blocks operational toggle/loan workflows.
         if request.endpoint == 'qr_scanner':
-            flash('Scanner workflow is reserved for the Check In/Out Station.', 'warning')
+            flash('Scanner workflow is unavailable on Instructor Station.', 'warning')
             return redirect(url_for('instructor_home'))
-        if request.path == '/api/sessions/toggle' and request.method.upper() == 'POST':
+
+        blocked_api_exact = {
+            '/api/sessions/toggle',
+            '/api/books/loan',
+            '/api/books/return',
+            '/api/books/clear-loan',
+            '/api/materials/loan',
+            '/api/materials/return',
+            '/api/materials/clear-loan',
+        }
+        blocked_pages = {
+            '/books/loan',
+            '/materials/loan',
+            '/qr/scanner',
+        }
+        method = request.method.upper()
+        path = request.path
+
+        if path in blocked_api_exact and method in {'POST', 'PUT', 'PATCH', 'DELETE'}:
             return jsonify({
-                'error': 'Scanner toggle endpoint is reserved for the Check In/Out Station.',
+                'error': 'This operation is unavailable on Instructor Station.',
                 'station_role': station_role,
             }), 403
+
+        if re.fullmatch(r'/api/students/start/\d+', path) and method == 'POST':
+            return jsonify({
+                'error': 'Student session start is unavailable on Instructor Station.',
+                'station_role': station_role,
+            }), 403
+
+        if re.fullmatch(r'/api/students/stop/\d+', path) and method == 'POST':
+            return jsonify({
+                'error': 'Student session stop is unavailable on Instructor Station.',
+                'station_role': station_role,
+            }), 403
+
+        if re.fullmatch(r'/api/assistants/select/\d+', path) and method == 'POST':
+            return jsonify({
+                'error': 'Staff duty toggles are unavailable on Instructor Station.',
+                'station_role': station_role,
+            }), 403
+
+        if path in blocked_pages:
+            flash('Operational scan/toggle/loan workflows are unavailable on Instructor Station.', 'info')
+            return redirect(url_for('instructor_home'))
     return None
 
 
@@ -822,13 +862,30 @@ def inject_subscription_access():
 
     context = {
         'can_access_students': True,
+        'can_add_student': True,
+        'can_manage_students': True,
         'can_access_books': True,
+        'can_add_book': True,
+        'can_manage_books': True,
+        'can_add_device': True,
+        'can_manage_devices': True,
+        'can_access_book_loan': True,
+        'can_access_device_loan': True,
+        'can_access_staff_duty': True,
+        'can_access_scanner': True,
         'can_access_assistants': True,
         'can_access_stdytimeclass': True,
         'can_access_utilities_print': True,
         'can_send_email': True,
         'can_access_instructor_profile': True,
         'can_access_instructor_reports': True,
+        'can_access_reports_menu': True,
+        'can_access_utilities_menu': True,
+        'can_access_utilities_profile': True,
+        'can_access_utilities_students_calendar': True,
+        'can_access_utilities_manage_staff': True,
+        'can_access_utilities_staff_calendar': True,
+        'can_access_utilities_settings_section': True,
         'can_access_instructor_settings': True,
         'can_access_qr': True,
         'default_home_endpoint': 'dashboard',
@@ -839,23 +896,42 @@ def inject_subscription_access():
 
     if activation_limit >= 2 and role == 'checkin':
         context.update({
-            'can_access_students': False,
+            'can_access_students': True,
+            'can_add_student': False,
+            'can_manage_students': False,
             'can_access_books': True,
+            'can_add_book': False,
+            'can_manage_books': False,
+            'can_add_device': False,
+            'can_manage_devices': False,
+            'can_access_book_loan': True,
+            'can_access_device_loan': True,
             'can_access_assistants': True,
             'can_access_stdytimeclass': True,
             'can_access_utilities_print': False,
             'can_send_email': False,
-            'can_access_instructor_profile': False,
+            'can_access_instructor_profile': True,
             'can_access_instructor_reports': False,
+            'can_access_reports_menu': False,
+            'can_access_utilities_menu': True,
+            'can_access_utilities_profile': False,
+            'can_access_utilities_students_calendar': False,
+            'can_access_utilities_manage_staff': False,
+            'can_access_utilities_staff_calendar': False,
+            'can_access_utilities_settings_section': True,
             'can_access_instructor_settings': True,
             'can_access_qr': True,
-            'default_home_endpoint': 'checkin_home',
+            'default_home_endpoint': 'dashboard',
             'is_checkin_station': True,
             'is_instructor_station': False,
         })
 
     if activation_limit >= 2 and role == 'instructor':
         context.update({
+            'can_access_book_loan': False,
+            'can_access_device_loan': False,
+            'can_access_staff_duty': False,
+            'can_access_scanner': False,
             'default_home_endpoint': 'instructor_home',
             'is_checkin_station': False,
             'is_instructor_station': True,
