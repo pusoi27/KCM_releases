@@ -74,7 +74,9 @@ def register_license_routes(app):
             flash(msg, 'success' if ok else 'danger')
             if ok:
                 if role == 'checkin':
-                    return redirect(url_for('checkin_home'))
+                    # Do not force the dedicated scanner landing page.
+                    # Check In/Out station should land on regular dashboard flow.
+                    return redirect(url_for('dashboard'))
                 return redirect(url_for('instructor_home'))
             return redirect(url_for('license_station_role'))
 

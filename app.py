@@ -715,15 +715,10 @@ def before_request_enforce_station_mode():
         return redirect(url_for('license_station_role'))
 
     if station_role == 'checkin':
-        if _is_checkin_station_access_allowed(request.endpoint, request.path, request.method):
-            return None
-        if request.path.startswith('/api/'):
-            return jsonify({
-                'error': 'This machine is configured as Check In/Out Station. Endpoint unavailable on this station.',
-                'station_role': station_role,
-            }), 403
-        flash('This machine is configured as Check In/Out Station. Restricted menu actions are disabled on this station.', 'info')
-        return redirect(url_for('dashboard'))
+        # Do not hard-restrict routes/APIs on Check In/Out station.
+        # UX requirement: behave like single-license mode, with only menu-level
+        # affordances (grayed/disabled buttons) indicating restricted workflows.
+        return None
 
     if station_role == 'instructor':
         # Instructor station blocks operational toggle/loan workflows.

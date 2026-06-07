@@ -76,6 +76,7 @@
   }
   .col-id { width: 35px; text-align: center; font-weight: 600; }
   .col-name { min-width: 90px; }
+  .col-student-id { min-width: 120px; white-space: nowrap; }
   .student-name-link {
     color: inherit;
     text-decoration: none;
@@ -263,6 +264,8 @@
   <div class="students-actions">
     <a href="{{ url_for('students_add') }}" class="btn btn-success btn-sm">Add Student</a>
     <a href="{{ url_for('students_export') }}" class="btn btn-outline-primary btn-sm">Export CSV</a>
+    <a href="{{ url_for('students_export_mailing_list') }}" class="btn btn-outline-primary btn-sm">Export CSV (Mailing List)</a>
+    <a href="{{ url_for('students_badges_pdf') }}" class="btn btn-outline-dark btn-sm">Print Students Badge</a>
     <form action="{{ url_for('students_import') }}" method="post" enctype="multipart/form-data" id="importForm">
       <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
       <input type="file" name="csvfile" accept=".csv" required style="display:none;" id="csvFileInput" onchange="this.form.submit()">
@@ -275,7 +278,7 @@
     <a href="{{ url_for('qr_pdf_all') }}" class="btn btn-outline-dark btn-sm">Print QR Code (Avery 8160)</a>
   </div>
   <div class="small text-muted mb-2">
-    CSV format: <code>name,email,phone,guardian,M,R,W,classification</code>.
+    CSV format: <code>name,email,phone,guardian,student_id,M,R,W,classification</code>.
     Mark selected subjects with <code>x</code> under <code>M</code> (Math), <code>R</code> (Reading), and <code>W</code> (Writing).
     For classification use: <code>a</code> = Assisted, <code>m</code> = Monitored, <code>i</code> = Independent, <code>v</code> = Virtual.
   </div>
@@ -287,6 +290,7 @@
         <th class="col-id">ID</th>
         <th class="col-photo">Photo</th>
         <th class="col-name">Name</th>
+        <th class="col-student-id">Student ID</th>
         <th class="col-subject-flag" title="Math" aria-label="Math">M</th>
         <th class="col-subject-flag" title="Reading" aria-label="Reading">R</th>
         <th class="col-subject-flag" title="Writing" aria-label="Writing">W</th>
@@ -339,6 +343,7 @@
         <td class="col-name">
           <a href="{{ url_for('students_edit',sid=s.id) }}" class="student-name-link">{{ s.name }}</a>
         </td>
+        <td class="col-student-id">{{ s.student_identifier }}</td>
         {% set ns = namespace(m=false, r=false, w=false) %}
         {% for subject_name in s.subjects %}
           {% set token = (subject_name or '')|trim|lower %}
@@ -409,7 +414,7 @@
       <!-- Deleted Students Section -->
       {% if deleted_students %}
       <tr>
-        <td colspan="20" class="table-section-header bg-light px-3 py-2">
+        <td colspan="21" class="table-section-header bg-light px-3 py-2">
           <strong class="text-muted">Deleted Students</strong>
         </td>
       </tr>
@@ -437,6 +442,7 @@
           {% endif %}
         </td>
         <td class="col-name text-muted">{{ s.name }}</td>
+        <td class="col-student-id text-muted">{{ s.student_identifier }}</td>
         {% set ns = namespace(m=false, r=false, w=false) %}
         {% for subject_name in s.subjects %}
           {% set token = (subject_name or '')|trim|lower %}

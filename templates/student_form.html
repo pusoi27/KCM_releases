@@ -582,6 +582,20 @@
             <label for="name" class="form-label fw-semibold mb-1">Student Name <span class="required-star">*</span></label>
             <input id="name" name="name" class="form-control" value="{{ student[1] if student else '' }}" required placeholder="Full name">
           </div>
+          <div class="mb-2">
+            <label for="student_identifier" class="form-label fw-semibold mb-1">Student ID</label>
+            <input
+              id="student_identifier"
+              name="student_identifier"
+              class="form-control"
+              value="{{ student[33] if student and student|length > 33 else '' }}"
+              placeholder="e.g. 123456789012345"
+              maxlength="64"
+              pattern="[A-Za-z0-9]*"
+              title="Letters and numbers only"
+            >
+            <small class="text-muted">Supports IDs with 15+ letters/numbers.</small>
+          </div>
           <div class="row g-2">
             <div class="col-md-4">
               <label for="email" class="form-label fw-semibold mb-1">Email</label>

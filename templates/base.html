@@ -39,7 +39,7 @@
   {% if messages %}
     <div class="container mt-2">
       {% for cat,msg in messages %}
-        <div class="alert alert-{{ cat }} alert-dismissible fade show{% if cat == 'success' %} auto-dismiss{% endif %}" role="alert">
+        <div class="alert alert-{{ cat }} alert-dismissible fade show{% if cat != 'danger' %} auto-dismiss{% endif %}" data-alert-category="{{ cat }}" role="alert">
           {{ msg }}
           <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
         </div>
@@ -50,12 +50,113 @@
 {% block content %}{% endblock %}
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.1/dist/js/bootstrap.bundle.min.js"></script>
 <script>
-  document.querySelectorAll('.auto-dismiss').forEach(function(el) {
-    setTimeout(function() {
-      var bsAlert = bootstrap.Alert.getOrCreateInstance(el);
-      bsAlert.close();
-    }, 3000);
-  });
+  (function () {
+    var timers = new WeakMap();
+
+    function getAlertCategory(el) {
+      if (!el) return '';
+      var explicit = (el.getAttribute('data-alert-category') || '').trim().toLowerCase();
+      if (explicit) return explicit;
+      var classes = ['success', 'info', 'warning', 'danger', 'primary', 'secondary', 'light', 'dark'];
+      for (var i = 0; i < classes.length; i += 1) {
+        if (el.classList.contains('alert-' + classes[i])) return classes[i];
+      }
+      return '';
+    }
+
+    function shouldAutoDismiss(el) {
+      if (!el || !el.classList || !el.classList.contains('alert')) return false;
+      if (el.classList.contains('d-none')) return false;
+      if (el.closest('#version-compat-banner')) return false;
+      if (el.getAttribute('data-no-autodismiss') === 'true') return false;
+      var category = getAlertCategory(el);
+      return category !== 'danger';
+    }
+
+    function dismissAlert(el) {
+      if (!el || !el.isConnected) return;
+      if (window.bootstrap && bootstrap.Alert && el.classList.contains('alert-dismissible')) {
+        try {
+          var bsAlert = bootstrap.Alert.getOrCreateInstance(el);
+          bsAlert.close();
+          return;
+        } catch (e) {
+          // Fall back to non-Bootstrap hide behavior.
+        }
+      }
+
+      el.style.transition = 'opacity 200ms ease';
+      el.style.opacity = '0';
+      setTimeout(function () {
+        if (!el || !el.isConnected) return;
+        if (el.parentElement && el.parentElement.children.length === 1 && el.parentElement.classList.contains('container')) {
+          el.parentElement.remove();
+        } else {
+          el.classList.add('d-none');
+        }
+      }, 220);
+    }
+
+    function getDurationMs(el) {
+      var category = getAlertCategory(el);
+      if (category === 'success') return 3500;
+      if (category === 'info' || category === 'primary' || category === 'secondary' || category === 'light') return 4500;
+      if (category === 'warning') return 6000;
+      return 4500;
+    }
+
+    function scheduleAutoDismiss(el) {
+      if (!shouldAutoDismiss(el)) return;
+
+      var existing = timers.get(el);
+      if (existing) {
+        clearTimeout(existing);
+      }
+
+      var delay = getDurationMs(el);
+      var timer = setTimeout(function () {
+        dismissAlert(el);
+        timers.delete(el);
+      }, delay);
+      timers.set(el, timer);
+    }
+
+    function scanAndSchedule(root) {
+      if (!root) return;
+      if (root.matches && root.matches('.alert')) {
+        scheduleAutoDismiss(root);
+      }
+      if (root.querySelectorAll) {
+        root.querySelectorAll('.alert').forEach(scheduleAutoDismiss);
+      }
+    }
+
+    scanAndSchedule(document);
+
+    var observer = new MutationObserver(function (mutations) {
+      mutations.forEach(function (mutation) {
+        if (mutation.type === 'childList') {
+          mutation.addedNodes.forEach(function (node) {
+            if (node.nodeType === 1) {
+              scanAndSchedule(node);
+            }
+          });
+          return;
+        }
+
+        if (mutation.type === 'attributes') {
+          scheduleAutoDismiss(mutation.target);
+        }
+      });
+    });
+
+    observer.observe(document.body, {
+      childList: true,
+      subtree: true,
+      attributes: true,
+      attributeFilter: ['class', 'data-alert-category', 'data-no-autodismiss'],
+    });
+  })();
 </script>
 <script>
   (function () {

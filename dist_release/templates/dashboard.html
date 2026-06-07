@@ -21,14 +21,15 @@
   {% endif %}
 
   <div class="dash-topbar-right d-flex align-items-center ms-auto">
-    {% if ls_nav_badge and ls_nav_badge.visible %}
-    <span
-      class="badge rounded-pill text-bg-{{ ls_nav_badge.tone }}"
-      title="{{ ls_nav_badge.tooltip }}"
+    {% if (license_status.activation_limit or 0)|int < 2 %}
+    <a
+      class="btn btn-sm btn-warning fw-semibold"
+      href="{{ url_for('instructor_home') }}"
+      title="Open Instructor Station view"
       style="margin-right:.5rem;"
     >
-      {{ ls_nav_badge.label }} · {{ ls_nav_badge.age_text }} · {{ ls_nav_badge.cache_remaining_text }} · {{ 'grace' if ls_nav_badge.grace_mode else 'live' }}
-    </span>
+      <i class="bi bi-mortarboard-fill me-1"></i>Instructor View
+    </a>
     {% endif %}
     {% if license_status and license_status.activation_limit %}
     <span
@@ -53,9 +54,11 @@
   </div>
   <div class="offcanvas-body p-0">
     <ul class="list-group list-group-flush">
+      {% if subscription_access.can_access_students %}
       <li class="list-group-item offcanvas-section-header">Students</li>
       <li class="list-group-item"><a href="{{ url_for('students_add') }}" class="offcanvas-link"><i class="bi bi-person-plus me-2"></i>Add Student</a></li>
       <li class="list-group-item"><a href="{{ url_for('students_list') }}" class="offcanvas-link"><i class="bi bi-people me-2"></i>View / Edit / Delete</a></li>
+      {% endif %}
       {% if subscription_access.can_access_books %}
       <li class="list-group-item offcanvas-section-header">Books/Devices</li>
       <li class="list-group-item"><a href="{{ url_for('books_add') }}" class="offcanvas-link"><i class="bi bi-plus-square me-2"></i>Add Book</a></li>
@@ -97,9 +100,11 @@
 
   <!-- Left: icon sidebar menu bar -->
   <nav class="dash-sidebar">
+    {% if subscription_access.can_access_students %}
     <a href="{{ url_for('students_list') }}" class="dash-sidebar-item" title="Students">
       <i class="bi bi-people-fill"></i>
     </a>
+    {% endif %}
     {% if subscription_access.can_access_books %}
     <a href="{{ url_for('books_list') }}" class="dash-sidebar-item" title="Books/Devices">
       <i class="bi bi-journal-bookmark-fill"></i>

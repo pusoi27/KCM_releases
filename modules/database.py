@@ -809,6 +809,7 @@ def _remove_legacy_student_columns(db_path: str) -> None:
             CREATE TABLE students_new_no_goals (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 name TEXT,
+                student_identifier TEXT DEFAULT '',
                 subject TEXT,
                 subjects_json TEXT DEFAULT '[]',
                 subject_minutes_json TEXT DEFAULT '[]',
@@ -852,7 +853,7 @@ def _remove_legacy_student_columns(db_path: str) -> None:
             return f'{default_sql} AS "{col_name}"'
 
         insert_cols = [
-            "id", "name", "subject", "subjects_json", "subject_minutes_json", "total_study_minutes",
+            "id", "name", "student_identifier", "subject", "subjects_json", "subject_minutes_json", "total_study_minutes",
             "book_loaned", "email", "phone", "guardian", "active", "el", "pi", "v",
             "day1", "day1_time", "day2", "day2_time", "day3", "day3_time", "day4", "day4_time",
             "day5", "day5_time", "day6", "day6_time", "checkout_notify_enabled", "photo_blob",
@@ -862,6 +863,7 @@ def _remove_legacy_student_columns(db_path: str) -> None:
         select_exprs = [
             _src("id", "NULL"),
             _src("name", "''"),
+            _src("student_identifier", "''"),
             _src("subject", "''"),
             _src("subjects_json", "'[]'"),
             _src("subject_minutes_json", "'[]'"),
@@ -1398,6 +1400,7 @@ def init_db():
         CREATE TABLE IF NOT EXISTS students (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             name TEXT,
+            student_identifier TEXT DEFAULT '',
             subject TEXT,
             subjects_json TEXT DEFAULT '[]',
             subject_minutes_json TEXT DEFAULT '[]',
@@ -1649,6 +1652,8 @@ def init_db():
             cur.execute("ALTER TABLE students ADD COLUMN ind INTEGER DEFAULT 0")
         if "checkout_notify_enabled" not in cols:
             cur.execute("ALTER TABLE students ADD COLUMN checkout_notify_enabled INTEGER DEFAULT 1")
+        if "student_identifier" not in cols:
+            cur.execute("ALTER TABLE students ADD COLUMN student_identifier TEXT DEFAULT ''")
         cur.execute("UPDATE students SET checkout_notify_enabled = 1 WHERE checkout_notify_enabled IS NULL")
 
         schedule_rows = cur.execute(

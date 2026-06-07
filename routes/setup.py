@@ -99,6 +99,21 @@ def register_setup_routes(app):
                 flash('Backup push skipped or failed. Verify DB Backup path is configured and available.', 'warning')
         return redirect(url_for('setup_storage'))
 
+    @app.route('/api/cloud/push-backup', methods=['POST'])
+    @require_login
+    def api_cloud_push_backup():
+        """Trigger an immediate best-effort cloud backup push from client-side UI flows."""
+        pushed = sync_to_gdrive_now()
+        if pushed:
+            return jsonify({"success": True, "pushed": True}), 200
+
+        detail = get_last_sync_error()
+        return jsonify({
+            "success": False,
+            "pushed": False,
+            "error": detail or "Backup push skipped or failed.",
+        }), 200
+
     @app.route('/setup/storage/pull-backup', methods=['POST'])
     @require_login
     def setup_storage_pull_backup():

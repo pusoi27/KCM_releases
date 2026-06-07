@@ -715,6 +715,19 @@ img.rounded-circle[src*='default.png'] {
 }
 .offcanvas-link:hover { color: #4caf50; }
 
+/* --- Instructor Home: neutral buttons + yellow hover --- */
+.instructor-home-page .btn {
+  background-color: #fff !important;
+}
+
+.instructor-home-page .btn:hover,
+.instructor-home-page .btn:focus,
+.instructor-home-page .btn:active {
+  background-color: #fdd835 !important;
+  border-color: #e0b800 !important;
+  color: #1b5e20 !important;
+}
+
 /* --- Global green theme for non-dashboard navbar --- */
 /* (applied via navbar.html inline style change) */
 

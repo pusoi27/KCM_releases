@@ -18,13 +18,13 @@
       <h1 class="h3 fw-bold mb-2">Choose this machine's role</h1>
       <p class="text-muted mb-4">
         Your license allows <strong>{{ license_status.activation_limit }}</strong> machines.
-        Assign this machine as either the Scanner Station or the Instructor Station.
+        Assign this machine as either the Check In/Out station (scanner-only) or the Instructor station (all features except scanner flow).
       </p>
 
       <div class="alert alert-secondary mb-4">
         <div class="fw-semibold mb-2">Recommended OneDrive deployment pattern</div>
         <ul class="mb-0">
-          <li><strong>Scanner Station</strong>: use for high-frequency student session toggles and staff duty changes.</li>
+          <li><strong>Check In/Out Station</strong>: use for high-frequency student session toggles and staff duty changes.</li>
           <li><strong>Instructor Station</strong>: use for slower administrative updates like adding students, books, devices, loans, and reports.</li>
           <li>Try to avoid making the same record changes on both machines at the same time so OneDrive sync stays calm.</li>
         </ul>
@@ -47,9 +47,9 @@
           <div class="col-md-6">
             <label class="choice d-block">
               <input class="form-check-input me-2" type="radio" name="station_role" value="checkin" {% if license_status.station_role == 'checkin' %}checked{% endif %} required>
-              <strong>Scanner Station</strong>
+              <strong>Check In/Out Station</strong>
               <div class="small text-muted mt-2">
-                Use this for fast scanning workflows and duty toggles.
+                Use this for QR scanning and check in/out operations only.
               </div>
             </label>
           </div>

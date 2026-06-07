@@ -359,6 +359,7 @@ def register_instructor_profile_routes(app):
             'calendar': {day: {} for day in active_days},
             'day_metadata': {},
             'slot_loading': {day: {} for day in active_days},
+            'day_time_slots': {day: set() for day in active_days},
         }
 
         weekday_lookup = {
@@ -418,6 +419,15 @@ def register_instructor_profile_routes(app):
         
         if profile:
             days = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday']
+            day_lookup = {
+                'monday': 'Monday',
+                'tuesday': 'Tuesday',
+                'wednesday': 'Wednesday',
+                'thursday': 'Thursday',
+                'friday': 'Friday',
+                'saturday': 'Saturday',
+                'sunday': 'Sunday',
+            }
             for day in days:
                 start_key = f'{day}_start'
                 end_key = f'{day}_end'
@@ -427,6 +437,9 @@ def register_instructor_profile_routes(app):
                     end_time = profile[end_key]
                     slots = generate_time_slots(start_time, end_time)
                     time_slots_set.update(slots)
+                    day_name = day_lookup.get(day)
+                    if day_name in schedule['day_time_slots']:
+                        schedule['day_time_slots'][day_name].update(slots)
         
         # Sort time slots
         schedule['time_slots'] = sorted(list(time_slots_set), key=lambda t: time_to_minutes(t))
@@ -506,6 +519,10 @@ def register_instructor_profile_routes(app):
                 if day not in schedule['calendar']:
                     return
 
+                day_slots = schedule['day_time_slots'].get(day, set())
+                if day_slots and time_display not in day_slots:
+                    return
+
                 def append_unique(day_name, slot_time, payload):
                     if slot_time not in schedule['calendar'][day_name]:
                         schedule['calendar'][day_name][slot_time] = []
@@ -523,7 +540,7 @@ def register_instructor_profile_routes(app):
                     next_minutes = current_minutes + (step * 30)
                     next_time_display = minutes_to_time_display(next_minutes)
 
-                    if next_time_display in schedule['time_slots']:
+                    if next_time_display in day_slots:
                         append_unique(day, next_time_display, student_data)
             
             for entry in schedule_entries:
@@ -549,21 +566,31 @@ def register_instructor_profile_routes(app):
             day_meta = schedule['day_metadata'].get(day, {})
             day_capacity = day_meta.get('loading_capacity', 0)
             is_open = bool(day_meta.get('is_open', True))
+            valid_day_slots = schedule['day_time_slots'].get(day, set())
             for time_slot in schedule['time_slots']:
                 slot_students = schedule['calendar'].get(day, {}).get(time_slot, []) or []
+                slot_is_within_hours = time_slot in valid_day_slots
                 occupied_count = sum(
                     1
                     for student in slot_students
                     if student.get('el') or student.get('pi') or student.get('v')
                 )
                 over_capacity = max(0, occupied_count - day_capacity)
-                free_slots = max(0, day_capacity - occupied_count) if is_open else 0
+                if is_open and slot_is_within_hours:
+                    free_slots = max(0, day_capacity - occupied_count)
+                    slot_capacity = day_capacity
+                    slot_is_open = True
+                else:
+                    free_slots = 0
+                    slot_capacity = 0
+                    slot_is_open = False
                 schedule['slot_loading'][day][time_slot] = {
-                    'capacity': day_capacity,
+                    'capacity': slot_capacity,
                     'occupied': occupied_count,
                     'free': free_slots,
                     'over_capacity': over_capacity,
-                    'is_open': is_open,
+                    'is_open': slot_is_open,
+                    'in_day_hours': slot_is_within_hours,
                 }
         
         total_students = len([

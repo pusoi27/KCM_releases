@@ -1,19 +1,145 @@
 # routes/students.py
-from io import BytesIO
+from io import BytesIO, StringIO
+import csv
 
 from flask import abort, jsonify, render_template, request, redirect, url_for, flash, send_file, current_app, after_this_request
 from werkzeug.utils import secure_filename
 from modules import student_manager, instructor_profile_manager, server_cache, db_backup_recovery, auth_manager
-from routes.auth import require_login, require_admin
+from routes.auth import require_login, require_admin, require_feature
 from routes.operation_utils import flash_scoped_failure, invalidate_scoped_cache
 import os
 import tempfile
 import sqlite3
 from modules.database import DB_PATH
 import json
+import re
+from reportlab.lib.pagesizes import A4, landscape
+from reportlab.lib.units import mm
+from reportlab.lib.utils import ImageReader
+from reportlab.pdfgen import canvas
 _ALLOWED_PHOTO_EXTS = {'jpg', 'jpeg', 'png', 'gif', 'webp'}
 MAX_SUBJECTS = 3
 MAX_SCHEDULE_DAYS = 6
+MAX_STUDENT_IDENTIFIER_LEN = 64
+_STUDENT_IDENTIFIER_RE = re.compile(r'^[A-Za-z0-9]*$')
+
+
+def _parse_student_identifier(raw_value: str) -> str:
+    """Validate and normalize Student ID input."""
+    value = student_manager.normalize_student_identifier(raw_value, MAX_STUDENT_IDENTIFIER_LEN)
+    if len(value) > MAX_STUDENT_IDENTIFIER_LEN:
+        raise ValueError(f"Student ID must be {MAX_STUDENT_IDENTIFIER_LEN} characters or fewer.")
+    if value and not _STUDENT_IDENTIFIER_RE.fullmatch(value):
+        raise ValueError("Student ID can contain letters and numbers only.")
+    return value
+
+
+def _build_student_badges_pdf(students):
+    """Build A4 landscape student badge PDF with 7x3 grid."""
+    buffer = BytesIO()
+    page_w, page_h = landscape(A4)
+    pdf = canvas.Canvas(buffer, pagesize=(page_w, page_h))
+
+    cols = 7
+    rows = 3
+    margin_x = 5 * mm
+    margin_y = 5 * mm
+    gap_x = 2 * mm
+    gap_y = 2 * mm
+
+    card_w = (page_w - (2 * margin_x) - ((cols - 1) * gap_x)) / cols
+    card_h = (page_h - (2 * margin_y) - ((rows - 1) * gap_y)) / rows
+    cards_per_page = cols * rows
+
+    for index, student in enumerate(students):
+        slot = index % cards_per_page
+        if index and slot == 0:
+            pdf.showPage()
+
+        row = slot // cols
+        col = slot % cols
+        x = margin_x + col * (card_w + gap_x)
+        y = page_h - margin_y - (row + 1) * card_h - row * gap_y
+
+        student_name = str(student[1] or '').strip()
+        student_identifier = str(student[2] or '').strip()
+        photo_blob = student[3]
+        qr_blob = student[5]
+
+        if isinstance(photo_blob, memoryview):
+            photo_blob = photo_blob.tobytes()
+        if isinstance(qr_blob, memoryview):
+            qr_blob = qr_blob.tobytes()
+
+        padding = 2.5 * mm
+        inner_w = card_w - (2 * padding)
+        inner_h = card_h - (2 * padding)
+        name_h = 8 * mm
+        id_h = 6 * mm if student_identifier else 0
+        content_h = max(10 * mm, inner_h - name_h - id_h)
+        image_gap = 2 * mm
+        image_side = max(10 * mm, min((inner_w - image_gap) / 2, content_h - 2 * mm))
+
+        top_y = y + card_h - padding
+        name_y = top_y - 6.5 * mm
+
+        pdf.setStrokeColorRGB(0.75, 0.75, 0.75)
+        pdf.setLineWidth(0.4)
+        pdf.rect(x, y, card_w, card_h, stroke=1, fill=0)
+
+        pdf.setFont("Helvetica-Bold", 6.5)
+        display_name = student_name if len(student_name) <= 26 else student_name[:23] + "..."
+        pdf.drawCentredString(x + card_w / 2, name_y, display_name)
+
+        media_y = y + padding + (id_h if id_h else 0)
+        if student_identifier:
+            pdf.setFont("Helvetica", 6)
+            pdf.drawCentredString(x + card_w / 2, y + padding + 1 * mm, f"ID: {student_identifier}")
+
+        photo_x = x + padding
+        qr_x = photo_x + image_side + image_gap
+
+        if photo_blob:
+            try:
+                pdf.drawImage(
+                    ImageReader(BytesIO(photo_blob)),
+                    photo_x,
+                    media_y,
+                    width=image_side,
+                    height=image_side,
+                    preserveAspectRatio=True,
+                    mask='auto',
+                )
+            except Exception:
+                photo_blob = None
+        if not photo_blob:
+            pdf.setStrokeColorRGB(0.82, 0.82, 0.82)
+            pdf.rect(photo_x, media_y, image_side, image_side, stroke=1, fill=0)
+            pdf.setFont("Helvetica", 5.5)
+            pdf.drawCentredString(photo_x + image_side / 2, media_y + image_side / 2, "No Photo")
+
+        if qr_blob:
+            try:
+                pdf.drawImage(
+                    ImageReader(BytesIO(qr_blob)),
+                    qr_x,
+                    media_y,
+                    width=image_side,
+                    height=image_side,
+                    preserveAspectRatio=True,
+                    mask='auto',
+                )
+            except Exception:
+                qr_blob = None
+        if not qr_blob:
+            pdf.setStrokeColorRGB(0.82, 0.82, 0.82)
+            pdf.rect(qr_x, media_y, image_side, image_side, stroke=1, fill=0)
+            pdf.setFont("Helvetica", 5.5)
+            pdf.drawCentredString(qr_x + image_side / 2, media_y + image_side / 2, "No QR")
+
+    pdf.save()
+    buffer.seek(0)
+    return buffer
 
 
 def _vcf_escape(value: str) -> str:
@@ -370,6 +496,12 @@ def register_student_routes(app, upload_folder):
     @require_login
     def students_add():
         if request.method == "POST":
+            try:
+                student_identifier = _parse_student_identifier(request.form.get("student_identifier", ""))
+            except ValueError as exc:
+                flash(str(exc), "danger")
+                return redirect(url_for("students_add"))
+
             subjects, subject_minutes = _parse_subjects_from_form(request.form)
             if not subjects:
                 flash("Please add at least one subject.", "danger")
@@ -392,6 +524,7 @@ def register_student_routes(app, upload_folder):
                 subject_minutes=subject_minutes,
                 schedule_json=_sched_json,
                 guardian=request.form.get("guardian", ""),
+                student_identifier=student_identifier,
             )
             # Invalidate tenant-scoped student list lane.
             _invalidate_student_caches()
@@ -421,6 +554,12 @@ def register_student_routes(app, upload_folder):
         if not stu:
             return "Student not found", 404
         if request.method == "POST":
+            try:
+                student_identifier = _parse_student_identifier(request.form.get("student_identifier", ""))
+            except ValueError as exc:
+                flash(str(exc), "danger")
+                return redirect(url_for("students_edit", sid=sid))
+
             subjects, subject_minutes = _parse_subjects_from_form(request.form)
             if not subjects:
                 flash("Please add at least one subject.", "danger")
@@ -444,6 +583,7 @@ def register_student_routes(app, upload_folder):
                 subject_minutes=subject_minutes,
                 schedule_json=_sched_json,
                 guardian=request.form.get("guardian", ""),
+                student_identifier=student_identifier,
             )
             # Invalidate tenant-scoped student list lane.
             _invalidate_student_caches()
@@ -629,6 +769,63 @@ def register_student_routes(app, upload_folder):
             current_app.logger.exception("Student CSV export failed: %s", e)
             flash("CSV export failed. Please try again.", "danger")
             return redirect(url_for("students_list"))
+
+    @app.route("/students/export-mailing-list")
+    @require_login
+    @require_feature(auth_manager.FEATURE_STUDENT_DATABASE)
+    def students_export_mailing_list():
+        """Export active student mailing list (name + email)."""
+        rows = student_manager.get_students_mailing_list_rows()
+        output = StringIO()
+        writer = csv.writer(output)
+        writer.writerow(["name", "email"])
+        for name, email in rows:
+            writer.writerow([str(name or ""), str(email or "")])
+
+        payload = BytesIO(output.getvalue().encode("utf-8"))
+        return send_file(
+            payload,
+            as_attachment=True,
+            download_name="students_mailing_list.csv",
+            mimetype="text/csv",
+        )
+
+    @app.route('/students/badges/pdf')
+    @require_login
+    @require_feature(auth_manager.FEATURE_STUDENT_DATABASE)
+    def students_badges_pdf():
+        """Generate student badge cards (A4 landscape, 7x3 grid)."""
+        students = student_manager.get_students_badge_payload()
+        if not students:
+            flash("No active students found for badge printing.", "warning")
+            return redirect(url_for("students_list"))
+
+        enriched = []
+        for row in students:
+            sid = row[0]
+            name = row[1]
+            qr_blob = row[5]
+            if isinstance(qr_blob, memoryview):
+                qr_blob = qr_blob.tobytes()
+            if not qr_blob:
+                try:
+                    qr_data = f"ID:{sid}\nName:{name}"
+                    qr_blob = student_manager.get_student_qr_code(sid)
+                    if not qr_blob:
+                        from modules import qr_generator
+                        qr_blob = qr_generator.generate_qr_bytes(qr_data)
+                        student_manager.set_student_qr_code(sid, qr_blob)
+                except Exception:
+                    qr_blob = None
+            enriched.append((row[0], row[1], row[2], row[3], row[4], qr_blob))
+
+        pdf_buffer = _build_student_badges_pdf(enriched)
+        return send_file(
+            pdf_buffer,
+            mimetype='application/pdf',
+            as_attachment=True,
+            download_name='students_badges_a4_landscape_7x3.pdf',
+        )
 
     @app.route("/students/export-vcf/<int:sid>")
     @require_login

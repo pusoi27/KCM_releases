@@ -35,7 +35,7 @@
         <!-- Students -->
         <li class="nav-item dropdown">
           <a class="nav-link dropdown-toggle text-white" href="#" id="studentsMenu"
-             role="button" data-bs-toggle="dropdown"><i class="bi bi-people"></i> Students</a>
+             role="button" data-bs-toggle="dropdown">Students</a>
           <ul class="dropdown-menu">
             <li>
               <a
@@ -56,7 +56,7 @@
 
         <!-- Books -->
         <li class="nav-item dropdown">
-          <a class="nav-link dropdown-toggle text-white" href="#" id="booksMenu" role="button" data-bs-toggle="dropdown"><i class="bi bi-journal-bookmark"></i> Books/Devices</a>
+          <a class="nav-link dropdown-toggle text-white" href="#" id="booksMenu" role="button" data-bs-toggle="dropdown">Books/Devices</a>
           <ul class="dropdown-menu">
             <li>
               <a
@@ -104,14 +104,6 @@
           </ul>
         </li>
 
-        <li class="nav-item">
-          <a
-            class="nav-link text-white{% if not subscription_access.can_access_staff_duty %} disabled text-white-50{% endif %}"
-            href="{% if subscription_access.can_access_staff_duty %}{{ url_for('assistants_list') }}{% else %}#{% endif %}"
-            {% if not subscription_access.can_access_staff_duty %}aria-disabled="true" tabindex="-1"{% endif %}
-          ><i class="bi bi-person-badge"></i> Staff Duty</a>
-        </li>
-
         
 
         <!-- Reports -->
@@ -133,7 +125,6 @@
     <li><a class="dropdown-item{% if not subscription_access.can_access_utilities_students_calendar %} disabled text-muted menu-item-disabled{% endif %}" href="{% if subscription_access.can_access_utilities_students_calendar %}{{ url_for('center_calendar') }}{% else %}#{% endif %}" {% if not subscription_access.can_access_utilities_students_calendar %}aria-disabled="true" tabindex="-1"{% endif %}>Students Calendar</a></li>
     <li><a class="dropdown-item{% if not subscription_access.can_access_utilities_manage_staff %} disabled text-muted menu-item-disabled{% endif %}" href="{% if subscription_access.can_access_utilities_manage_staff %}{{ url_for('assistants_list') }}{% else %}#{% endif %}" {% if not subscription_access.can_access_utilities_manage_staff %}aria-disabled="true" tabindex="-1"{% endif %}>Manage Staff</a></li>
     <li><a class="dropdown-item{% if not subscription_access.can_access_utilities_staff_calendar %} disabled text-muted menu-item-disabled{% endif %}" href="{% if subscription_access.can_access_utilities_staff_calendar %}{{ url_for('schedule_assistants') }}{% else %}#{% endif %}" {% if not subscription_access.can_access_utilities_staff_calendar %}aria-disabled="true" tabindex="-1"{% endif %}>Staff Calendar</a></li>
-    {% if subscription_access.can_access_instructor_settings %}
     <li><hr class="dropdown-divider"></li>
     <li><span class="dropdown-item-text text-muted small px-3">Settings</span></li>
     <li>
@@ -144,8 +135,7 @@
       >Scanner</a>
     </li>
     <li><a class="dropdown-item ps-4" href="{{ url_for('setup_storage') }}">DB Backup</a></li>
-    <li><a class="dropdown-item ps-4" href="{{ url_for('license_page') }}"><i class="bi bi-key me-2"></i>Upgrade License</a></li>
-    {% endif %}
+    <li><a class="dropdown-item ps-4" href="{{ url_for('license_page') }}">Upgrade License</a></li>
     {% if dev_trace_enabled %}
     <li><hr class="dropdown-divider"></li>
     <li>
@@ -174,13 +164,13 @@
             <i class="bi bi-pc-display"></i> {{ license_status.activation_usage }}/{{ license_status.activation_limit }}
           </span>
         {% endif %}
-        {% if subscription_access and subscription_access.station_role %}
+        {% if (license_status.activation_limit or 0)|int >= 2 and subscription_access and subscription_access.station_role %}
           <span
-            class="badge rounded-pill me-3 {% if subscription_access.is_checkin_station %}text-bg-warning{% else %}text-bg-primary{% endif %}"
+            class="badge rounded-pill me-3 text-bg-warning"
             title="{% if subscription_access.is_checkin_station %}Recommended for high-frequency session toggles and duty changes.{% else %}Recommended for slower administrative updates.{% endif %}"
           >
             {% if subscription_access.is_checkin_station %}
-              <i class="bi bi-upc-scan"></i> Check In/Out Station
+              <i class="bi bi-mortarboard-fill"></i> Scanner Station
             {% else %}
               <i class="bi bi-mortarboard-fill"></i> Instructor Station
             {% endif %}

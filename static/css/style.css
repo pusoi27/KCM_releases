@@ -715,6 +715,21 @@ img.rounded-circle[src*='default.png'] {
 }
 .offcanvas-link:hover { color: #4caf50; }
 
+/* Ensure disabled offcanvas links are clearly distinguishable */
+.offcanvas-link.disabled,
+.offcanvas-link.menu-item-disabled,
+.offcanvas-link[aria-disabled="true"] {
+  color: #bfc5cc !important;
+  cursor: not-allowed;
+  pointer-events: none;
+}
+
+.offcanvas-link.disabled:hover,
+.offcanvas-link.menu-item-disabled:hover,
+.offcanvas-link[aria-disabled="true"]:hover {
+  color: #bfc5cc !important;
+}
+
 /* --- Instructor Home: neutral buttons + yellow hover --- */
 .instructor-home-page .btn {
   background-color: #fff !important;
