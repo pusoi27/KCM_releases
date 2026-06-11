@@ -23,7 +23,7 @@ def close_all_open_db_sessions():
                 # if parsing fails, set 0 duration
                 dur = 0
             c.execute(
-                "UPDATE sessions SET end_time=?, duration=? WHERE id=?",
+                "UPDATE sessions SET end_time=?, duration=?, sync_synced = 0 WHERE id=?",
                 (end, dur, sid),
             )
             updated += 1

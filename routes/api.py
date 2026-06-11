@@ -4,7 +4,7 @@ from modules import student_manager, assistant_manager, timer_manager, auth_mana
 from modules import server_cache
 from modules.email_manager import get_email_manager, render_branded_email_shell, resolve_center_name
 from modules import instructor_profile_manager
-from modules.database import DB_PATH, GDRIVE_SYNC_PATH, sync_to_gdrive
+from modules.database import DB_PATH, GDRIVE_SYNC_PATH, sync_to_gdrive, is_station_mailbox_mode_enabled
 from modules.utils import duration_seconds, time_now
 from datetime import datetime
 import base64
@@ -41,6 +41,10 @@ def _push_cloud_backup_after_staff_change(aid: int, action: str) -> None:
     before the 9-minute background sync cycle runs.
     """
     try:
+        if is_station_mailbox_mode_enabled():
+            _trace_staff_duty("mailbox_mode_enabled_skip_direct_cloud_push", aid=aid, action=action)
+            return
+
         if not GDRIVE_SYNC_PATH:
             _trace_staff_duty("cloud_push_skipped_no_path", aid=aid, action=action)
             return
@@ -60,6 +64,10 @@ def _push_cloud_backup_after_staff_change(aid: int, action: str) -> None:
 def _push_cloud_backup_after_student_change(student_id: int, action: str, source: str) -> None:
     """Best-effort immediate cloud push after main-class checkin/checkout writes."""
     try:
+        if is_station_mailbox_mode_enabled():
+            _trace_column3("mailbox_mode_enabled_skip_direct_cloud_push", sid=student_id, action=action, source=source)
+            return
+
         if not GDRIVE_SYNC_PATH:
             _trace_column3("cloud_push_skipped_no_path", sid=student_id, action=action, source=source)
             return
@@ -532,7 +540,7 @@ def register_api_routes(app):
                 except Exception:
                     duration = 0
                 c.execute(
-                    "UPDATE sessions SET end_time = ?, duration = ? WHERE id = ?",
+                    "UPDATE sessions SET end_time = ?, duration = ?, sync_synced = 0 WHERE id = ?",
                     (end, duration, sess_id),
                 )
                 conn.commit()
@@ -608,7 +616,7 @@ def register_api_routes(app):
                         c.execute(
                             """
                             UPDATE sessions
-                            SET end_time = ?, duration = ?
+                            SET end_time = ?, duration = ?, sync_synced = 0
                             WHERE id = (
                                 SELECT id
                                 FROM sessions
@@ -736,7 +744,7 @@ def register_api_routes(app):
                         except Exception:
                             duration = 0
                         c.execute(
-                            "UPDATE sessions SET end_time = ?, duration = ? WHERE id = ?",
+                            "UPDATE sessions SET end_time = ?, duration = ?, sync_synced = 0 WHERE id = ?",
                             (end, duration, sess_id),
                         )
                         conn.commit()
@@ -802,7 +810,7 @@ def register_api_routes(app):
                 except Exception:
                     duration = 0
                 c.execute(
-                    "UPDATE sessions SET end_time = ?, duration = ? WHERE id = ?",
+                    "UPDATE sessions SET end_time = ?, duration = ?, sync_synced = 0 WHERE id = ?",
                     (end, duration, sess_id),
                 )
             conn.commit()
@@ -952,7 +960,7 @@ def register_api_routes(app):
                         start_dt = None
                     duration = int((now - start_dt).total_seconds()) if start_dt else 0
                     cur.execute(
-                        "UPDATE assistant_sessions SET end_time=?, duration=? WHERE id=?",
+                        "UPDATE assistant_sessions SET end_time=?, duration=?, sync_synced = 0 WHERE id=?",
                         (now.isoformat(), duration, sess_id),
                     )
                     conn.commit()

@@ -2,7 +2,7 @@
 #database.py   ver 05--
 #*****************************
 
-import sqlite3, os, sys, shutil, threading, time, atexit, socket, mimetypes
+import sqlite3, os, sys, shutil, threading, time, atexit, socket, mimetypes, uuid
 from datetime import datetime, timezone
 import json
 import tempfile
@@ -57,6 +57,91 @@ _SHUTDOWN_SYNC_COMPLETED = False
 _SHUTDOWN_WAIT_POPUP_SHOWN = False
 _SHUTDOWN_SYNC_LOCK = threading.Lock()
 _CLOUD_SYNC_RUNTIME_READY = False
+_ONEDRIVE_MONITOR_INTERVAL_SECONDS = 20
+_ONEDRIVE_QUARANTINE_DIRNAME = ".stdytime_onedrive_quarantine"
+_ONEDRIVE_MONITOR_STOP_EVENT = threading.Event()
+_ONEDRIVE_MONITOR_THREAD: threading.Thread | None = None
+_ONEDRIVE_MONITOR_LOCK = threading.Lock()
+_ONEDRIVE_QUARANTINED_FILES: dict[str, str] = {}
+_MAILBOX_SYNC_INTERVAL_MINUTES = 10
+_STATION_MAILBOX_STOP_EVENT = threading.Event()
+_STATION_MAILBOX_THREAD: threading.Thread | None = None
+_MAILBOX_LAST_STAFF_EXPORT_HASH = ""
+
+# Adaptive retry mechanism for OneDrive sync
+_SYNC_FAILURE_COUNT = 0
+_SYNC_LAST_FAILURE_TIME = 0.0
+_SYNC_RETRY_LOCK = threading.RLock()
+_SYNC_RETRY_DELAYS = [45, 90, 180]  # seconds: 45s, 90s, 180s (exponential backoff)
+
+
+def _get_next_sync_retry_delay() -> int:
+    """Calculate retry delay based on consecutive failures.
+    
+    Returns:
+        int: Delay in seconds. If all exponential backoffs exhausted, returns -1 to signal
+             waiting until next 9-minute cycle.
+    """
+    with _SYNC_RETRY_LOCK:
+        if _SYNC_FAILURE_COUNT == 0:
+            return 0  # No delay, sync normally
+        elif _SYNC_FAILURE_COUNT <= len(_SYNC_RETRY_DELAYS):
+            return _SYNC_RETRY_DELAYS[_SYNC_FAILURE_COUNT - 1]
+        else:
+            return -1  # Signal: wait until next 9-min cycle
+
+
+def _record_sync_failure() -> None:
+    """Record a sync failure and increment retry counter."""
+    global _SYNC_FAILURE_COUNT, _SYNC_LAST_FAILURE_TIME
+    with _SYNC_RETRY_LOCK:
+        _SYNC_FAILURE_COUNT += 1
+        _SYNC_LAST_FAILURE_TIME = time.time()
+        print(
+            f"[sync] Failure #{_SYNC_FAILURE_COUNT} recorded at {datetime.now().strftime('%H:%M:%S')}. "
+            f"Next retry: ",
+            end="",
+            file=sys.stderr,
+        )
+        delay = _get_next_sync_retry_delay()
+        if delay == -1:
+            print("waiting until next 9-minute cycle.", file=sys.stderr)
+        elif delay == 0:
+            print("immediate.", file=sys.stderr)
+        else:
+            print(f"{delay}s.", file=sys.stderr)
+
+
+def _reset_sync_retry_state() -> None:
+    """Reset retry counter and timestamp on successful sync."""
+    global _SYNC_FAILURE_COUNT, _SYNC_LAST_FAILURE_TIME
+    with _SYNC_RETRY_LOCK:
+        if _SYNC_FAILURE_COUNT > 0:
+            print(f"[sync] Retry state reset after {_SYNC_FAILURE_COUNT} failure(s).")
+        _SYNC_FAILURE_COUNT = 0
+        _SYNC_LAST_FAILURE_TIME = 0.0
+
+
+def _should_attempt_sync_now(current_time: float) -> bool:
+    """Determine if a sync attempt should be made based on retry state.
+    
+    Args:
+        current_time: Current time (from time.time())
+    
+    Returns:
+        bool: True if retry delay has elapsed or no failures occurred.
+    """
+    with _SYNC_RETRY_LOCK:
+        if _SYNC_FAILURE_COUNT == 0:
+            return True  # No failures, attempt normally
+        
+        delay = _get_next_sync_retry_delay()
+        if delay == -1:
+            # All exponential backoffs exhausted; wait until next 9-min cycle
+            return False
+        
+        elapsed = current_time - _SYNC_LAST_FAILURE_TIME
+        return elapsed >= delay
 
 
 def _set_last_sync_error(message: str) -> None:
@@ -67,6 +152,43 @@ def _set_last_sync_error(message: str) -> None:
 def get_last_sync_error() -> str:
     """Return the most recent sync failure reason for UI feedback."""
     return _LAST_SYNC_ERROR
+
+
+def get_sync_retry_status() -> dict:
+    """Return current sync retry state for UI/diagnostic feedback.
+    
+    Returns:
+        dict with keys:
+        - "failure_count": int, number of consecutive failures
+        - "next_retry_seconds": int, seconds until next retry attempt (-1 = wait for next 9-min cycle)
+        - "seconds_since_failure": float, seconds elapsed since last failure (0 if no failures)
+        - "status": str, human-readable status message
+    """
+    with _SYNC_RETRY_LOCK:
+        if _SYNC_FAILURE_COUNT == 0:
+            return {
+                "failure_count": 0,
+                "next_retry_seconds": 0,
+                "seconds_since_failure": 0.0,
+                "status": "No failures; sync is normal.",
+            }
+        
+        seconds_since = time.time() - _SYNC_LAST_FAILURE_TIME
+        delay = _get_next_sync_retry_delay()
+        
+        if delay == -1:
+            next_retry = -1
+            status = f"Exponential backoffs exhausted after {_SYNC_FAILURE_COUNT} failures. Waiting for next 9-minute cycle."
+        else:
+            next_retry = max(0, delay - int(seconds_since))
+            status = f"Retry #{_SYNC_FAILURE_COUNT}: waiting {next_retry}s before next attempt (backoff: {delay}s)."
+        
+        return {
+            "failure_count": _SYNC_FAILURE_COUNT,
+            "next_retry_seconds": next_retry,
+            "seconds_since_failure": seconds_since,
+            "status": status,
+        }
 
 
 def _ensure_app_metadata_table(conn: sqlite3.Connection) -> None:
@@ -551,6 +673,134 @@ def _safe_remove_file(path: str, *, context: str = "temp file", silent: bool = T
     return False
 
 
+def _onedrive_monitor_keep_filenames(sync_target: str) -> set[str]:
+    """Return lowercase file names that should remain in the cloud folder."""
+    db_name = os.path.basename(sync_target or "").strip()
+    if not db_name:
+        db_name = "Stdytime.db"
+    db_name_l = db_name.lower()
+    db_base = os.path.splitext(db_name_l)[0]
+    return {
+        db_name_l,
+        f"{db_name_l}.syncing",
+        f"{db_base}.lock",
+    }
+
+
+def _onedrive_quarantine_non_primary_files(gdrive_sync_path: str) -> int:
+    """Move non-primary cloud files into a temporary quarantine folder.
+
+    Returns the number of files moved in this pass.
+    """
+    sync_target = _resolve_gdrive_sync_target(gdrive_sync_path or "")
+    if not sync_target:
+        return 0
+
+    cloud_dir = os.path.dirname(sync_target)
+    if not cloud_dir or not os.path.isdir(cloud_dir):
+        return 0
+
+    keep_names = _onedrive_monitor_keep_filenames(sync_target)
+    quarantine_dir = os.path.join(cloud_dir, _ONEDRIVE_QUARANTINE_DIRNAME)
+    os.makedirs(quarantine_dir, exist_ok=True)
+
+    moved = 0
+    with _ONEDRIVE_MONITOR_LOCK:
+        for entry in os.scandir(cloud_dir):
+            if not entry.is_file():
+                continue
+
+            file_name = entry.name
+            file_name_l = file_name.lower()
+            if file_name_l in keep_names:
+                continue
+
+            src = entry.path
+            ts = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+            quarantine_name = f"{ts}__{file_name}"
+            dst = os.path.join(quarantine_dir, quarantine_name)
+            try:
+                shutil.move(src, dst)
+                _ONEDRIVE_QUARANTINED_FILES[src] = dst
+                moved += 1
+            except Exception as exc:
+                print(
+                    f"[onedrive-monitor] WARNING: failed to quarantine '{src}': {exc}",
+                    file=sys.stderr,
+                )
+
+    if moved:
+        print(f"[onedrive-monitor] Quarantined {moved} file(s) in {cloud_dir}")
+    return moved
+
+
+def restore_onedrive_quarantined_files() -> int:
+    """Restore files previously quarantined by the OneDrive monitor.
+
+    Returns count of files restored.
+    """
+    restored = 0
+    with _ONEDRIVE_MONITOR_LOCK:
+        items = list(_ONEDRIVE_QUARANTINED_FILES.items())
+        for original_path, quarantined_path in items:
+            try:
+                if not os.path.exists(quarantined_path):
+                    _ONEDRIVE_QUARANTINED_FILES.pop(original_path, None)
+                    continue
+                if os.path.exists(original_path):
+                    # Keep quarantine artifact to avoid overwriting newer files.
+                    continue
+
+                original_parent = os.path.dirname(original_path) or "."
+                os.makedirs(original_parent, exist_ok=True)
+                shutil.move(quarantined_path, original_path)
+                _ONEDRIVE_QUARANTINED_FILES.pop(original_path, None)
+                restored += 1
+            except Exception as exc:
+                print(
+                    f"[onedrive-monitor] WARNING: failed to restore '{original_path}': {exc}",
+                    file=sys.stderr,
+                )
+
+    if restored:
+        print(f"[onedrive-monitor] Restored {restored} quarantined file(s)")
+    return restored
+
+
+def _start_onedrive_folder_monitor(gdrive_sync_path: str) -> None:
+    """Continuously quarantine non-primary OneDrive files while app runs."""
+    global _ONEDRIVE_MONITOR_THREAD
+
+    sync_target = _resolve_gdrive_sync_target(gdrive_sync_path or "")
+    if not sync_target:
+        return
+
+    if _ONEDRIVE_MONITOR_THREAD and _ONEDRIVE_MONITOR_THREAD.is_alive():
+        return
+
+    _ONEDRIVE_MONITOR_STOP_EVENT.clear()
+
+    def _loop() -> None:
+        # Run one pass immediately on startup.
+        _onedrive_quarantine_non_primary_files(gdrive_sync_path)
+
+        while not _ONEDRIVE_MONITOR_STOP_EVENT.wait(_ONEDRIVE_MONITOR_INTERVAL_SECONDS):
+            _onedrive_quarantine_non_primary_files(gdrive_sync_path)
+
+    _ONEDRIVE_MONITOR_THREAD = threading.Thread(
+        target=_loop,
+        daemon=True,
+        name="onedrive-folder-monitor",
+    )
+    _ONEDRIVE_MONITOR_THREAD.start()
+    print(f"[onedrive-monitor] Started monitor for {_resolve_gdrive_sync_target(gdrive_sync_path)}")
+
+
+def stop_onedrive_folder_monitor() -> None:
+    """Stop OneDrive monitor loop (best effort)."""
+    _ONEDRIVE_MONITOR_STOP_EVENT.set()
+
+
 def _resolve_db_path():
     # Priority: db_config.json db_path > DB_PATH env var > DATA_DIR default
     config_path = _read_db_config_path()
@@ -600,6 +850,555 @@ def _resolve_db_path():
         )
 
     raise RuntimeError(f"DB_PATH '{preferred}' is unavailable: {reason}")
+
+
+def _read_station_sync_state() -> tuple[int, str]:
+    """Return (activation_limit, station_role) from local app_license row."""
+    try:
+        with sqlite3.connect(DB_PATH) as conn:
+            conn.row_factory = sqlite3.Row
+            row = conn.execute(
+                "SELECT activation_limit, station_role FROM app_license WHERE id = 1 LIMIT 1"
+            ).fetchone()
+            if not row:
+                return 0, ""
+            activation_limit = int(row["activation_limit"] or 0)
+            role = str(row["station_role"] or "").strip().lower()
+            if role not in {"checkin", "instructor"}:
+                role = ""
+            return activation_limit, role
+    except Exception:
+        return 0, ""
+
+
+def is_station_mailbox_mode_enabled() -> bool:
+    """True when 2+ activation license should use Inbox/Outbox file sync."""
+    activation_limit, _ = _read_station_sync_state()
+    return activation_limit >= 2
+
+
+def _onedrive_mailbox_root(sync_path: str) -> str:
+    """Return folder root used for mailbox-style sync."""
+    raw = _normalize_path(sync_path)
+    if not raw:
+        return ""
+    last_segment = os.path.basename(raw.rstrip("/"))
+    if os.path.splitext(last_segment)[1]:
+        return os.path.dirname(raw)
+    return raw
+
+
+def _station_mailbox_paths(sync_path: str) -> dict[str, str]:
+    root = _onedrive_mailbox_root(sync_path)
+    archive_root = os.path.join(root, "Archive") if root else ""
+    return {
+        "root": root,
+        "scanner_outbox": os.path.join(root, "Scanner_Outbox") if root else "",
+        "admin_outbox": os.path.join(root, "Admin_Outbox") if root else "",
+        "archive_scanner": os.path.join(archive_root, "Scanner_Outbox") if root else "",
+        "archive_admin": os.path.join(archive_root, "Admin_Outbox") if root else "",
+    }
+
+
+def _ensure_station_mailbox_dirs(paths: dict[str, str]) -> bool:
+    try:
+        for key in ("root", "scanner_outbox", "admin_outbox", "archive_scanner", "archive_admin"):
+            target = paths.get(key, "")
+            if target:
+                os.makedirs(target, exist_ok=True)
+        return True
+    except Exception as exc:
+        print(f"[mailbox-sync] WARNING: failed creating mailbox folders: {exc}", file=sys.stderr)
+        return False
+
+
+def _write_json_atomic(path: str, payload: dict) -> None:
+    parent = os.path.dirname(path) or "."
+    os.makedirs(parent, exist_ok=True)
+    tmp_fd, tmp_path = tempfile.mkstemp(prefix="mailbox_", suffix=".tmp", dir=parent)
+    try:
+        with os.fdopen(tmp_fd, "w", encoding="utf-8") as fh:
+            json.dump(payload, fh, ensure_ascii=False)
+            fh.flush()
+            os.fsync(fh.fileno())
+        os.replace(tmp_path, path)
+    finally:
+        _safe_remove_file(tmp_path, context="mailbox temp", silent=True)
+
+
+def _station_machine_id() -> str:
+    return (socket.gethostname() or "unknown-machine").strip().lower()
+
+
+def _scanner_export_unsynced_rows(local_path: str, scanner_outbox_dir: str) -> bool:
+    """Scanner station exports unsynced session/staff-duty rows to OneDrive outbox.
+
+    Rows are marked synced only after ACK payloads are received from Admin_Outbox.
+    """
+    with sqlite3.connect(local_path) as conn:
+        conn.row_factory = sqlite3.Row
+        cur = conn.cursor()
+        session_rows = cur.execute(
+            """
+            SELECT id, student_id, start_time, end_time, duration
+            FROM sessions
+            WHERE COALESCE(sync_synced, 0) = 0
+            ORDER BY id ASC
+            LIMIT 1500
+            """
+        ).fetchall()
+        assistant_rows = cur.execute(
+            """
+            SELECT id, assistant_id, start_time, end_time, duration
+            FROM assistant_sessions
+            WHERE COALESCE(sync_synced, 0) = 0
+            ORDER BY id ASC
+            LIMIT 1500
+            """
+        ).fetchall()
+
+        if not session_rows and not assistant_rows:
+            return False
+
+        machine_id = _station_machine_id()
+        generated_at = datetime.now(timezone.utc).isoformat()
+        payload = {
+            "schema": "stdytime-mailbox-v1",
+            "kind": "scanner_events",
+            "generated_at": generated_at,
+            "machine_id": machine_id,
+            "sessions": [
+                {
+                    "event_id": f"sess:{machine_id}:{row['id']}:{row['end_time'] or ''}",
+                    "source_row_id": int(row["id"]),
+                    "student_id": row["student_id"],
+                    "start_time": row["start_time"],
+                    "end_time": row["end_time"],
+                    "duration": row["duration"],
+                }
+                for row in session_rows
+            ],
+            "assistant_sessions": [
+                {
+                    "event_id": f"assist:{machine_id}:{row['id']}:{row['end_time'] or ''}",
+                    "source_row_id": int(row["id"]),
+                    "assistant_id": row["assistant_id"],
+                    "start_time": row["start_time"],
+                    "end_time": row["end_time"],
+                    "duration": row["duration"],
+                }
+                for row in assistant_rows
+            ],
+        }
+
+        stamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+        out_file = os.path.join(scanner_outbox_dir, f"punches_{stamp}.json")
+        _write_json_atomic(out_file, payload)
+
+    print(
+        f"[mailbox-sync] Scanner exported {len(session_rows)} session row(s) and "
+        f"{len(assistant_rows)} staff-duty row(s) -> {scanner_outbox_dir} (awaiting ACK)"
+    )
+    return True
+
+
+def _archive_mailbox_file(src: str, archive_dir: str) -> None:
+    os.makedirs(archive_dir, exist_ok=True)
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+    dst = os.path.join(archive_dir, f"{ts}__{os.path.basename(src)}")
+    shutil.move(src, dst)
+
+
+def _safe_positive_ints(values) -> list[int]:
+    parsed: list[int] = []
+    for value in values or []:
+        try:
+            ivalue = int(value)
+        except Exception:
+            continue
+        if ivalue > 0:
+            parsed.append(ivalue)
+    return parsed
+
+
+def _admin_write_scanner_ack(
+    admin_outbox_dir: str,
+    *,
+    target_machine: str,
+    ack_session_rows: list[int],
+    ack_assistant_rows: list[int],
+    source_file: str,
+) -> None:
+    payload = {
+        "schema": "stdytime-mailbox-v1",
+        "kind": "scanner_ack",
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "machine_id": _station_machine_id(),
+        "target_machine": target_machine,
+        "source_file": os.path.basename(source_file),
+        "ack_sessions": sorted(set(_safe_positive_ints(ack_session_rows))),
+        "ack_assistant_sessions": sorted(set(_safe_positive_ints(ack_assistant_rows))),
+    }
+    stamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+    out_file = os.path.join(admin_outbox_dir, f"ack_{target_machine}_{stamp}.json")
+    _write_json_atomic(out_file, payload)
+
+
+def _admin_import_scanner_outbox(
+    local_path: str,
+    scanner_outbox_dir: str,
+    archive_dir: str,
+    admin_outbox_dir: str,
+) -> int:
+    """Admin station imports scanner punch files and archives processed payloads."""
+    files = [
+        os.path.join(scanner_outbox_dir, name)
+        for name in sorted(os.listdir(scanner_outbox_dir))
+        if name.lower().endswith(".json")
+    ]
+    imported_files = 0
+    if not files:
+        return 0
+
+    with sqlite3.connect(local_path) as conn:
+        conn.row_factory = sqlite3.Row
+        cur = conn.cursor()
+        for path in files:
+            try:
+                with open(path, "r", encoding="utf-8") as fh:
+                    payload = json.load(fh)
+                machine_id = str(payload.get("machine_id") or "").strip().lower()
+                if not machine_id:
+                    _archive_mailbox_file(path, archive_dir)
+                    imported_files += 1
+                    continue
+
+                ack_session_rows: list[int] = []
+                ack_assistant_rows: list[int] = []
+
+                session_items = payload.get("sessions") or []
+                for item in session_items:
+                    source_row_id = int(item.get("source_row_id") or 0)
+                    if source_row_id <= 0:
+                        continue
+                    row = cur.execute(
+                        """
+                        SELECT id FROM sessions
+                        WHERE sync_source_machine = ? AND sync_source_row_id = ?
+                        ORDER BY id DESC LIMIT 1
+                        """,
+                        (machine_id, source_row_id),
+                    ).fetchone()
+                    if row:
+                        cur.execute(
+                            """
+                            UPDATE sessions
+                            SET student_id = ?, start_time = ?, end_time = ?, duration = ?
+                            WHERE id = ?
+                            """,
+                            (
+                                item.get("student_id"),
+                                item.get("start_time"),
+                                item.get("end_time"),
+                                item.get("duration"),
+                                int(row["id"]),
+                            ),
+                        )
+                    else:
+                        cur.execute(
+                            """
+                            INSERT INTO sessions (
+                                student_id, start_time, end_time, duration,
+                                sync_synced, sync_source_machine, sync_source_row_id
+                            ) VALUES (?, ?, ?, ?, 1, ?, ?)
+                            """,
+                            (
+                                item.get("student_id"),
+                                item.get("start_time"),
+                                item.get("end_time"),
+                                item.get("duration"),
+                                machine_id,
+                                source_row_id,
+                            ),
+                        )
+                    ack_session_rows.append(source_row_id)
+
+                assistant_items = payload.get("assistant_sessions") or []
+                for item in assistant_items:
+                    source_row_id = int(item.get("source_row_id") or 0)
+                    if source_row_id <= 0:
+                        continue
+                    row = cur.execute(
+                        """
+                        SELECT id FROM assistant_sessions
+                        WHERE sync_source_machine = ? AND sync_source_row_id = ?
+                        ORDER BY id DESC LIMIT 1
+                        """,
+                        (machine_id, source_row_id),
+                    ).fetchone()
+                    if row:
+                        cur.execute(
+                            """
+                            UPDATE assistant_sessions
+                            SET assistant_id = ?, start_time = ?, end_time = ?, duration = ?
+                            WHERE id = ?
+                            """,
+                            (
+                                item.get("assistant_id"),
+                                item.get("start_time"),
+                                item.get("end_time"),
+                                item.get("duration"),
+                                int(row["id"]),
+                            ),
+                        )
+                    else:
+                        cur.execute(
+                            """
+                            INSERT INTO assistant_sessions (
+                                assistant_id, start_time, end_time, duration,
+                                sync_synced, sync_source_machine, sync_source_row_id
+                            ) VALUES (?, ?, ?, ?, 1, ?, ?)
+                            """,
+                            (
+                                item.get("assistant_id"),
+                                item.get("start_time"),
+                                item.get("end_time"),
+                                item.get("duration"),
+                                machine_id,
+                                source_row_id,
+                            ),
+                        )
+                    ack_assistant_rows.append(source_row_id)
+
+                conn.commit()
+                try:
+                    _admin_write_scanner_ack(
+                        admin_outbox_dir,
+                        target_machine=machine_id,
+                        ack_session_rows=ack_session_rows,
+                        ack_assistant_rows=ack_assistant_rows,
+                        source_file=path,
+                    )
+                except Exception as ack_exc:
+                    print(
+                        f"[mailbox-sync] WARNING: failed writing ACK for '{path}': {ack_exc}",
+                        file=sys.stderr,
+                    )
+                _archive_mailbox_file(path, archive_dir)
+                imported_files += 1
+            except Exception as exc:
+                conn.rollback()
+                print(f"[mailbox-sync] WARNING: failed importing scanner file '{path}': {exc}", file=sys.stderr)
+
+    if imported_files:
+        print(f"[mailbox-sync] Admin imported and archived {imported_files} scanner payload file(s)")
+    return imported_files
+
+
+def _staff_payload_rows(conn: sqlite3.Connection) -> list[dict]:
+    conn.row_factory = sqlite3.Row
+    rows = conn.execute(
+        """
+        SELECT id, name, role, email, phone, loading
+        FROM staff
+        ORDER BY id ASC
+        """
+    ).fetchall()
+    return [
+        {
+            "id": int(row["id"]),
+            "name": row["name"],
+            "role": row["role"],
+            "email": row["email"],
+            "phone": row["phone"],
+            "loading": row["loading"],
+        }
+        for row in rows
+    ]
+
+
+def _admin_export_staff_snapshot(local_path: str, admin_outbox_dir: str) -> bool:
+    """Admin station exports staff list snapshots for scanner refresh."""
+    global _MAILBOX_LAST_STAFF_EXPORT_HASH
+    with sqlite3.connect(local_path) as conn:
+        staff_rows = _staff_payload_rows(conn)
+
+    digest = uuid.uuid5(uuid.NAMESPACE_OID, json.dumps(staff_rows, sort_keys=True)).hex
+    if digest == _MAILBOX_LAST_STAFF_EXPORT_HASH:
+        return False
+
+    payload = {
+        "schema": "stdytime-mailbox-v1",
+        "kind": "admin_staff",
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "machine_id": _station_machine_id(),
+        "staff": staff_rows,
+    }
+    stamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+    out_file = os.path.join(admin_outbox_dir, f"staff_{stamp}.json")
+    _write_json_atomic(out_file, payload)
+    _MAILBOX_LAST_STAFF_EXPORT_HASH = digest
+    print(f"[mailbox-sync] Admin exported staff snapshot ({len(staff_rows)} row(s))")
+    return True
+
+
+def _scanner_apply_ack_payload(conn: sqlite3.Connection, payload: dict) -> int:
+    """Apply ACK payload to scanner-local rows and mark them synced."""
+    local_machine = _station_machine_id()
+    target_machine = str(payload.get("target_machine") or "").strip().lower()
+    if target_machine and target_machine != local_machine:
+        return 0
+
+    cur = conn.cursor()
+    acked_total = 0
+
+    ack_session_rows = _safe_positive_ints(payload.get("ack_sessions") or [])
+    for source_row_id in ack_session_rows:
+        cur.execute(
+            "UPDATE sessions SET sync_synced = 1 WHERE id = ?",
+            (source_row_id,),
+        )
+        acked_total += int(cur.rowcount or 0)
+
+    ack_assistant_rows = _safe_positive_ints(payload.get("ack_assistant_sessions") or [])
+    for source_row_id in ack_assistant_rows:
+        cur.execute(
+            "UPDATE assistant_sessions SET sync_synced = 1 WHERE id = ?",
+            (source_row_id,),
+        )
+        acked_total += int(cur.rowcount or 0)
+
+    return acked_total
+
+
+def _scanner_import_admin_outbox(local_path: str, admin_outbox_dir: str, archive_dir: str) -> int:
+    """Scanner station imports Admin_Outbox payloads (staff snapshots + ACK files)."""
+    files = [
+        os.path.join(admin_outbox_dir, name)
+        for name in sorted(os.listdir(admin_outbox_dir))
+        if name.lower().endswith(".json")
+    ]
+    if not files:
+        return 0
+
+    imported_files = 0
+    with sqlite3.connect(local_path) as conn:
+        conn.row_factory = sqlite3.Row
+        cur = conn.cursor()
+        for path in files:
+            try:
+                with open(path, "r", encoding="utf-8") as fh:
+                    payload = json.load(fh)
+                kind = str(payload.get("kind") or "").strip().lower()
+
+                if kind == "scanner_ack":
+                    acked = _scanner_apply_ack_payload(conn, payload)
+                    conn.commit()
+                    if acked:
+                        print(f"[mailbox-sync] Scanner applied ACK for {acked} row(s)")
+                else:
+                    staff_rows = payload.get("staff") or []
+                    for item in staff_rows:
+                        name = str(item.get("name") or "").strip()
+                        role = str(item.get("role") or "").strip()
+                        email = str(item.get("email") or "").strip()
+                        phone = str(item.get("phone") or "").strip()
+                        loading = int(item.get("loading") or 1)
+                        if not name:
+                            continue
+
+                        existing = None
+                        if email:
+                            existing = cur.execute(
+                                "SELECT id FROM staff WHERE LOWER(COALESCE(email,'')) = LOWER(?) LIMIT 1",
+                                (email,),
+                            ).fetchone()
+                        if not existing:
+                            existing = cur.execute(
+                                "SELECT id FROM staff WHERE LOWER(COALESCE(name,'')) = LOWER(?) AND LOWER(COALESCE(phone,'')) = LOWER(?) LIMIT 1",
+                                (name, phone),
+                            ).fetchone()
+
+                        if existing:
+                            cur.execute(
+                                """
+                                UPDATE staff
+                                SET name = ?, role = ?, email = ?, phone = ?, loading = ?
+                                WHERE id = ?
+                                """,
+                                (name, role, email, phone, loading, int(existing["id"])),
+                            )
+                        else:
+                            cur.execute(
+                                """
+                                INSERT INTO staff (name, role, email, phone, loading)
+                                VALUES (?, ?, ?, ?, ?)
+                                """,
+                                (name, role, email, phone, loading),
+                            )
+
+                    conn.commit()
+
+                _archive_mailbox_file(path, archive_dir)
+                imported_files += 1
+            except Exception as exc:
+                conn.rollback()
+                print(f"[mailbox-sync] WARNING: failed importing admin file '{path}': {exc}", file=sys.stderr)
+
+    if imported_files:
+        print(f"[mailbox-sync] Scanner imported and archived {imported_files} admin payload file(s)")
+    return imported_files
+
+
+def _run_station_mailbox_cycle(local_path: str, sync_path: str) -> None:
+    activation_limit, role = _read_station_sync_state()
+    if activation_limit < 2:
+        return
+    if role not in {"checkin", "instructor"}:
+        return
+
+    paths = _station_mailbox_paths(sync_path)
+    if not paths.get("root") or not _ensure_station_mailbox_dirs(paths):
+        return
+
+    if role == "checkin":
+        _scanner_import_admin_outbox(local_path, paths["admin_outbox"], paths["archive_admin"])
+        _scanner_export_unsynced_rows(local_path, paths["scanner_outbox"])
+    else:
+        _admin_import_scanner_outbox(local_path, paths["scanner_outbox"], paths["archive_scanner"], paths["admin_outbox"])
+        _admin_export_staff_snapshot(local_path, paths["admin_outbox"])
+
+
+def _start_station_mailbox_sync(local_path: str, sync_path: str, interval_minutes: int) -> None:
+    """Start 10-minute Inbox/Outbox sync loop for 2-activation station deployments."""
+    global _STATION_MAILBOX_THREAD
+
+    if _STATION_MAILBOX_THREAD and _STATION_MAILBOX_THREAD.is_alive():
+        return
+
+    wait_seconds = max(60, int(interval_minutes) * 60)
+    _STATION_MAILBOX_STOP_EVENT.clear()
+
+    def _loop() -> None:
+        while not _STATION_MAILBOX_STOP_EVENT.is_set():
+            try:
+                _run_station_mailbox_cycle(local_path, sync_path)
+            except Exception as exc:
+                print(f"[mailbox-sync] WARNING: mailbox cycle failed: {exc}", file=sys.stderr)
+            if _STATION_MAILBOX_STOP_EVENT.wait(wait_seconds):
+                break
+
+    _STATION_MAILBOX_THREAD = threading.Thread(
+        target=_loop,
+        daemon=True,
+        name="station-mailbox-sync",
+    )
+    _STATION_MAILBOX_THREAD.start()
+    print(f"[mailbox-sync] Station mailbox runtime started (every {int(interval_minutes)} min)")
+
+
+def stop_station_mailbox_sync() -> None:
+    _STATION_MAILBOX_STOP_EVENT.set()
 
 
 # ====================================================================
@@ -994,6 +1793,7 @@ def sync_to_gdrive(local_path: str, gdrive_path: str, retries: int = 0, retry_de
                 )
                 if not lock_acquired:
                     _set_last_sync_error("Cloud backup lease is not available.")
+                    _record_sync_failure()
                     return False
 
             _sqlite_backup(local_path, gdrive_path)
@@ -1004,6 +1804,7 @@ def sync_to_gdrive(local_path: str, gdrive_path: str, retries: int = 0, retry_de
                     f"[sync] Snapshot -> {summary}"
                 )
             _set_last_sync_error("")
+            _reset_sync_retry_state()  # Reset on successful sync
             return True
         except PermissionError as exc:
             if attempt <= retries:
@@ -1018,11 +1819,13 @@ def sync_to_gdrive(local_path: str, gdrive_path: str, retries: int = 0, retry_de
                 if not silent:
                     print(f"[sync] WARNING: push to GDrive failed after {attempts} attempt(s): {exc}", file=sys.stderr)
                 _set_last_sync_error(str(exc))
+                _record_sync_failure()
                 return False
         except Exception as exc:
             if not silent:
                 print(f"[sync] WARNING: push to GDrive failed: {exc}", file=sys.stderr)
             _set_last_sync_error(str(exc))
+            _record_sync_failure()
             return False
         finally:
             if lock_acquired:
@@ -1197,18 +2000,44 @@ def release_gdrive_lock(gdrive_sync_path: str) -> bool:
 
 
 def _start_background_sync(local_path: str, gdrive_path: str, interval_minutes: int):
-    """Daemon thread that pushes local → GDrive every interval_minutes."""
+    """Daemon thread that pushes local → GDrive with adaptive retry on failures.
+    
+    Normal cycle: every interval_minutes (9 min).
+    On failure: exponential backoff (45s, 90s, 180s), then wait until next 9-min cycle.
+    On success: retry state resets.
+    """
     if interval_minutes <= 0 or not gdrive_path:
         return
 
     def _loop():
+        cycle_duration = max(60, int(interval_minutes) * 60)
+        next_regular_at = time.time() + cycle_duration
+
         while True:
-            time.sleep(interval_minutes * 60)
-            sync_to_gdrive(local_path, gdrive_path, silent=True)
+            now = time.time()
+            should_attempt = False
+
+            if now >= next_regular_at:
+                should_attempt = True
+            elif _should_attempt_sync_now(now):
+                status = get_sync_retry_status()
+                should_attempt = int(status.get("failure_count") or 0) > 0
+
+            if should_attempt:
+                pushed = sync_to_gdrive(local_path, gdrive_path, silent=True)
+                if pushed:
+                    next_regular_at = time.time() + cycle_duration
+                else:
+                    status = get_sync_retry_status()
+                    if int(status.get("next_retry_seconds") or 0) == -1:
+                        next_regular_at = time.time() + cycle_duration
+
+            time.sleep(1)
 
     t = threading.Thread(target=_loop, daemon=True, name="gdrive-sync")
     t.start()
     print(f"[sync] Background sync thread started (every {interval_minutes} min -> {gdrive_path})")
+    print(f"[sync] Adaptive retry delays: {_SYNC_RETRY_DELAYS} seconds")
 
 
 def flush_cloud_backup_on_shutdown(
@@ -1223,6 +2052,9 @@ def flush_cloud_backup_on_shutdown(
     - Displays a temporary user-facing wait message when sync takes longer than
       ``status_after_seconds``.
     """
+    if is_station_mailbox_mode_enabled():
+        return True
+
     sync_target = _resolve_gdrive_sync_target(GDRIVE_SYNC_PATH or "")
     if not sync_target:
         return True
@@ -1357,12 +2189,19 @@ def _initialize_cloud_sync_runtime() -> None:
         return
 
     startup_pull_from_gdrive = bool(_cfg.get("startup_pull_from_gdrive", False))
+    if is_station_mailbox_mode_enabled():
+        _start_station_mailbox_sync(DB_PATH, GDRIVE_SYNC_PATH, _MAILBOX_SYNC_INTERVAL_MINUTES)
+        _CLOUD_SYNC_RUNTIME_READY = True
+        print("[mailbox-sync] Multi-station Inbox/Outbox mode enabled.")
+        return
+
     if startup_pull_from_gdrive:
         pulled = sync_from_gdrive(DB_PATH, GDRIVE_SYNC_PATH, force=True)
         if not pulled:
             print(f"[sync] Startup override skipped: {_cloud_label(GDRIVE_SYNC_PATH)} DB not found/unavailable.")
 
     _start_background_sync(DB_PATH, GDRIVE_SYNC_PATH, _SYNC_INTERVAL)
+    _start_onedrive_folder_monitor(GDRIVE_SYNC_PATH)
     _CLOUD_SYNC_RUNTIME_READY = True
     print("[sync] Cloud sync runtime started.")
 
@@ -1377,6 +2216,9 @@ def _sync_on_exit():
         status_after_seconds=8,
         retry_delay_seconds=3,
     )
+    stop_station_mailbox_sync()
+    stop_onedrive_folder_monitor()
+    restore_onedrive_quarantined_files()
 
 
 atexit.register(_sync_on_exit)
@@ -1492,6 +2334,9 @@ def init_db():
             start_time TEXT,
             end_time TEXT,
             duration INTEGER,
+            sync_synced INTEGER DEFAULT 0,
+            sync_source_machine TEXT DEFAULT '',
+            sync_source_row_id INTEGER,
             FOREIGN KEY(student_id) REFERENCES students(id)
         )
     """)
@@ -1504,6 +2349,9 @@ def init_db():
             start_time TEXT,
             end_time TEXT,
             duration INTEGER,
+            sync_synced INTEGER DEFAULT 0,
+            sync_source_machine TEXT DEFAULT '',
+            sync_source_row_id INTEGER,
             FOREIGN KEY(assistant_id) REFERENCES staff(id)
         )
     """)
@@ -1883,8 +2731,25 @@ def init_db():
         cur = conn.cursor()
         cur.execute("PRAGMA table_info(sessions)")
         cols = [r[1] for r in cur.fetchall()]
+        if "sync_synced" not in cols:
+            cur.execute("ALTER TABLE sessions ADD COLUMN sync_synced INTEGER DEFAULT 0")
+        if "sync_source_machine" not in cols:
+            cur.execute("ALTER TABLE sessions ADD COLUMN sync_source_machine TEXT DEFAULT ''")
+        if "sync_source_row_id" not in cols:
+            cur.execute("ALTER TABLE sessions ADD COLUMN sync_source_row_id INTEGER")
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_sessions_sync_synced ON sessions(sync_synced)")
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_sessions_sync_source ON sessions(sync_source_machine, sync_source_row_id)")
+
         cur.execute("PRAGMA table_info(assistant_sessions)")
         cols = [r[1] for r in cur.fetchall()]
+        if "sync_synced" not in cols:
+            cur.execute("ALTER TABLE assistant_sessions ADD COLUMN sync_synced INTEGER DEFAULT 0")
+        if "sync_source_machine" not in cols:
+            cur.execute("ALTER TABLE assistant_sessions ADD COLUMN sync_source_machine TEXT DEFAULT ''")
+        if "sync_source_row_id" not in cols:
+            cur.execute("ALTER TABLE assistant_sessions ADD COLUMN sync_source_row_id INTEGER")
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_assistant_sessions_sync_synced ON assistant_sessions(sync_synced)")
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_assistant_sessions_sync_source ON assistant_sessions(sync_source_machine, sync_source_row_id)")
         conn.commit()
 
     # Ensure assistant_schedule table exists
