@@ -6,7 +6,8 @@ from flask import render_template, request, jsonify, send_file, flash, redirect,
 from modules import student_manager, assistant_manager, qr_generator, auth_manager, book_manager, materials_manager
 from modules.database import DB_PATH
 from routes.auth import require_login, require_feature
-from reportlab.lib.pagesizes import letter
+from reportlab.lib.pagesizes import A4, letter, landscape
+from reportlab.lib.units import mm
 from reportlab.lib.units import inch
 from reportlab.lib.utils import ImageReader
 from reportlab.pdfgen import canvas
@@ -295,29 +296,92 @@ def register_qr_routes(app):
         filename = 'students_qr_labels.pdf'
         return send_file(buf, mimetype='application/pdf', as_attachment=True, download_name=filename)
 
+    @app.route('/qr/pdf/selected')
+    @require_login
+    @require_feature(auth_manager.FEATURE_INSTRUCTOR_SETTINGS)
+    def qr_pdf_selected():
+        """Generate Avery 8160 PDF for selected students.
+
+        Query params:
+        - student_ids: comma-separated ids (e.g. 1,2,3)
+        - label: first label slot 1-30 (optional, default 1)
+        """
+        raw_ids = str(request.args.get('student_ids', '') or '').strip()
+        if not raw_ids:
+            return "No students selected", 400
+
+        try:
+            requested_ids = [int(token) for token in raw_ids.split(',') if str(token).strip()]
+        except ValueError:
+            return "Invalid student selection", 400
+
+        # Keep order stable and unique
+        seen = set()
+        selected_ids = []
+        for sid in requested_ids:
+            if sid in seen:
+                continue
+            seen.add(sid)
+            selected_ids.append(sid)
+
+        if not selected_ids:
+            return "No students selected", 400
+
+        start_label = request.args.get('label', type=int) or 1
+        start_label = max(1, min(30, start_label))
+
+        all_students = student_manager.get_all_students()
+        selected_id_set = set(selected_ids)
+
+        labels = []
+        for s in all_students:
+            sid = s[0]
+            if sid not in selected_id_set:
+                continue
+
+            qr_blob = student_manager.get_student_qr_code(sid)
+            if not qr_blob:
+                try:
+                    qr_data = f"ID:{sid}\nName:{s[1]}"
+                    qr_blob = qr_generator.generate_qr_bytes(qr_data)
+                    student_manager.set_student_qr_code(sid, qr_blob)
+                except Exception:
+                    qr_blob = None
+
+            qr_io = io.BytesIO(qr_blob) if qr_blob else None
+            labels.append({'name': s[1], 'qr_blob': qr_io})
+
+        if not labels:
+            return "No selected students found", 404
+
+        buf = _build_avery_pdf(labels, start_label=start_label)
+        filename = 'students_selected_qr_labels.pdf'
+        return send_file(buf, mimetype='application/pdf', as_attachment=True, download_name=filename)
+
     @app.route('/qr/assistants/pdf')
     @require_login
     @require_feature(auth_manager.FEATURE_INSTRUCTOR_SETTINGS)
     def qr_assistants_pdf():
-        """Generate Avery 8163 PDF for assistants with existing QR codes."""
+        """Generate A4 business-card staff badges (student badge style)."""
         assistants = assistant_manager.get_all_assistants()
         labels = []
         for a in assistants:
             aid = a[0]
             qr_blob = assistant_manager.get_assistant_qr_code(aid)
+            icon_data = assistant_manager.get_assistant_icon(aid)
+            icon_blob = icon_data.get('icon_blob') if icon_data else None
             if qr_blob:
-                qr_io = io.BytesIO(qr_blob)
-                labels.append({'name': a[1], 'qr_blob': qr_io})
+                labels.append({'name': a[1], 'qr_blob': qr_blob, 'photo_blob': icon_blob})
         if not labels:
             return "No staff QR codes found. Generate them first.", 400
-        pdf_buffer = _build_avery8163_pdf(labels)
-        return send_file(pdf_buffer, as_attachment=True, download_name="assistant_qr_avery8163.pdf", mimetype='application/pdf')
+        pdf_buffer = _build_staff_badges_pdf(labels)
+        return send_file(pdf_buffer, as_attachment=True, download_name="staff_badges_a4_landscape_business_cards.pdf", mimetype='application/pdf')
 
     @app.route('/qr/assistants/pdf/individual/<int:aid>')
     @require_login
     @require_feature(auth_manager.FEATURE_INSTRUCTOR_SETTINGS)
     def qr_assistant_pdf_individual(aid):
-        """Generate Avery 8163 PDF for a single assistant."""
+        """Generate A4 business-card badge PDF for a single assistant."""
         assistant = assistant_manager.get_assistant(aid)
         if not assistant:
             return "Staff member not found", 404
@@ -330,10 +394,11 @@ def register_qr_routes(app):
                 assistant_manager.set_assistant_qr_code(aid, qr_blob)
             except Exception:
                 return "Failed to generate QR code.", 500
-        qr_io = io.BytesIO(qr_blob)
-        labels = [{'name': assistant[1], 'qr_blob': qr_io}]
-        pdf_buffer = _build_avery8163_pdf(labels)
-        return send_file(pdf_buffer, as_attachment=True, download_name=f"assistant_{aid}_qr.pdf", mimetype='application/pdf')
+        icon_data = assistant_manager.get_assistant_icon(aid)
+        icon_blob = icon_data.get('icon_blob') if icon_data else None
+        labels = [{'name': assistant[1], 'qr_blob': qr_blob, 'photo_blob': icon_blob}]
+        pdf_buffer = _build_staff_badges_pdf(labels)
+        return send_file(pdf_buffer, as_attachment=True, download_name=f"assistant_{aid}_badge.pdf", mimetype='application/pdf')
 
     @app.route('/qr/books/pdf')
     @require_login
@@ -973,5 +1038,114 @@ def _build_avery8163_pdf(labels):
         c.showPage()
 
     c.save()
+    buffer.seek(0)
+    return buffer
+
+
+def _build_staff_badges_pdf(labels):
+    """Build A4 landscape staff badges using 3.5" x 2" business cards.
+
+    Card composition mirrors student badge logic:
+    - Name centered on top row
+    - Photo on left
+    - QR code on right
+    - Photo and QR use equal proportions
+    """
+    buffer = io.BytesIO()
+    page_w, page_h = landscape(A4)
+    pdf = canvas.Canvas(buffer, pagesize=(page_w, page_h))
+
+    card_w = 88.9 * mm   # 3.5 inches
+    card_h = 50.8 * mm   # 2.0 inches
+    cols = max(1, int(page_w // card_w))
+    rows = max(1, int(page_h // card_h))
+
+    used_w = cols * card_w
+    used_h = rows * card_h
+    margin_x = max(0, (page_w - used_w) / 2)
+    margin_y = max(0, (page_h - used_h) / 2)
+    cards_per_page = cols * rows
+
+    for index, label in enumerate(labels):
+        slot = index % cards_per_page
+        if index and slot == 0:
+            pdf.showPage()
+
+        row = slot // cols
+        col = slot % cols
+        x = margin_x + col * card_w
+        y = page_h - margin_y - (row + 1) * card_h
+
+        name = str(label.get('name') or '').strip()
+        photo_blob = label.get('photo_blob')
+        qr_blob = label.get('qr_blob')
+
+        if isinstance(photo_blob, memoryview):
+            photo_blob = photo_blob.tobytes()
+        if isinstance(qr_blob, memoryview):
+            qr_blob = qr_blob.tobytes()
+
+        padding = 2.5 * mm
+        inner_w = card_w - (2 * padding)
+        inner_h = card_h - (2 * padding)
+        name_h = 9 * mm
+        media_h = max(10 * mm, inner_h - name_h)
+        image_gap = 2 * mm
+        media_w_each = max(10 * mm, (inner_w - image_gap) / 2)
+        image_side = max(10 * mm, min(media_w_each, media_h))
+
+        top_y = y + card_h - padding
+        name_y = top_y - 6.5 * mm
+        media_y = y + padding + max(0, (media_h - image_side) / 2)
+        photo_x = x + padding
+        qr_x = photo_x + image_side + image_gap
+
+        pdf.setStrokeColorRGB(0.75, 0.75, 0.75)
+        pdf.setLineWidth(0.4)
+        pdf.rect(x, y, card_w, card_h, stroke=1, fill=0)
+
+        pdf.setFont("Helvetica-Bold", 10)
+        display_name = name if len(name) <= 34 else name[:31] + "..."
+        pdf.drawCentredString(x + card_w / 2, name_y, display_name)
+
+        if photo_blob:
+            try:
+                pdf.drawImage(
+                    ImageReader(io.BytesIO(photo_blob)),
+                    photo_x,
+                    media_y,
+                    width=image_side,
+                    height=image_side,
+                    preserveAspectRatio=True,
+                    mask='auto',
+                )
+            except Exception:
+                photo_blob = None
+        if not photo_blob:
+            pdf.setStrokeColorRGB(0.82, 0.82, 0.82)
+            pdf.rect(photo_x, media_y, image_side, image_side, stroke=1, fill=0)
+            pdf.setFont("Helvetica", 6)
+            pdf.drawCentredString(photo_x + image_side / 2, media_y + image_side / 2, "No Photo")
+
+        if qr_blob:
+            try:
+                pdf.drawImage(
+                    ImageReader(io.BytesIO(qr_blob)),
+                    qr_x,
+                    media_y,
+                    width=image_side,
+                    height=image_side,
+                    preserveAspectRatio=True,
+                    mask='auto',
+                )
+            except Exception:
+                qr_blob = None
+        if not qr_blob:
+            pdf.setStrokeColorRGB(0.82, 0.82, 0.82)
+            pdf.rect(qr_x, media_y, image_side, image_side, stroke=1, fill=0)
+            pdf.setFont("Helvetica", 6)
+            pdf.drawCentredString(qr_x + image_side / 2, media_y + image_side / 2, "No QR")
+
+    pdf.save()
     buffer.seek(0)
     return buffer

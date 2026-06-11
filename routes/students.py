@@ -35,20 +35,31 @@ def _parse_student_identifier(raw_value: str) -> str:
 
 
 def _build_student_badges_pdf(students):
-    """Build A4 landscape student badge PDF with 7x3 grid."""
+    """Build A4 landscape student badge PDF using 3.5" x 2" business cards.
+
+    Layout requirements:
+    - A4 landscape page
+    - Card size: 3.5" x 2" (landscape)
+    - Fit as many cards as possible per sheet
+    - Name on top row
+    - Photo left and QR right, equal proportions
+    """
     buffer = BytesIO()
     page_w, page_h = landscape(A4)
     pdf = canvas.Canvas(buffer, pagesize=(page_w, page_h))
 
-    cols = 7
-    rows = 3
-    margin_x = 5 * mm
-    margin_y = 5 * mm
-    gap_x = 2 * mm
-    gap_y = 2 * mm
+    card_w = 88.9 * mm   # 3.5 inches
+    card_h = 50.8 * mm   # 2.0 inches
+    cols = max(1, int(page_w // card_w))
+    rows = max(1, int(page_h // card_h))
 
-    card_w = (page_w - (2 * margin_x) - ((cols - 1) * gap_x)) / cols
-    card_h = (page_h - (2 * margin_y) - ((rows - 1) * gap_y)) / rows
+    used_w = cols * card_w
+    used_h = rows * card_h
+    margin_x = max(0, (page_w - used_w) / 2)
+    margin_y = max(0, (page_h - used_h) / 2)
+    gap_x = 0
+    gap_y = 0
+
     cards_per_page = cols * rows
 
     for index, student in enumerate(students):
@@ -74,11 +85,12 @@ def _build_student_badges_pdf(students):
         padding = 2.5 * mm
         inner_w = card_w - (2 * padding)
         inner_h = card_h - (2 * padding)
-        name_h = 8 * mm
+        name_h = 9 * mm
         id_h = 6 * mm if student_identifier else 0
-        content_h = max(10 * mm, inner_h - name_h - id_h)
+        media_h = max(10 * mm, inner_h - name_h - id_h)
         image_gap = 2 * mm
-        image_side = max(10 * mm, min((inner_w - image_gap) / 2, content_h - 2 * mm))
+        media_w_each = max(10 * mm, (inner_w - image_gap) / 2)
+        image_side = max(10 * mm, min(media_w_each, media_h))
 
         top_y = y + card_h - padding
         name_y = top_y - 6.5 * mm
@@ -87,13 +99,13 @@ def _build_student_badges_pdf(students):
         pdf.setLineWidth(0.4)
         pdf.rect(x, y, card_w, card_h, stroke=1, fill=0)
 
-        pdf.setFont("Helvetica-Bold", 6.5)
-        display_name = student_name if len(student_name) <= 26 else student_name[:23] + "..."
+        pdf.setFont("Helvetica-Bold", 10)
+        display_name = student_name if len(student_name) <= 34 else student_name[:31] + "..."
         pdf.drawCentredString(x + card_w / 2, name_y, display_name)
 
-        media_y = y + padding + (id_h if id_h else 0)
+        media_y = y + padding + (id_h if id_h else 0) + max(0, (media_h - image_side) / 2)
         if student_identifier:
-            pdf.setFont("Helvetica", 6)
+            pdf.setFont("Helvetica", 7)
             pdf.drawCentredString(x + card_w / 2, y + padding + 1 * mm, f"ID: {student_identifier}")
 
         photo_x = x + padding
@@ -794,7 +806,7 @@ def register_student_routes(app, upload_folder):
     @require_login
     @require_feature(auth_manager.FEATURE_STUDENT_DATABASE)
     def students_badges_pdf():
-        """Generate student badge cards (A4 landscape, 7x3 grid)."""
+        """Generate student badge cards (A4 landscape, 3.5x2in business cards)."""
         students = student_manager.get_students_badge_payload()
         if not students:
             flash("No active students found for badge printing.", "warning")
@@ -824,7 +836,7 @@ def register_student_routes(app, upload_folder):
             pdf_buffer,
             mimetype='application/pdf',
             as_attachment=True,
-            download_name='students_badges_a4_landscape_7x3.pdf',
+            download_name='students_badges_a4_landscape_business_cards.pdf',
         )
 
     @app.route("/students/export-vcf/<int:sid>")
