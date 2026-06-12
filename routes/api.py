@@ -13,6 +13,9 @@ import json
 import traceback
 from routes.auth import require_login, require_admin, require_feature
 
+
+CHECKOUT_COOLDOWN_SECONDS = 60
+
 # Global helper cache for performance (UI helpers)
 
 
@@ -260,6 +263,18 @@ def _format_checkout_timestamp(value: str) -> str:
         return dt.strftime("%Y-%m-%d %I:%M:%S %p")
     except Exception:
         return str(value)
+
+
+def _elapsed_seconds_since(start_value: str) -> int:
+    """Return elapsed whole seconds from ISO-ish start value to now (>= 0)."""
+    if not start_value:
+        return 0
+    try:
+        start_dt = datetime.fromisoformat(str(start_value).replace('Z', '+00:00'))
+        now_dt = datetime.now(start_dt.tzinfo) if start_dt.tzinfo else datetime.now()
+        return max(0, int((now_dt - start_dt).total_seconds()))
+    except Exception:
+        return 0
 
 
 def _send_checkout_email(student_row, start_time: str, end_time: str):
@@ -715,11 +730,23 @@ def register_api_routes(app):
             with sqlite3.connect(DB_PATH) as conn:
                 c = conn.cursor()
                 open_session = c.execute(
-                    "SELECT id FROM sessions WHERE student_id=? AND end_time IS NULL LIMIT 1",
+                    "SELECT id, start_time FROM sessions WHERE student_id=? AND end_time IS NULL ORDER BY id DESC LIMIT 1",
                     (student_id,)
                 ).fetchone()
             
             if open_session:
+                open_session_id, open_start_time = open_session
+                elapsed_seconds = _elapsed_seconds_since(open_start_time)
+                if elapsed_seconds < CHECKOUT_COOLDOWN_SECONDS:
+                    wait_seconds = CHECKOUT_COOLDOWN_SECONDS - elapsed_seconds
+                    return jsonify({
+                        "error": f"Please wait {wait_seconds} seconds before checkout.",
+                        "action": "checkout_blocked",
+                        "student_id": student_id,
+                        "name": student_name,
+                        "wait_seconds": wait_seconds,
+                    }), 429
+
                 # Stop the session (check out)
                 checkout_email_status = None
                 checkout_email_message = None

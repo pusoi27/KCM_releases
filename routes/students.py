@@ -190,6 +190,141 @@ def _build_student_vcf(student_row) -> str:
     return "\r\n".join(lines) + "\r\n"
 
 
+def _vcf_unescape(value: str) -> str:
+    """Decode common VCF escape sequences."""
+    text = str(value or "")
+    return (
+        text.replace('\\n', '\n')
+        .replace('\\N', '\n')
+        .replace('\\,', ',')
+        .replace('\\;', ';')
+        .replace('\\\\', '\\')
+        .strip()
+    )
+
+
+def _unfold_vcf_lines(vcf_text: str) -> list[str]:
+    """Unfold folded VCF lines (continuation lines start with space/tab)."""
+    raw_lines = str(vcf_text or '').replace('\r\n', '\n').replace('\r', '\n').split('\n')
+    unfolded = []
+    for line in raw_lines:
+        if not line:
+            unfolded.append('')
+            continue
+        if line.startswith(' ') or line.startswith('\t'):
+            if unfolded:
+                unfolded[-1] += line[1:]
+            continue
+        unfolded.append(line)
+    return unfolded
+
+
+def _extract_vcard_blocks(vcf_text: str) -> list[list[str]]:
+    """Return list of VCF blocks, each block as a list of unfolded lines."""
+    lines = _unfold_vcf_lines(vcf_text)
+    blocks = []
+    current = []
+    in_card = False
+
+    for line in lines:
+        upper = line.strip().upper()
+        if upper == 'BEGIN:VCARD':
+            in_card = True
+            current = [line]
+            continue
+        if in_card:
+            current.append(line)
+            if upper == 'END:VCARD':
+                blocks.append(current)
+                current = []
+                in_card = False
+
+    return blocks
+
+
+def _read_vcard_values(card_lines: list[str], field_name: str) -> list[str]:
+    """Extract all values for a VCF field name (supports params like TEL;TYPE=...)."""
+    prefix = f"{field_name.upper()}"
+    values = []
+    for line in card_lines:
+        if ':' not in line:
+            continue
+        left, right = line.split(':', 1)
+        left_upper = left.upper()
+        if left_upper == prefix or left_upper.startswith(prefix + ';'):
+            values.append(_vcf_unescape(right))
+    return values
+
+
+def _normalize_contact_name(raw_name: str) -> str:
+    """Map contact full name to student display form: FirstName LastInitial."""
+    if not raw_name:
+        return ''
+    base_name = re.sub(r'\(.*?\)', '', str(raw_name)).strip()
+    parts = [p for p in base_name.split() if p]
+    if not parts:
+        return ''
+    first_name = parts[0]
+    if len(parts) >= 2:
+        return f"{first_name} {parts[-1][0]}."
+    return first_name
+
+
+def _extract_guardian_name(raw_name: str) -> str:
+    """Extract guardian from first parenthesized segment in contact name."""
+    if not raw_name:
+        return ''
+    match = re.search(r'\((.*?)\)', str(raw_name))
+    if not match:
+        return ''
+    return str(match.group(1) or '').strip()
+
+
+def _full_name_from_vcard(card_lines: list[str]) -> str:
+    """Get best available full name from FN, then N fields."""
+    fn_values = _read_vcard_values(card_lines, 'FN')
+    if fn_values and fn_values[0].strip():
+        return fn_values[0].strip()
+
+    n_values = _read_vcard_values(card_lines, 'N')
+    if n_values:
+        # N format: Last;First;Middle;Prefix;Suffix
+        parts = (n_values[0] or '').split(';')
+        last = parts[0].strip() if len(parts) > 0 else ''
+        first = parts[1].strip() if len(parts) > 1 else ''
+        candidate = ' '.join([p for p in [first, last] if p]).strip()
+        if candidate:
+            return candidate
+    return ''
+
+
+def _parse_vcf_contacts(vcf_text: str) -> list[dict]:
+    """Parse VCF text into normalized student-import contact dictionaries."""
+    contacts = []
+    for block in _extract_vcard_blocks(vcf_text):
+        full_name = _full_name_from_vcard(block)
+        email_values = _read_vcard_values(block, 'EMAIL')
+        tel_values = _read_vcard_values(block, 'TEL')
+
+        email = str(email_values[0] or '').strip() if email_values else ''
+        phone = str(tel_values[0] or '').strip() if tel_values else ''
+        student_name = _normalize_contact_name(full_name)
+        guardian = _extract_guardian_name(full_name)
+
+        if not student_name:
+            continue
+
+        contacts.append(
+            {
+                'student_name': student_name,
+                'guardian': guardian,
+                'email': email,
+                'phone': phone,
+            }
+        )
+    return contacts
+
+
 def _read_student_photo(file_storage, student_id):
     """Validate and read an uploaded photo as raw bytes plus mime type."""
     if not file_storage or not file_storage.filename:
@@ -749,6 +884,70 @@ def register_student_routes(app, upload_folder):
         message = "Import successful" + (f": {', '.join(parts)}" if parts else "") + "."
         invalidate_scoped_cache(*cache_invalidators)
         flash(message, "success")
+        return redirect(url_for("students_list"))
+
+    @app.route("/students/import-vcf", methods=["POST"])
+    @require_login
+    def students_import_vcf():
+        file = request.files.get("vcffile")
+        if not file or file.filename == "":
+            flash("No VCF file selected.", "danger")
+            return redirect(url_for("students_list"))
+
+        filename = str(file.filename or '')
+        if not filename.lower().endswith('.vcf'):
+            flash("Please select a .vcf contact file.", "danger")
+            return redirect(url_for("students_list"))
+
+        raw_bytes = file.read()
+        if not raw_bytes:
+            flash("Selected VCF file is empty.", "danger")
+            return redirect(url_for("students_list"))
+
+        try:
+            vcf_text = raw_bytes.decode('utf-8-sig')
+        except UnicodeDecodeError:
+            vcf_text = raw_bytes.decode('latin-1', errors='replace')
+
+        contacts = _parse_vcf_contacts(vcf_text)
+        if not contacts:
+            flash("No valid contacts found in VCF file.", "warning")
+            return redirect(url_for("students_list"))
+
+        backup_path = db_backup_recovery.create_backup("students_import_vcf")
+        cache_invalidators = [
+            lambda: _invalidate_student_caches()
+        ]
+
+        added = 0
+        try:
+            for contact in contacts:
+                student_manager.add_student(
+                    contact['student_name'],
+                    "Math",
+                    contact.get('email', ''),
+                    contact.get('phone', ''),
+                    book_loaned=0,
+                    el=0,
+                    pi=1,
+                    v=0,
+                    ind=0,
+                    guardian=contact.get('guardian', ''),
+                )
+                added += 1
+        except Exception as e:
+            flash_scoped_failure(
+                backup_path=backup_path,
+                table_names=("students",),
+                error=e,
+                invalidators=cache_invalidators,
+                category="danger",
+            )
+            flash("VCF import failed. Please verify the contact file and try again.", "danger")
+            return redirect(url_for("students_list"))
+
+        invalidate_scoped_cache(*cache_invalidators)
+        flash(f"VCF import successful: {added} student(s) added.", "success")
         return redirect(url_for("students_list"))
 
     @app.route("/students/export")

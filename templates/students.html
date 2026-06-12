@@ -271,6 +271,11 @@
       <input type="file" name="csvfile" accept=".csv" required style="display:none;" id="csvFileInput" onchange="this.form.submit()">
       <button type="button" class="btn btn-outline-secondary btn-sm" onclick="document.getElementById('csvFileInput').click()">Import CSV</button>
     </form>
+    <form action="{{ url_for('students_import_vcf') }}" method="post" enctype="multipart/form-data" id="importVcfForm">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <input type="file" name="vcffile" accept=".vcf,text/vcard" required style="display:none;" id="vcfFileInput" onchange="this.form.submit()">
+      <button type="button" class="btn btn-outline-secondary btn-sm" onclick="document.getElementById('vcfFileInput').click()">Import VCF</button>
+    </form>
     <form action="{{ url_for('qr_students_generate_all_dashboard') }}" method="post" class="d-inline">
       <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
       <button type="submit" class="btn btn-outline-primary btn-sm">Generate All QRs</button>
