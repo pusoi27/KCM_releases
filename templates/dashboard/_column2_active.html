@@ -30,12 +30,12 @@
         </div>
         {% endif %}
       </div>
-       <div id="seatGrid"
-         style="display:grid; grid-template-columns:repeat(4,1fr); gap:0.5rem; overflow-y:auto; overflow-x:hidden; width:100%; padding:0; margin:0; flex:1 1 auto; min-height:0;"></div>
-       <!-- Overflow list for students beyond seat limit -->
+       <!-- Seat grid: 4×4, fills available height without scrolling -->
+       <div id="seatGrid"></div>
+       <!-- Overflow bar: students 17+ listed below the grid -->
        <div id="overflowStudents" class="mt-1" style="display:none;">
-         <h6 class="text-warning fw-bold small"><i class="bi bi-list-ul"></i> Additional Students Waiting:</h6>
-         <div id="overflowList" class="d-flex flex-wrap gap-2"></div>
+         <h6 class="text-danger fw-bold small mb-1"><i class="bi bi-people-fill"></i> Also in Class <span id="overflowCount" class="fw-normal text-muted"></span> — <small class="text-muted fw-normal">name turns red when time exceeded</small></h6>
+         <div id="overflowList" class="d-flex flex-wrap gap-1"></div>
        </div>
     </div>
   </div>

@@ -28,6 +28,15 @@
           {% endif %}
         </div>
         <div class="col-lg-7 p-4 p-lg-5">
+          <div class="d-flex justify-content-end mb-3">
+            <button
+              type="button"
+              class="btn btn-outline-secondary btn-sm"
+              onclick="if (window.history.length > 1) { window.history.back(); } else { window.location.href='{{ url_for('dashboard') }}'; }"
+            >
+              Back
+            </button>
+          </div>
           {% with messages = get_flashed_messages(with_categories=true) %}
             {% if messages %}
               {% for cat, msg in messages %}

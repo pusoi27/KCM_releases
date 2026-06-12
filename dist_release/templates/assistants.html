@@ -12,11 +12,11 @@
       <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
       <button type="submit" class="btn btn-outline-primary btn-sm">Generate All QRs</button>
     </form>
-    <a href="{{ url_for('qr_assistants_pdf') }}" class="btn btn-outline-secondary btn-sm">Print Staff QRs (Avery 8163)</a>
+    <a href="{{ url_for('qr_assistants_pdf') }}" class="btn btn-outline-secondary btn-sm">Print Staff Badges (A4 Business Cards)</a>
   </div>
   {% else %}
   <div class="alert alert-info py-2">
-    <i class="bi bi-info-circle"></i> Check In/Out Station mode: only Staff On Duty toggles are enabled on this page.
+    <i class="bi bi-info-circle"></i> Scanner Station mode: only Staff On Duty toggles are enabled on this page.
   </div>
   {% endif %}
 

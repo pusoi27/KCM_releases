@@ -14,7 +14,7 @@
       {% if subscription_access.is_instructor_station %}
         <i class="bi bi-mortarboard-fill me-1"></i> Instructor Station
       {% else %}
-        <i class="bi bi-upc-scan me-1"></i> {{ subscription_access.station_role|title }} Station
+        <i class="bi bi-upc-scan me-1"></i> Scanner Station
       {% endif %}
     </span>
     {% endif %}
@@ -45,9 +45,9 @@
           <div class="mt-auto d-grid gap-2">
             <a class="btn btn-outline-success{% if not subscription_access.can_add_book %} disabled menu-item-disabled{% endif %}" href="{% if subscription_access.can_add_book %}{{ url_for('books_add') }}{% else %}#{% endif %}" {% if not subscription_access.can_add_book %}aria-disabled="true" tabindex="-1"{% endif %}>Add Book</a>
             <a class="btn btn-outline-success{% if not subscription_access.can_manage_books %} disabled menu-item-disabled{% endif %}" href="{% if subscription_access.can_manage_books %}{{ url_for('books_list') }}{% else %}#{% endif %}" {% if not subscription_access.can_manage_books %}aria-disabled="true" tabindex="-1"{% endif %}>Books View / Edit / Delete</a>
-            <a class="btn btn-outline-secondary{% if not subscription_access.can_access_book_loan %} disabled menu-item-disabled{% endif %}" href="{% if subscription_access.can_access_book_loan %}{{ url_for('books_loan_page') }}{% else %}#{% endif %}" {% if not subscription_access.can_access_book_loan %}aria-disabled="true" tabindex="-1"{% endif %}>Book Loan</a>
-            <a class="btn btn-outline-secondary{% if not subscription_access.can_manage_devices %} disabled menu-item-disabled{% endif %}" href="{% if subscription_access.can_manage_devices %}{{ url_for('materials_list') }}{% else %}#{% endif %}" {% if not subscription_access.can_manage_devices %}aria-disabled="true" tabindex="-1"{% endif %}>Devices View / Edit / Delete</a>
-            <a class="btn btn-outline-secondary{% if not subscription_access.can_access_device_loan %} disabled menu-item-disabled{% endif %}" href="{% if subscription_access.can_access_device_loan %}{{ url_for('materials_loan_page') }}{% else %}#{% endif %}" {% if not subscription_access.can_access_device_loan %}aria-disabled="true" tabindex="-1"{% endif %}>Device Loan</a>
+            <a class="btn btn-outline-success{% if not subscription_access.can_access_book_loan %} disabled menu-item-disabled{% endif %}" href="{% if subscription_access.can_access_book_loan %}{{ url_for('books_loan_page') }}{% else %}#{% endif %}" {% if not subscription_access.can_access_book_loan %}aria-disabled="true" tabindex="-1"{% endif %}>Book Loan</a>
+            <a class="btn btn-outline-success{% if not subscription_access.can_manage_devices %} disabled menu-item-disabled{% endif %}" href="{% if subscription_access.can_manage_devices %}{{ url_for('materials_list') }}{% else %}#{% endif %}" {% if not subscription_access.can_manage_devices %}aria-disabled="true" tabindex="-1"{% endif %}>Devices View / Edit / Delete</a>
+            <a class="btn btn-outline-success{% if not subscription_access.can_access_device_loan %} disabled menu-item-disabled{% endif %}" href="{% if subscription_access.can_access_device_loan %}{{ url_for('materials_loan_page') }}{% else %}#{% endif %}" {% if not subscription_access.can_access_device_loan %}aria-disabled="true" tabindex="-1"{% endif %}>Device Loan</a>
           </div>
         </div>
       </div>
@@ -61,10 +61,10 @@
           <h2 class="h5"><i class="bi bi-bar-chart-line me-2"></i>Reports</h2>
           <p class="text-muted small">Open reports in one click.</p>
           <div class="mt-auto d-grid gap-2">
-            <a class="btn btn-outline-primary{% if not subscription_access.can_access_reports_menu %} disabled menu-item-disabled{% endif %}" href="{% if subscription_access.can_access_reports_menu %}{{ url_for('reports_assistants') }}{% else %}#{% endif %}" {% if not subscription_access.can_access_reports_menu %}aria-disabled="true" tabindex="-1"{% endif %}>Payroll Staff Hours</a>
-            <a class="btn btn-outline-primary{% if not subscription_access.can_access_reports_menu %} disabled menu-item-disabled{% endif %}" href="{% if subscription_access.can_access_reports_menu %}{{ url_for('class_attendance_page') }}{% else %}#{% endif %}" {% if not subscription_access.can_access_reports_menu %}aria-disabled="true" tabindex="-1"{% endif %}>Class Attendance</a>
-            <a class="btn btn-outline-primary{% if not subscription_access.can_access_reports_menu %} disabled menu-item-disabled{% endif %}" href="{% if subscription_access.can_access_reports_menu %}{{ url_for('student_attendance_page') }}{% else %}#{% endif %}" {% if not subscription_access.can_access_reports_menu %}aria-disabled="true" tabindex="-1"{% endif %}>Student Attendance</a>
-            <a class="btn btn-outline-primary{% if not subscription_access.can_access_reports_menu %} disabled menu-item-disabled{% endif %}" href="{% if subscription_access.can_access_reports_menu %}{{ url_for('reports_loans') }}{% else %}#{% endif %}" {% if not subscription_access.can_access_reports_menu %}aria-disabled="true" tabindex="-1"{% endif %}>Loans Report</a>
+            <a class="btn btn-outline-success{% if not subscription_access.can_access_reports_menu %} disabled menu-item-disabled{% endif %}" href="{% if subscription_access.can_access_reports_menu %}{{ url_for('reports_assistants') }}{% else %}#{% endif %}" {% if not subscription_access.can_access_reports_menu %}aria-disabled="true" tabindex="-1"{% endif %}>Payroll Staff Hours</a>
+            <a class="btn btn-outline-success{% if not subscription_access.can_access_reports_menu %} disabled menu-item-disabled{% endif %}" href="{% if subscription_access.can_access_reports_menu %}{{ url_for('class_attendance_page') }}{% else %}#{% endif %}" {% if not subscription_access.can_access_reports_menu %}aria-disabled="true" tabindex="-1"{% endif %}>Class Attendance</a>
+            <a class="btn btn-outline-success{% if not subscription_access.can_access_reports_menu %} disabled menu-item-disabled{% endif %}" href="{% if subscription_access.can_access_reports_menu %}{{ url_for('student_attendance_page') }}{% else %}#{% endif %}" {% if not subscription_access.can_access_reports_menu %}aria-disabled="true" tabindex="-1"{% endif %}>Student Attendance</a>
+            <a class="btn btn-outline-success{% if not subscription_access.can_access_reports_menu %} disabled menu-item-disabled{% endif %}" href="{% if subscription_access.can_access_reports_menu %}{{ url_for('reports_loans') }}{% else %}#{% endif %}" {% if not subscription_access.can_access_reports_menu %}aria-disabled="true" tabindex="-1"{% endif %}>Loans Report</a>
           </div>
         </div>
       </div>
@@ -78,10 +78,10 @@
           <h2 class="h5"><i class="bi bi-tools me-2"></i>Utilities</h2>
           <p class="text-muted small">Profile and calendar workflows.</p>
           <div class="mt-auto d-grid gap-2">
-            <a class="btn btn-outline-dark{% if not subscription_access.can_access_utilities_profile %} disabled menu-item-disabled{% endif %}" href="{% if subscription_access.can_access_utilities_profile %}{{ url_for('instructor_profile') }}{% else %}#{% endif %}" {% if not subscription_access.can_access_utilities_profile %}aria-disabled="true" tabindex="-1"{% endif %}>Center Profile</a>
-            <a class="btn btn-outline-dark{% if not subscription_access.can_access_utilities_students_calendar %} disabled menu-item-disabled{% endif %}" href="{% if subscription_access.can_access_utilities_students_calendar %}{{ url_for('center_calendar') }}{% else %}#{% endif %}" {% if not subscription_access.can_access_utilities_students_calendar %}aria-disabled="true" tabindex="-1"{% endif %}>Students Calendar</a>
-            <a class="btn btn-outline-dark{% if not subscription_access.can_access_utilities_manage_staff %} disabled menu-item-disabled{% endif %}" href="{% if subscription_access.can_access_utilities_manage_staff %}{{ url_for('assistants_list') }}{% else %}#{% endif %}" {% if not subscription_access.can_access_utilities_manage_staff %}aria-disabled="true" tabindex="-1"{% endif %}>Manage Staff</a>
-            <a class="btn btn-outline-dark{% if not subscription_access.can_access_utilities_staff_calendar %} disabled menu-item-disabled{% endif %}" href="{% if subscription_access.can_access_utilities_staff_calendar %}{{ url_for('schedule_assistants') }}{% else %}#{% endif %}" {% if not subscription_access.can_access_utilities_staff_calendar %}aria-disabled="true" tabindex="-1"{% endif %}>Staff Calendar</a>
+            <a class="btn btn-outline-success{% if not subscription_access.can_access_utilities_profile %} disabled menu-item-disabled{% endif %}" href="{% if subscription_access.can_access_utilities_profile %}{{ url_for('instructor_profile') }}{% else %}#{% endif %}" {% if not subscription_access.can_access_utilities_profile %}aria-disabled="true" tabindex="-1"{% endif %}>Center Profile</a>
+            <a class="btn btn-outline-success{% if not subscription_access.can_access_utilities_students_calendar %} disabled menu-item-disabled{% endif %}" href="{% if subscription_access.can_access_utilities_students_calendar %}{{ url_for('center_calendar') }}{% else %}#{% endif %}" {% if not subscription_access.can_access_utilities_students_calendar %}aria-disabled="true" tabindex="-1"{% endif %}>Students Calendar</a>
+            <a class="btn btn-outline-success{% if not subscription_access.can_access_utilities_manage_staff %} disabled menu-item-disabled{% endif %}" href="{% if subscription_access.can_access_utilities_manage_staff %}{{ url_for('assistants_list') }}{% else %}#{% endif %}" {% if not subscription_access.can_access_utilities_manage_staff %}aria-disabled="true" tabindex="-1"{% endif %}>Manage Staff</a>
+            <a class="btn btn-outline-success{% if not subscription_access.can_access_utilities_staff_calendar %} disabled menu-item-disabled{% endif %}" href="{% if subscription_access.can_access_utilities_staff_calendar %}{{ url_for('schedule_assistants') }}{% else %}#{% endif %}" {% if not subscription_access.can_access_utilities_staff_calendar %}aria-disabled="true" tabindex="-1"{% endif %}>Staff Calendar</a>
           </div>
         </div>
       </div>
@@ -95,9 +95,9 @@
           <h2 class="h5"><i class="bi bi-gear me-2"></i>Settings</h2>
           <p class="text-muted small">System and license controls.</p>
           <div class="mt-auto d-grid gap-2">
-            <a class="btn btn-outline-secondary{% if not subscription_access.can_access_scanner_workflows %} disabled menu-item-disabled{% endif %}" href="{% if subscription_access.can_access_scanner_workflows %}{{ url_for('qr_scanner') }}{% else %}#{% endif %}" {% if not subscription_access.can_access_scanner_workflows %}aria-disabled="true" tabindex="-1"{% endif %}>Scanner</a>
-            <a class="btn btn-outline-secondary" href="{{ url_for('setup_storage') }}">DB Backup</a>
-            <a class="btn btn-outline-secondary" href="{{ url_for('license_page') }}">Manage License</a>
+            <a class="btn btn-outline-success{% if not subscription_access.can_access_scanner_workflows %} disabled menu-item-disabled{% endif %}" href="{% if subscription_access.can_access_scanner_workflows %}{{ url_for('qr_scanner') }}{% else %}#{% endif %}" {% if not subscription_access.can_access_scanner_workflows %}aria-disabled="true" tabindex="-1"{% endif %}>Scanner</a>
+            <a class="btn btn-outline-success" href="{{ url_for('setup_storage') }}">DB Backup</a>
+            <a class="btn btn-outline-success" href="{{ url_for('license_page') }}">Manage License</a>
           </div>
         </div>
       </div>

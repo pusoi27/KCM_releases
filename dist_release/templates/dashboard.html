@@ -21,6 +21,8 @@
   {% endif %}
 
   <div class="dash-topbar-right d-flex align-items-center ms-auto">
+    <span class="small me-3"><i class="bi bi-calendar3"></i> {{ date_str }}</span>
+    <span class="small me-3"><i class="bi bi-clock"></i> {{ time_str }}</span>
     {% if (license_status.activation_limit or 0)|int < 2 %}
     <a
       class="btn btn-sm btn-warning fw-semibold"
@@ -40,6 +42,22 @@
       <i class="bi bi-pc-display"></i> {{ license_status.activation_usage }}/{{ license_status.activation_limit }}
     </span>
     {% endif %}
+    {% if (license_status.activation_limit or 0)|int >= 2 and subscription_access and subscription_access.station_role %}
+    <span
+      class="badge rounded-pill text-bg-warning"
+      style="margin-right:.5rem;"
+      title="{% if subscription_access.is_checkin_station %}Recommended for high-frequency session toggles and duty changes.{% else %}Recommended for slower administrative updates.{% endif %}"
+    >
+      {% if subscription_access.is_checkin_station %}
+      <i class="bi bi-upc-scan"></i> Scanner Station
+      {% else %}
+      <i class="bi bi-mortarboard-fill"></i> Instructor Station
+      {% endif %}
+    </span>
+    {% endif %}
+    <a class="btn btn-sm btn-outline-light" href="{{ url_for('license_page') }}" style="margin-right:.5rem;">
+      <i class="bi bi-key"></i> License
+    </a>
     <button class="dash-icon-btn" data-bs-toggle="offcanvas" data-bs-target="#dashNav" title="Menu">
       <i class="bi bi-list" style="font-size:1.6rem; line-height:1;"></i>
     </button>
@@ -56,13 +74,13 @@
     <ul class="list-group list-group-flush">
       {% if subscription_access.can_access_students %}
       <li class="list-group-item offcanvas-section-header">Students</li>
-      <li class="list-group-item"><a href="{{ url_for('students_add') }}" class="offcanvas-link"><i class="bi bi-person-plus me-2"></i>Add Student</a></li>
-      <li class="list-group-item"><a href="{{ url_for('students_list') }}" class="offcanvas-link"><i class="bi bi-people me-2"></i>View / Edit / Delete</a></li>
+      <li class="list-group-item"><a href="{% if subscription_access.can_add_student %}{{ url_for('students_add') }}{% else %}#{% endif %}" class="offcanvas-link{% if not subscription_access.can_add_student %} disabled text-muted menu-item-disabled{% endif %}" {% if not subscription_access.can_add_student %}aria-disabled="true" tabindex="-1"{% endif %}><i class="bi bi-person-plus me-2"></i>Add Student</a></li>
+      <li class="list-group-item"><a href="{% if subscription_access.can_manage_students %}{{ url_for('students_list') }}{% else %}#{% endif %}" class="offcanvas-link{% if not subscription_access.can_manage_students %} disabled text-muted menu-item-disabled{% endif %}" {% if not subscription_access.can_manage_students %}aria-disabled="true" tabindex="-1"{% endif %}><i class="bi bi-people me-2"></i>View / Edit / Delete</a></li>
       {% endif %}
       {% if subscription_access.can_access_books %}
       <li class="list-group-item offcanvas-section-header">Books/Devices</li>
-      <li class="list-group-item"><a href="{{ url_for('books_add') }}" class="offcanvas-link"><i class="bi bi-plus-square me-2"></i>Add Book</a></li>
-      <li class="list-group-item"><a href="{{ url_for('books_list') }}" class="offcanvas-link"><i class="bi bi-journal-bookmark me-2"></i>Books View / Edit / Delete</a></li>
+      <li class="list-group-item"><a href="{% if subscription_access.can_add_book %}{{ url_for('books_add') }}{% else %}#{% endif %}" class="offcanvas-link{% if not subscription_access.can_add_book %} disabled text-muted menu-item-disabled{% endif %}" {% if not subscription_access.can_add_book %}aria-disabled="true" tabindex="-1"{% endif %}><i class="bi bi-plus-square me-2"></i>Add Book</a></li>
+      <li class="list-group-item"><a href="{% if subscription_access.can_manage_books %}{{ url_for('books_list') }}{% else %}#{% endif %}" class="offcanvas-link{% if not subscription_access.can_manage_books %} disabled text-muted menu-item-disabled{% endif %}" {% if not subscription_access.can_manage_books %}aria-disabled="true" tabindex="-1"{% endif %}><i class="bi bi-journal-bookmark me-2"></i>Books View / Edit / Delete</a></li>
       <li class="list-group-item"><a href="{{ url_for('books_loan_page') }}" class="offcanvas-link"><i class="bi bi-arrow-left-right me-2"></i>Book Loan</a></li>
       {% endif %}
       {% if subscription_access.can_access_instructor_reports %}
@@ -74,17 +92,16 @@
       {% endif %}
       {% if subscription_access.can_access_instructor_profile %}
       <li class="list-group-item offcanvas-section-header">Utilities</li>
-      <li class="list-group-item"><a href="{{ url_for('instructor_profile') }}" class="offcanvas-link">Center Profile</a></li>
-      <li class="list-group-item"><a href="{{ url_for('center_calendar') }}" class="offcanvas-link">Students Calendar</a></li>
+      <li class="list-group-item"><a href="{% if subscription_access.can_access_utilities_profile %}{{ url_for('instructor_profile') }}{% else %}#{% endif %}" class="offcanvas-link{% if not subscription_access.can_access_utilities_profile %} disabled text-muted menu-item-disabled{% endif %}" {% if not subscription_access.can_access_utilities_profile %}aria-disabled="true" tabindex="-1"{% endif %}>Center Profile</a></li>
+      <li class="list-group-item"><a href="{% if subscription_access.can_access_utilities_students_calendar %}{{ url_for('center_calendar') }}{% else %}#{% endif %}" class="offcanvas-link{% if not subscription_access.can_access_utilities_students_calendar %} disabled text-muted menu-item-disabled{% endif %}" {% if not subscription_access.can_access_utilities_students_calendar %}aria-disabled="true" tabindex="-1"{% endif %}>Students Calendar</a></li>
       {% if subscription_access.can_access_assistants %}
-      <li class="list-group-item"><a href="{{ url_for('assistants_list') }}" class="offcanvas-link">Manage Staff</a></li>
-      <li class="list-group-item"><a href="{{ url_for('schedule_assistants') }}" class="offcanvas-link">Staff Calendar</a></li>
+      <li class="list-group-item"><a href="{% if subscription_access.can_access_utilities_manage_staff %}{{ url_for('assistants_list') }}{% else %}#{% endif %}" class="offcanvas-link{% if not subscription_access.can_access_utilities_manage_staff %} disabled text-muted menu-item-disabled{% endif %}" {% if not subscription_access.can_access_utilities_manage_staff %}aria-disabled="true" tabindex="-1"{% endif %}>Manage Staff</a></li>
+      <li class="list-group-item"><a href="{% if subscription_access.can_access_utilities_staff_calendar %}{{ url_for('schedule_assistants') }}{% else %}#{% endif %}" class="offcanvas-link{% if not subscription_access.can_access_utilities_staff_calendar %} disabled text-muted menu-item-disabled{% endif %}" {% if not subscription_access.can_access_utilities_staff_calendar %}aria-disabled="true" tabindex="-1"{% endif %}>Staff Calendar</a></li>
       {% endif %}
       {% if subscription_access.can_access_instructor_settings %}
       <li class="list-group-item offcanvas-section-header ps-4 text-muted small">Settings</li>
       <li class="list-group-item"><a href="{{ url_for('qr_scanner') }}" class="offcanvas-link ps-4">Scanner</a></li>
       <li class="list-group-item"><a href="{{ url_for('setup_storage') }}" class="offcanvas-link ps-4">DB Backup</a></li>
-      <li class="list-group-item"><a href="{{ url_for('license_page') }}" class="offcanvas-link ps-4"><i class="bi bi-key me-2"></i>Upgrade License</a></li>
       {% endif %}
       {% endif %}
       <li class="list-group-item offcanvas-section-header">License</li>
@@ -100,12 +117,12 @@
 
   <!-- Left: icon sidebar menu bar -->
   <nav class="dash-sidebar">
-    {% if subscription_access.can_access_students %}
+    {% if subscription_access.can_access_students and not subscription_access.is_checkin_station %}
     <a href="{{ url_for('students_list') }}" class="dash-sidebar-item" title="Students">
       <i class="bi bi-people-fill"></i>
     </a>
     {% endif %}
-    {% if subscription_access.can_access_books %}
+    {% if subscription_access.can_access_books and not subscription_access.is_checkin_station %}
     <a href="{{ url_for('books_list') }}" class="dash-sidebar-item" title="Books/Devices">
       <i class="bi bi-journal-bookmark-fill"></i>
     </a>
@@ -115,7 +132,7 @@
       <i class="bi bi-bar-chart-fill"></i>
     </a>
     {% endif %}
-    {% if subscription_access.can_access_instructor_profile %}
+    {% if subscription_access.can_access_instructor_profile and not subscription_access.is_checkin_station %}
     <a href="{{ url_for('center_calendar') }}" class="dash-sidebar-item" title="Utilities">
       <i class="bi bi-tools"></i>
     </a>

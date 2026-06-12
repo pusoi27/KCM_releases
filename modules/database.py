@@ -67,6 +67,7 @@ _MAILBOX_SYNC_INTERVAL_MINUTES = 10
 _STATION_MAILBOX_STOP_EVENT = threading.Event()
 _STATION_MAILBOX_THREAD: threading.Thread | None = None
 _MAILBOX_LAST_STAFF_EXPORT_HASH = ""
+_MAILBOX_LAST_REFERENCE_EXPORT_HASH = ""
 
 # Adaptive retry mechanism for OneDrive sync
 _SYNC_FAILURE_COUNT = 0
@@ -1021,6 +1022,16 @@ def _safe_positive_ints(values) -> list[int]:
     return parsed
 
 
+def _safe_int(value, default: int = 0, minimum: int | None = None) -> int:
+    try:
+        parsed = int(value)
+    except Exception:
+        parsed = int(default)
+    if minimum is not None:
+        return max(minimum, parsed)
+    return parsed
+
+
 def _admin_write_scanner_ack(
     admin_outbox_dir: str,
     *,
@@ -1217,28 +1228,532 @@ def _staff_payload_rows(conn: sqlite3.Connection) -> list[dict]:
     ]
 
 
+def _student_payload_rows(conn: sqlite3.Connection) -> list[dict]:
+    conn.row_factory = sqlite3.Row
+    rows = conn.execute(
+        """
+        SELECT
+            id,
+            COALESCE(name, '') AS name,
+            COALESCE(student_identifier, '') AS student_identifier,
+            COALESCE(subject, '') AS subject,
+            COALESCE(subjects_json, '[]') AS subjects_json,
+            COALESCE(subject_minutes_json, '[]') AS subject_minutes_json,
+            COALESCE(total_study_minutes, 30) AS total_study_minutes,
+            COALESCE(email, '') AS email,
+            COALESCE(phone, '') AS phone,
+            COALESCE(guardian, '') AS guardian,
+            COALESCE(active, 1) AS active,
+            COALESCE(el, 0) AS el,
+            COALESCE(pi, 0) AS pi,
+            COALESCE(v, 0) AS v,
+            COALESCE(ind, 0) AS ind,
+            COALESCE(day1, '') AS day1,
+            COALESCE(day1_time, '') AS day1_time,
+            COALESCE(day2, '') AS day2,
+            COALESCE(day2_time, '') AS day2_time,
+            COALESCE(day3, '') AS day3,
+            COALESCE(day3_time, '') AS day3_time,
+            COALESCE(day4, '') AS day4,
+            COALESCE(day4_time, '') AS day4_time,
+            COALESCE(day5, '') AS day5,
+            COALESCE(day5_time, '') AS day5_time,
+            COALESCE(day6, '') AS day6,
+            COALESCE(day6_time, '') AS day6_time,
+            COALESCE(schedule_json, '') AS schedule_json,
+            COALESCE(checkout_notify_enabled, 1) AS checkout_notify_enabled
+        FROM students
+        ORDER BY id ASC
+        """
+    ).fetchall()
+    return [
+        {
+            "id": int(row["id"]),
+            "name": row["name"],
+            "student_identifier": row["student_identifier"],
+            "subject": row["subject"],
+            "subjects_json": row["subjects_json"],
+            "subject_minutes_json": row["subject_minutes_json"],
+            "total_study_minutes": int(row["total_study_minutes"] or 30),
+            "email": row["email"],
+            "phone": row["phone"],
+            "guardian": row["guardian"],
+            "active": int(row["active"] or 0),
+            "el": int(row["el"] or 0),
+            "pi": int(row["pi"] or 0),
+            "v": int(row["v"] or 0),
+            "ind": int(row["ind"] or 0),
+            "day1": row["day1"],
+            "day1_time": row["day1_time"],
+            "day2": row["day2"],
+            "day2_time": row["day2_time"],
+            "day3": row["day3"],
+            "day3_time": row["day3_time"],
+            "day4": row["day4"],
+            "day4_time": row["day4_time"],
+            "day5": row["day5"],
+            "day5_time": row["day5_time"],
+            "day6": row["day6"],
+            "day6_time": row["day6_time"],
+            "schedule_json": row["schedule_json"],
+            "checkout_notify_enabled": int(row["checkout_notify_enabled"] or 1),
+        }
+        for row in rows
+    ]
+
+
+def _table_exists(conn: sqlite3.Connection, table_name: str) -> bool:
+    row = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ? LIMIT 1",
+        (str(table_name or "").strip(),),
+    ).fetchone()
+    return row is not None
+
+
+def _column_exists(conn: sqlite3.Connection, table_name: str, column_name: str) -> bool:
+    if not _table_exists(conn, table_name):
+        return False
+    try:
+        cols = conn.execute(f"PRAGMA table_info({table_name})").fetchall()
+        return any(str(col[1] or "").strip().lower() == str(column_name or "").strip().lower() for col in cols)
+    except Exception:
+        return False
+
+
+_APP_LICENSE_SHARED_COLUMNS = (
+    "license_key",
+    "licensee",
+    "email",
+    "issued_at",
+    "expires_at",
+    "metadata_json",
+    "ls_instance_id",
+    "ls_status",
+    "ls_last_verified_at",
+    "activation_limit",
+    "activation_usage",
+)
+
+_APP_LICENSE_INT_COLUMNS = {
+    "activation_limit",
+    "activation_usage",
+}
+
+
+def _app_license_payload_row(conn: sqlite3.Connection) -> dict:
+    """Return shared app_license fields (excluding per-machine fields)."""
+    if not _table_exists(conn, "app_license"):
+        return {}
+    conn.row_factory = sqlite3.Row
+    row = conn.execute("SELECT * FROM app_license WHERE id = 1 LIMIT 1").fetchone()
+    if not row:
+        return {}
+
+    keys = {str(k or "").strip().lower() for k in row.keys()}
+    payload: dict[str, object] = {}
+    for col in _APP_LICENSE_SHARED_COLUMNS:
+        if col.lower() not in keys:
+            continue
+        value = row[col]
+        if col in _APP_LICENSE_INT_COLUMNS:
+            payload[col] = _safe_int(value, default=0, minimum=0)
+        else:
+            payload[col] = str(value or "").strip()
+    return payload
+
+
+def _scanner_apply_shared_app_license(cur: sqlite3.Cursor, payload_license: dict) -> None:
+    """Apply shared app_license fields while preserving machine-specific fields."""
+    if not payload_license or not isinstance(payload_license, dict):
+        return
+
+    conn = cur.connection
+    if not _table_exists(conn, "app_license"):
+        return
+
+    available_cols = [
+        col for col in _APP_LICENSE_SHARED_COLUMNS
+        if _column_exists(conn, "app_license", col)
+    ]
+    if not available_cols:
+        return
+
+    updates: dict[str, object] = {}
+    for col in available_cols:
+        if col not in payload_license:
+            continue
+        raw_value = payload_license.get(col)
+        if col in _APP_LICENSE_INT_COLUMNS:
+            updates[col] = _safe_int(raw_value, default=0, minimum=0)
+        else:
+            updates[col] = str(raw_value or "").strip()
+
+    if not updates:
+        return
+
+    has_updated_at = _column_exists(conn, "app_license", "updated_at")
+
+    existing = cur.execute("SELECT id FROM app_license WHERE id = 1 LIMIT 1").fetchone()
+    if existing:
+        assignments = [f"{col} = ?" for col in updates.keys()]
+        params = list(updates.values())
+        if has_updated_at:
+            assignments.append("updated_at = ?")
+            params.append(datetime.now(timezone.utc).isoformat())
+        params.append(1)
+        cur.execute(
+            f"UPDATE app_license SET {', '.join(assignments)} WHERE id = ?",
+            params,
+        )
+    else:
+        insert_cols = ["id"] + list(updates.keys())
+        insert_vals = [1] + list(updates.values())
+        if has_updated_at:
+            insert_cols.append("updated_at")
+            insert_vals.append(datetime.now(timezone.utc).isoformat())
+        placeholders = ", ".join(["?" for _ in insert_cols])
+        cur.execute(
+            f"INSERT INTO app_license ({', '.join(insert_cols)}) VALUES ({placeholders})",
+            insert_vals,
+        )
+
+
+def _book_payload_rows(conn: sqlite3.Connection) -> list[dict]:
+    if not _table_exists(conn, "books"):
+        return []
+    conn.row_factory = sqlite3.Row
+    rows = conn.execute(
+        """
+        SELECT
+            b.id,
+            COALESCE(b.title, '') AS title,
+            COALESCE(b.author, '') AS author,
+            COALESCE(b.publisher, '') AS publisher,
+            COALESCE(b.reading_level, '') AS reading_level,
+            COALESCE(b.isbn, '') AS isbn,
+            COALESCE(b.isbn13, '') AS isbn13,
+            COALESCE(b.copies, 0) AS copies,
+            COALESCE(b.available, 0) AS available,
+            COALESCE(s.student_identifier, '') AS borrower_student_identifier,
+            COALESCE(s.email, '') AS borrower_email,
+            COALESCE(s.name, '') AS borrower_name,
+            COALESCE(s.phone, '') AS borrower_phone
+        FROM books b
+        LEFT JOIN students s ON s.id = b.borrower_id
+        ORDER BY b.id ASC
+        """
+    ).fetchall()
+    return [
+        {
+            "id": int(row["id"]),
+            "title": row["title"],
+            "author": row["author"],
+            "publisher": row["publisher"],
+            "reading_level": row["reading_level"],
+            "isbn": row["isbn"],
+            "isbn13": row["isbn13"],
+            "copies": _safe_int(row["copies"], default=0, minimum=0),
+            "available": 1 if _safe_int(row["available"], default=0, minimum=0) else 0,
+            "borrower_student_identifier": row["borrower_student_identifier"],
+            "borrower_email": row["borrower_email"],
+            "borrower_name": row["borrower_name"],
+            "borrower_phone": row["borrower_phone"],
+        }
+        for row in rows
+    ]
+
+
+def _material_payload_rows(conn: sqlite3.Connection) -> list[dict]:
+    if not _table_exists(conn, "materials"):
+        return []
+    conn.row_factory = sqlite3.Row
+    rows = conn.execute(
+        """
+        SELECT
+            m.id,
+            COALESCE(m.title, '') AS title,
+            COALESCE(m.author, '') AS author,
+            COALESCE(m.publisher, '') AS publisher,
+            COALESCE(m.reading_level, '') AS reading_level,
+            COALESCE(m.qr_code, '') AS qr_code,
+            COALESCE(m.copies, 0) AS copies,
+            COALESCE(m.available, 0) AS available,
+            COALESCE(s.student_identifier, '') AS borrower_student_identifier,
+            COALESCE(s.email, '') AS borrower_email,
+            COALESCE(s.name, '') AS borrower_name,
+            COALESCE(s.phone, '') AS borrower_phone
+        FROM materials m
+        LEFT JOIN students s ON s.id = m.borrower_id
+        ORDER BY m.id ASC
+        """
+    ).fetchall()
+    return [
+        {
+            "id": int(row["id"]),
+            "title": row["title"],
+            "author": row["author"],
+            "publisher": row["publisher"],
+            "reading_level": row["reading_level"],
+            "qr_code": row["qr_code"],
+            "copies": _safe_int(row["copies"], default=0, minimum=0),
+            "available": 1 if _safe_int(row["available"], default=0, minimum=0) else 0,
+            "borrower_student_identifier": row["borrower_student_identifier"],
+            "borrower_email": row["borrower_email"],
+            "borrower_name": row["borrower_name"],
+            "borrower_phone": row["borrower_phone"],
+        }
+        for row in rows
+    ]
+
+
+def _scanner_find_student_id_by_anchor(cur: sqlite3.Cursor, payload_item: dict) -> int | None:
+    student_identifier = str(payload_item.get("borrower_student_identifier") or "").strip()
+    email = str(payload_item.get("borrower_email") or "").strip()
+    name = str(payload_item.get("borrower_name") or "").strip()
+    phone = str(payload_item.get("borrower_phone") or "").strip()
+
+    if student_identifier:
+        row = cur.execute(
+            "SELECT id FROM students WHERE LOWER(COALESCE(student_identifier,'')) = LOWER(?) LIMIT 1",
+            (student_identifier,),
+        ).fetchone()
+        if row:
+            return int(row["id"])
+
+    if email:
+        row = cur.execute(
+            "SELECT id FROM students WHERE LOWER(COALESCE(email,'')) = LOWER(?) LIMIT 1",
+            (email,),
+        ).fetchone()
+        if row:
+            return int(row["id"])
+
+    if name:
+        row = cur.execute(
+            "SELECT id FROM students WHERE LOWER(COALESCE(name,'')) = LOWER(?) AND LOWER(COALESCE(phone,'')) = LOWER(?) LIMIT 1",
+            (name, phone),
+        ).fetchone()
+        if row:
+            return int(row["id"])
+
+    return None
+
+
+def _scanner_upsert_books(cur: sqlite3.Cursor, payload_books: list[dict]) -> None:
+    if not _table_exists(cur.connection, "books"):
+        return
+    for item in payload_books or []:
+        title = str(item.get("title") or "").strip()
+        author = str(item.get("author") or "").strip()
+        publisher = str(item.get("publisher") or "").strip()
+        reading_level = str(item.get("reading_level") or "").strip()
+        isbn = str(item.get("isbn") or "").strip()
+        isbn13 = str(item.get("isbn13") or "").strip()
+        copies = _safe_int(item.get("copies"), default=0, minimum=0)
+        borrower_id = _scanner_find_student_id_by_anchor(cur, item)
+
+        existing = None
+        if isbn:
+            existing = cur.execute(
+                "SELECT id FROM books WHERE LOWER(COALESCE(isbn,'')) = LOWER(?) OR LOWER(COALESCE(isbn13,'')) = LOWER(?) LIMIT 1",
+                (isbn, isbn),
+            ).fetchone()
+        if not existing and isbn13:
+            existing = cur.execute(
+                "SELECT id FROM books WHERE LOWER(COALESCE(isbn,'')) = LOWER(?) OR LOWER(COALESCE(isbn13,'')) = LOWER(?) LIMIT 1",
+                (isbn13, isbn13),
+            ).fetchone()
+        if not existing and title:
+            existing = cur.execute(
+                """
+                SELECT id FROM books
+                WHERE LOWER(COALESCE(title,'')) = LOWER(?)
+                  AND LOWER(COALESCE(author,'')) = LOWER(?)
+                  AND LOWER(COALESCE(publisher,'')) = LOWER(?)
+                LIMIT 1
+                """,
+                (title, author, publisher),
+            ).fetchone()
+
+        computed_available = 1 if (copies > 0 and (isbn or isbn13) and not borrower_id) else 0
+
+        if existing:
+            cur.execute(
+                """
+                UPDATE books
+                SET
+                    title = ?, author = ?, publisher = ?, reading_level = ?,
+                    isbn = ?, isbn13 = ?, copies = ?, available = ?, borrower_id = ?
+                WHERE id = ?
+                """,
+                (
+                    title, author, publisher, reading_level,
+                    isbn, isbn13, copies, computed_available, borrower_id,
+                    int(existing["id"]),
+                ),
+            )
+        else:
+            if not title:
+                continue
+            cur.execute(
+                """
+                INSERT INTO books (
+                    title, author, publisher, reading_level,
+                    isbn, isbn13, copies, available, borrower_id
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    title, author, publisher, reading_level,
+                    isbn, isbn13, copies, computed_available, borrower_id,
+                ),
+            )
+
+
+def _scanner_upsert_materials(cur: sqlite3.Cursor, payload_materials: list[dict]) -> None:
+    if not _table_exists(cur.connection, "materials"):
+        return
+    for item in payload_materials or []:
+        title = str(item.get("title") or "").strip()
+        author = str(item.get("author") or "").strip()
+        publisher = str(item.get("publisher") or "").strip()
+        reading_level = str(item.get("reading_level") or "").strip()
+        qr_code = str(item.get("qr_code") or "").strip()
+        copies = _safe_int(item.get("copies"), default=0, minimum=0)
+        borrower_id = _scanner_find_student_id_by_anchor(cur, item)
+
+        existing = None
+        if qr_code:
+            existing = cur.execute(
+                "SELECT id FROM materials WHERE LOWER(COALESCE(qr_code,'')) = LOWER(?) LIMIT 1",
+                (qr_code,),
+            ).fetchone()
+        if not existing and title:
+            existing = cur.execute(
+                """
+                SELECT id FROM materials
+                WHERE LOWER(COALESCE(title,'')) = LOWER(?)
+                  AND LOWER(COALESCE(author,'')) = LOWER(?)
+                  AND LOWER(COALESCE(publisher,'')) = LOWER(?)
+                LIMIT 1
+                """,
+                (title, author, publisher),
+            ).fetchone()
+
+        computed_available = 1 if (copies > 0 and qr_code and not borrower_id) else 0
+
+        if existing:
+            cur.execute(
+                """
+                UPDATE materials
+                SET
+                    title = ?, author = ?, publisher = ?, reading_level = ?,
+                    qr_code = ?, copies = ?, available = ?, borrower_id = ?
+                WHERE id = ?
+                """,
+                (
+                    title, author, publisher, reading_level,
+                    qr_code, copies, computed_available, borrower_id,
+                    int(existing["id"]),
+                ),
+            )
+        else:
+            if not title:
+                continue
+            cur.execute(
+                """
+                INSERT INTO materials (
+                    title, author, publisher, reading_level,
+                    qr_code, copies, available, borrower_id
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    title, author, publisher, reading_level,
+                    qr_code, copies, computed_available, borrower_id,
+                ),
+            )
+
+
+def _scanner_recompute_student_loan_flags(cur: sqlite3.Cursor) -> None:
+    conn = cur.connection
+    if not _table_exists(conn, "students"):
+        return
+
+    has_book_loaned_col = _column_exists(conn, "students", "book_loaned")
+    has_device_loaned_col = _column_exists(conn, "students", "device_loaned")
+
+    if has_book_loaned_col:
+        cur.execute("UPDATE students SET book_loaned = 0")
+        if _table_exists(conn, "books"):
+            cur.execute(
+                """
+                UPDATE students
+                SET book_loaned = 1
+                WHERE id IN (
+                    SELECT DISTINCT borrower_id
+                    FROM books
+                    WHERE borrower_id IS NOT NULL
+                )
+                """
+            )
+
+    if has_device_loaned_col:
+        cur.execute("UPDATE students SET device_loaned = 0")
+        if _table_exists(conn, "materials"):
+            cur.execute(
+                """
+                UPDATE students
+                SET device_loaned = 1
+                WHERE id IN (
+                    SELECT DISTINCT borrower_id
+                    FROM materials
+                    WHERE borrower_id IS NOT NULL
+                )
+                """
+            )
+
+
 def _admin_export_staff_snapshot(local_path: str, admin_outbox_dir: str) -> bool:
-    """Admin station exports staff list snapshots for scanner refresh."""
-    global _MAILBOX_LAST_STAFF_EXPORT_HASH
+    """Admin station exports staff/student/inventory snapshots for scanner refresh."""
+    global _MAILBOX_LAST_REFERENCE_EXPORT_HASH
     with sqlite3.connect(local_path) as conn:
         staff_rows = _staff_payload_rows(conn)
+        student_rows = _student_payload_rows(conn)
+        book_rows = _book_payload_rows(conn)
+        material_rows = _material_payload_rows(conn)
+        app_license = _app_license_payload_row(conn)
 
-    digest = uuid.uuid5(uuid.NAMESPACE_OID, json.dumps(staff_rows, sort_keys=True)).hex
-    if digest == _MAILBOX_LAST_STAFF_EXPORT_HASH:
+    digest_payload = {
+        "staff": staff_rows,
+        "students": student_rows,
+        "books": book_rows,
+        "materials": material_rows,
+        "app_license": app_license,
+    }
+    digest = uuid.uuid5(uuid.NAMESPACE_OID, json.dumps(digest_payload, sort_keys=True)).hex
+    if digest == _MAILBOX_LAST_REFERENCE_EXPORT_HASH:
         return False
 
     payload = {
         "schema": "stdytime-mailbox-v1",
-        "kind": "admin_staff",
+        "kind": "admin_reference",
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "machine_id": _station_machine_id(),
         "staff": staff_rows,
+        "students": student_rows,
+        "books": book_rows,
+        "materials": material_rows,
+        "app_license": app_license,
     }
     stamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
-    out_file = os.path.join(admin_outbox_dir, f"staff_{stamp}.json")
+    out_file = os.path.join(admin_outbox_dir, f"reference_{stamp}.json")
     _write_json_atomic(out_file, payload)
-    _MAILBOX_LAST_STAFF_EXPORT_HASH = digest
-    print(f"[mailbox-sync] Admin exported staff snapshot ({len(staff_rows)} row(s))")
+    _MAILBOX_LAST_REFERENCE_EXPORT_HASH = digest
+    print(
+        "[mailbox-sync] Admin exported reference snapshot "
+        f"(staff={len(staff_rows)} row(s), students={len(student_rows)} row(s), "
+        f"books={len(book_rows)} row(s), devices={len(material_rows)} row(s), "
+        f"license={'yes' if app_license else 'no'})"
+    )
     return True
 
 
@@ -1272,7 +1787,7 @@ def _scanner_apply_ack_payload(conn: sqlite3.Connection, payload: dict) -> int:
 
 
 def _scanner_import_admin_outbox(local_path: str, admin_outbox_dir: str, archive_dir: str) -> int:
-    """Scanner station imports Admin_Outbox payloads (staff snapshots + ACK files)."""
+    """Scanner station imports Admin_Outbox payloads (reference snapshots + ACK files)."""
     files = [
         os.path.join(admin_outbox_dir, name)
         for name in sorted(os.listdir(admin_outbox_dir))
@@ -1336,6 +1851,116 @@ def _scanner_import_admin_outbox(local_path: str, admin_outbox_dir: str, archive
                                 """,
                                 (name, role, email, phone, loading),
                             )
+
+                    student_rows = payload.get("students") or []
+                    for item in student_rows:
+                        name = str(item.get("name") or "").strip()
+                        if not name:
+                            continue
+
+                        student_identifier = str(item.get("student_identifier") or "").strip()
+                        subject = str(item.get("subject") or "").strip()
+                        subjects_json = str(item.get("subjects_json") or "[]")
+                        subject_minutes_json = str(item.get("subject_minutes_json") or "[]")
+                        total_study_minutes = _safe_int(item.get("total_study_minutes"), default=30, minimum=5)
+                        email = str(item.get("email") or "").strip()
+                        phone = str(item.get("phone") or "").strip()
+                        guardian = str(item.get("guardian") or "").strip()
+                        active = _safe_int(item.get("active"), default=1, minimum=0)
+                        el = 1 if _safe_int(item.get("el"), default=0, minimum=0) else 0
+                        pi = 1 if _safe_int(item.get("pi"), default=0, minimum=0) else 0
+                        v = 1 if _safe_int(item.get("v"), default=0, minimum=0) else 0
+                        ind = 1 if _safe_int(item.get("ind"), default=0, minimum=0) else 0
+                        day1 = str(item.get("day1") or "").strip()
+                        day1_time = str(item.get("day1_time") or "").strip()
+                        day2 = str(item.get("day2") or "").strip()
+                        day2_time = str(item.get("day2_time") or "").strip()
+                        day3 = str(item.get("day3") or "").strip()
+                        day3_time = str(item.get("day3_time") or "").strip()
+                        day4 = str(item.get("day4") or "").strip()
+                        day4_time = str(item.get("day4_time") or "").strip()
+                        day5 = str(item.get("day5") or "").strip()
+                        day5_time = str(item.get("day5_time") or "").strip()
+                        day6 = str(item.get("day6") or "").strip()
+                        day6_time = str(item.get("day6_time") or "").strip()
+                        schedule_json = str(item.get("schedule_json") or "").strip()
+                        checkout_notify_enabled = 1 if _safe_int(item.get("checkout_notify_enabled"), default=1, minimum=0) else 0
+
+                        existing = None
+                        if student_identifier:
+                            existing = cur.execute(
+                                "SELECT id FROM students WHERE LOWER(COALESCE(student_identifier,'')) = LOWER(?) LIMIT 1",
+                                (student_identifier,),
+                            ).fetchone()
+                        if not existing and email:
+                            existing = cur.execute(
+                                "SELECT id FROM students WHERE LOWER(COALESCE(email,'')) = LOWER(?) LIMIT 1",
+                                (email,),
+                            ).fetchone()
+                        if not existing:
+                            existing = cur.execute(
+                                "SELECT id FROM students WHERE LOWER(COALESCE(name,'')) = LOWER(?) AND LOWER(COALESCE(phone,'')) = LOWER(?) LIMIT 1",
+                                (name, phone),
+                            ).fetchone()
+
+                        if existing:
+                            cur.execute(
+                                """
+                                UPDATE students
+                                SET
+                                    name = ?, student_identifier = ?, subject = ?,
+                                    subjects_json = ?, subject_minutes_json = ?, total_study_minutes = ?,
+                                    email = ?, phone = ?, guardian = ?, active = ?,
+                                    el = ?, pi = ?, v = ?, ind = ?,
+                                    day1 = ?, day1_time = ?, day2 = ?, day2_time = ?,
+                                    day3 = ?, day3_time = ?, day4 = ?, day4_time = ?,
+                                    day5 = ?, day5_time = ?, day6 = ?, day6_time = ?,
+                                    schedule_json = ?, checkout_notify_enabled = ?
+                                WHERE id = ?
+                                """,
+                                (
+                                    name, student_identifier, subject,
+                                    subjects_json, subject_minutes_json, total_study_minutes,
+                                    email, phone, guardian, active,
+                                    el, pi, v, ind,
+                                    day1, day1_time, day2, day2_time,
+                                    day3, day3_time, day4, day4_time,
+                                    day5, day5_time, day6, day6_time,
+                                    schedule_json, checkout_notify_enabled,
+                                    int(existing["id"]),
+                                ),
+                            )
+                        else:
+                            cur.execute(
+                                """
+                                INSERT INTO students (
+                                    name, student_identifier, subject,
+                                    subjects_json, subject_minutes_json, total_study_minutes,
+                                    email, phone, guardian, active,
+                                    el, pi, v, ind,
+                                    day1, day1_time, day2, day2_time,
+                                    day3, day3_time, day4, day4_time,
+                                    day5, day5_time, day6, day6_time,
+                                    schedule_json, checkout_notify_enabled
+                                )
+                                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                """,
+                                (
+                                    name, student_identifier, subject,
+                                    subjects_json, subject_minutes_json, total_study_minutes,
+                                    email, phone, guardian, active,
+                                    el, pi, v, ind,
+                                    day1, day1_time, day2, day2_time,
+                                    day3, day3_time, day4, day4_time,
+                                    day5, day5_time, day6, day6_time,
+                                    schedule_json, checkout_notify_enabled,
+                                ),
+                            )
+
+                    _scanner_upsert_books(cur, payload.get("books") or [])
+                    _scanner_upsert_materials(cur, payload.get("materials") or [])
+                    _scanner_apply_shared_app_license(cur, payload.get("app_license") or {})
+                    _scanner_recompute_student_loan_flags(cur)
 
                     conn.commit()
 
@@ -1710,6 +2335,90 @@ def _remove_legacy_student_columns(db_path: str) -> None:
         print(f"[startup] Rebuilt students table without legacy goal columns: {', '.join(to_drop)}")
 
 
+def _snapshot_local_machine_license_fields(db_path: str) -> dict[str, str]:
+    """Capture machine-local app_license fields that must survive cloud pulls."""
+    if not db_path or not os.path.exists(db_path):
+        return {}
+    try:
+        with sqlite3.connect(db_path) as conn:
+            if not _table_exists(conn, "app_license"):
+                return {}
+            conn.row_factory = sqlite3.Row
+            row = conn.execute("SELECT * FROM app_license WHERE id = 1 LIMIT 1").fetchone()
+            if not row:
+                return {}
+            out: dict[str, str] = {}
+            if "station_role" in row.keys():
+                out["station_role"] = str(row["station_role"] or "").strip()
+            if "machine_fingerprint" in row.keys():
+                out["machine_fingerprint"] = str(row["machine_fingerprint"] or "").strip()
+            return out
+    except Exception as exc:
+        print(f"[sync] WARNING: failed capturing local machine license fields: {exc}", file=sys.stderr)
+        return {}
+
+
+def _restore_local_machine_license_fields(db_path: str, snapshot: dict[str, str]) -> None:
+    """Restore machine-local app_license fields after cloud pull overwrite."""
+    if not db_path or not snapshot:
+        return
+    try:
+        with sqlite3.connect(db_path) as conn:
+            if not _table_exists(conn, "app_license"):
+                return
+
+            has_station_role = _column_exists(conn, "app_license", "station_role")
+            has_machine_fingerprint = _column_exists(conn, "app_license", "machine_fingerprint")
+            has_updated_at = _column_exists(conn, "app_license", "updated_at")
+
+            assignments = []
+            params: list[str] = []
+
+            if has_station_role and "station_role" in snapshot:
+                assignments.append("station_role = ?")
+                params.append(str(snapshot.get("station_role") or "").strip())
+
+            if has_machine_fingerprint and "machine_fingerprint" in snapshot:
+                assignments.append("machine_fingerprint = ?")
+                params.append(str(snapshot.get("machine_fingerprint") or "").strip())
+
+            if not assignments:
+                return
+
+            if has_updated_at:
+                assignments.append("updated_at = ?")
+                params.append(datetime.now(timezone.utc).isoformat())
+
+            row = conn.execute("SELECT id FROM app_license WHERE id = 1 LIMIT 1").fetchone()
+            if row:
+                params.append(1)
+                conn.execute(
+                    f"UPDATE app_license SET {', '.join(assignments)} WHERE id = ?",
+                    params,
+                )
+            else:
+                insert_cols = ["id"]
+                insert_vals: list[str | int] = [1]
+                if has_station_role and "station_role" in snapshot:
+                    insert_cols.append("station_role")
+                    insert_vals.append(str(snapshot.get("station_role") or "").strip())
+                if has_machine_fingerprint and "machine_fingerprint" in snapshot:
+                    insert_cols.append("machine_fingerprint")
+                    insert_vals.append(str(snapshot.get("machine_fingerprint") or "").strip())
+                if has_updated_at:
+                    insert_cols.append("updated_at")
+                    insert_vals.append(datetime.now(timezone.utc).isoformat())
+                placeholders = ", ".join(["?" for _ in insert_cols])
+                conn.execute(
+                    f"INSERT INTO app_license ({', '.join(insert_cols)}) VALUES ({placeholders})",
+                    insert_vals,
+                )
+
+            conn.commit()
+    except Exception as exc:
+        print(f"[sync] WARNING: failed restoring local machine license fields: {exc}", file=sys.stderr)
+
+
 def sync_from_gdrive(local_path: str, gdrive_path: str, force: bool = False) -> bool:
     """
     Pull GDrive → local.
@@ -1725,6 +2434,7 @@ def sync_from_gdrive(local_path: str, gdrive_path: str, force: bool = False) -> 
         _set_last_sync_error(f"Cloud backup database was not found at: {gdrive_path}")
         return False
     lock_acquired = False
+    local_machine_license_snapshot = _snapshot_local_machine_license_fields(local_path)
     try:
         lock_acquired = acquire_gdrive_lock(
             gdrive_path,
@@ -1745,6 +2455,7 @@ def sync_from_gdrive(local_path: str, gdrive_path: str, force: bool = False) -> 
             reason = "forced startup override" if force else "cloud backup is newer"
             print(f"[sync] Pulling DB from {cloud_name} ({reason}): {gdrive_path}")
             _sqlite_restore_live(gdrive_path, local_path)
+            _restore_local_machine_license_fields(local_path, local_machine_license_snapshot)
             print("[sync] Pull complete.")
             _set_last_sync_error("")
             return True

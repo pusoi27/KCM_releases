@@ -323,76 +323,77 @@ img.rounded-circle[src*='default.png'] {
   }
 }
 
-/* Dashboard 4x4 Seat Grid - Fixed 4 columns */
+/* Dashboard 4x4 Seat Grid — dynamically fills available height, no scroll */
 #seatGrid {
-  overflow-x: hidden !important;
-  overflow-y: auto !important;
-  width: 100% !important;
-  max-width: 100% !important;
-  min-width: 0;
-  flex: 1 1 auto;
+  display: grid !important;
+  grid-template-columns: repeat(4, 1fr) !important;
+  grid-template-rows: repeat(4, 1fr) !important;
+  gap: 0.35rem;
+  overflow: hidden !important;
+  width: 100%;
+  height: 100%;
+  flex: 1 1 0 !important;
   min-height: 0;
 }
 
+/* Each wrapper div inside the grid fills its cell */
+#seatGrid > div {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* Cards fill their grid cell completely — no fixed min-height */
+#seatGrid .seat-card {
+  height: 100% !important;
+  min-height: 0 !important;
+  overflow: hidden;
+  flex: 1 1 0;
+}
+
+/* Timer: fluid font size relative to viewport width */
+#seatGrid .seat-card .timer {
+  font-size: clamp(0.9rem, 2vw, 2rem) !important;
+}
+
+/* Name text: fluid font size */
+#seatGrid .seat-card .seat-name {
+  font-size: clamp(0.7rem, 1.4vw, 1rem);
+  line-height: 1.2;
+}
+
+/* Overflow bar pinned at bottom — never grows to push grid */
 #overflowStudents {
   flex-shrink: 0;
+  max-height: 6rem;
+  overflow-y: auto;
 }
 
-#seatGrid .col {
-  width: 100% !important;
+/* Overflow student row */
+.overflow-student-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.2rem 0.5rem;
+  border-radius: 0.35rem;
+  border: 1px solid #dee2e6;
+  background: #fff;
+  cursor: pointer;
+  transition: background 0.15s;
 }
-
-@media (min-width: 1400px) {
-  /* Large desktop: maximize seat size */
-  #seatGrid .seat-card {
-    min-height: 180px !important;
-    font-size: 1rem;
-  }
-  
-  #seatGrid .timer {
-    font-size: 2rem !important;
-  }
+.overflow-student-row:hover { background: #f8f9fa; }
+.overflow-student-row.over-time .overflow-name { color: #dc3545 !important; font-weight: 700; }
+.overflow-student-row .overflow-timer-badge {
+  font-family: 'Courier New', monospace;
+  font-size: 0.78rem;
+  padding: 0.1rem 0.35rem;
+  border-radius: 0.25rem;
+  background: #6c757d;
+  color: #fff;
+  letter-spacing: 1px;
 }
-
-@media (min-width: 1200px) and (max-width: 1399px) {
-  /* Desktop */
-  #seatGrid .seat-card {
-    min-height: 170px !important;
-    font-size: 0.95rem;
-  }
-  
-  #seatGrid .timer {
-    font-size: 1.8rem !important;
-  }
-}
-
-@media (min-width: 992px) and (max-width: 1199px) {
-  /* Tablet landscape */
-  #seatGrid .seat-card {
-    min-height: 160px !important;
-    font-size: 0.9rem;
-  }
-  
-  #seatGrid .timer {
-    font-size: 1.6rem !important;
-  }
-}
-
-@media (max-width: 991px) {
-  /* Mobile & tablet portrait: 2x8 layout */
-  #seatGrid {
-    gap: 0.5rem !important;
-  }
-  
-  #seatGrid .seat-card {
-    min-height: 140px !important;
-    font-size: 0.85rem;
-  }
-  
-  #seatGrid .timer {
-    font-size: 1.4rem !important;
-  }
-}
+.overflow-student-row.over-time .overflow-timer-badge { background: #dc3545; }
 
 /* ============================================
    GREEN-YELLOW THEME — Dashboard Layout
@@ -714,6 +715,21 @@ img.rounded-circle[src*='default.png'] {
   font-weight: 500;
 }
 .offcanvas-link:hover { color: #4caf50; }
+
+/* Ensure disabled offcanvas links are clearly distinguishable */
+.offcanvas-link.disabled,
+.offcanvas-link.menu-item-disabled,
+.offcanvas-link[aria-disabled="true"] {
+  color: #bfc5cc !important;
+  cursor: not-allowed;
+  pointer-events: none;
+}
+
+.offcanvas-link.disabled:hover,
+.offcanvas-link.menu-item-disabled:hover,
+.offcanvas-link[aria-disabled="true"]:hover {
+  color: #bfc5cc !important;
+}
 
 /* --- Instructor Home: neutral buttons + yellow hover --- */
 .instructor-home-page .btn {
