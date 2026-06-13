@@ -298,6 +298,18 @@ def _full_name_from_vcard(card_lines: list[str]) -> str:
     return ''
 
 
+def _student_identifier_from_vcard(card_lines: list[str]) -> str:
+    """Extract optional student identifier from known VCF fields."""
+    for field_name in ('X-STUDENT-ID', 'X-STDYTIME-STUDENT-ID', 'STUDENTID', 'UID'):
+        values = _read_vcard_values(card_lines, field_name)
+        if not values:
+            continue
+        normalized = student_manager.normalize_student_identifier(values[0])
+        if normalized:
+            return normalized
+    return ''
+
+
 def _parse_vcf_contacts(vcf_text: str) -> list[dict]:
     """Parse VCF text into normalized student-import contact dictionaries."""
     contacts = []
@@ -310,6 +322,7 @@ def _parse_vcf_contacts(vcf_text: str) -> list[dict]:
         phone = str(tel_values[0] or '').strip() if tel_values else ''
         student_name = _normalize_contact_name(full_name)
         guardian = _extract_guardian_name(full_name)
+        student_identifier = _student_identifier_from_vcard(block)
 
         if not student_name:
             continue
@@ -320,6 +333,7 @@ def _parse_vcf_contacts(vcf_text: str) -> list[dict]:
                 'guardian': guardian,
                 'email': email,
                 'phone': phone,
+                'student_identifier': student_identifier,
             }
         )
     return contacts
@@ -920,21 +934,24 @@ def register_student_routes(app, upload_folder):
         ]
 
         added = 0
+        updated = 0
+        unchanged = 0
         try:
             for contact in contacts:
-                student_manager.add_student(
-                    contact['student_name'],
-                    "Math",
-                    contact.get('email', ''),
-                    contact.get('phone', ''),
-                    book_loaned=0,
-                    el=0,
-                    pi=1,
-                    v=0,
-                    ind=0,
+                result = student_manager.upsert_student_from_vcf_contact(
+                    student_name=contact.get('student_name', ''),
+                    email=contact.get('email', ''),
+                    phone=contact.get('phone', ''),
                     guardian=contact.get('guardian', ''),
+                    student_identifier=contact.get('student_identifier', ''),
                 )
-                added += 1
+                action = result.get('action') if isinstance(result, dict) else ''
+                if action == 'added':
+                    added += 1
+                elif action == 'updated':
+                    updated += 1
+                else:
+                    unchanged += 1
         except Exception as e:
             flash_scoped_failure(
                 backup_path=backup_path,
@@ -947,7 +964,15 @@ def register_student_routes(app, upload_folder):
             return redirect(url_for("students_list"))
 
         invalidate_scoped_cache(*cache_invalidators)
-        flash(f"VCF import successful: {added} student(s) added.", "success")
+        parts = []
+        if added:
+            parts.append(f"{added} added")
+        if updated:
+            parts.append(f"{updated} updated")
+        if unchanged:
+            parts.append(f"{unchanged} unchanged")
+        summary = ', '.join(parts) if parts else 'no changes'
+        flash(f"VCF import successful: {summary}.", "success")
         return redirect(url_for("students_list"))
 
     @app.route("/students/export")

@@ -676,6 +676,127 @@ def add_student(name, subject, email, phone, book_loaned=0, el=0, pi=0, v=0, ind
     return student_id
 
 
+def _is_missing_text(value):
+    return not str(value or '').strip()
+
+
+def _find_existing_student_id_for_vcf(conn, student_identifier='', email='', name='', phone=''):
+    """Find an existing student for VCF upsert using priority: ID > email > name+phone."""
+    normalized_identifier = normalize_student_identifier(student_identifier)
+    email = str(email or '').strip()
+    name = str(name or '').strip()
+    phone = str(phone or '').strip()
+
+    if normalized_identifier:
+        row = conn.execute(
+            "SELECT id FROM students WHERE LOWER(COALESCE(student_identifier,'')) = LOWER(?) LIMIT 1",
+            (normalized_identifier,),
+        ).fetchone()
+        if row:
+            return int(row[0])
+
+    if email:
+        row = conn.execute(
+            "SELECT id FROM students WHERE LOWER(COALESCE(email,'')) = LOWER(?) LIMIT 1",
+            (email,),
+        ).fetchone()
+        if row:
+            return int(row[0])
+
+    if name and phone:
+        row = conn.execute(
+            "SELECT id FROM students WHERE LOWER(COALESCE(name,'')) = LOWER(?) AND LOWER(COALESCE(phone,'')) = LOWER(?) LIMIT 1",
+            (name, phone),
+        ).fetchone()
+        if row:
+            return int(row[0])
+
+    return None
+
+
+def upsert_student_from_vcf_contact(student_name, email='', phone='', guardian='', student_identifier=''):
+    """Safely upsert one student from VCF data.
+
+    Matching priority: student_identifier > email > name+phone.
+    Updates only missing target fields (email/phone/guardian/student_identifier).
+    """
+    name = str(student_name or '').strip()
+    if not name:
+        return {'action': 'skipped', 'reason': 'missing_name'}
+
+    email = str(email or '').strip()
+    phone = str(phone or '').strip()
+    guardian = str(guardian or '').strip()
+    normalized_identifier = normalize_student_identifier(student_identifier)
+
+    with sqlite3.connect(DB_PATH) as conn:
+        existing_id = _find_existing_student_id_for_vcf(
+            conn,
+            student_identifier=normalized_identifier,
+            email=email,
+            name=name,
+            phone=phone,
+        )
+
+        if existing_id:
+            row = conn.execute(
+                """
+                SELECT
+                    COALESCE(email, ''),
+                    COALESCE(phone, ''),
+                    COALESCE(guardian, ''),
+                    COALESCE(student_identifier, '')
+                FROM students
+                WHERE id = ?
+                LIMIT 1
+                """,
+                (existing_id,),
+            ).fetchone()
+
+            if not row:
+                return {'action': 'skipped', 'reason': 'existing_not_found'}
+
+            existing_email, existing_phone, existing_guardian, existing_identifier = row
+            updates = {}
+
+            if email and _is_missing_text(existing_email):
+                updates['email'] = email
+            if phone and _is_missing_text(existing_phone):
+                updates['phone'] = phone
+            if guardian and _is_missing_text(existing_guardian):
+                updates['guardian'] = guardian
+            if normalized_identifier and _is_missing_text(existing_identifier):
+                updates['student_identifier'] = normalized_identifier
+
+            if not updates:
+                return {'action': 'skipped', 'student_id': existing_id, 'reason': 'already_complete'}
+
+            set_clause = ', '.join([f"{key}=?" for key in updates.keys()])
+            params = list(updates.values()) + [existing_id]
+            conn.execute(f"UPDATE students SET {set_clause} WHERE id=?", params)
+            conn.commit()
+            return {
+                'action': 'updated',
+                'student_id': existing_id,
+                'updated_fields': list(updates.keys()),
+            }
+
+    student_id = add_student(
+        name,
+        "Math",
+        email,
+        phone,
+        book_loaned=0,
+        el=0,
+        pi=1,
+        v=0,
+        ind=0,
+        guardian=guardian,
+        student_identifier=normalized_identifier,
+    )
+    return {'action': 'added', 'student_id': student_id}
+
+
 
 def update_student(sid, name, email, phone, subject="", book_loaned=0, el=0, pi=0, v=0, ind=0, day1="", day2="", day1_time="", day2_time="", day3="", day3_time="", day4="", day4_time="", day5="", day5_time="", day6="", day6_time="", subjects=None, subject_minutes=None, schedule_json="", guardian="", student_identifier=""):
     """Update an existing student's information with ownership check."""
