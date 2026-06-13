@@ -3128,6 +3128,66 @@ def init_db():
         )
     """)
 
+    # Local integration API keys (external local apps/plugins)
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS integration_api_keys (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            key_prefix TEXT NOT NULL,
+            key_hash TEXT NOT NULL,
+            key_salt TEXT NOT NULL,
+            scopes_json TEXT NOT NULL DEFAULT '[]',
+            bound_hwid TEXT NOT NULL DEFAULT '',
+            rate_limit_per_minute INTEGER NOT NULL DEFAULT 120,
+            active INTEGER NOT NULL DEFAULT 1,
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            last_used_at TEXT DEFAULT '',
+            last_used_ip TEXT DEFAULT ''
+        )
+    """)
+
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS integration_rate_limits (
+            key_id INTEGER NOT NULL,
+            window_start TEXT NOT NULL,
+            request_count INTEGER NOT NULL DEFAULT 0,
+            PRIMARY KEY (key_id, window_start),
+            FOREIGN KEY (key_id) REFERENCES integration_api_keys(id)
+        )
+    """)
+
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS integration_audit_log (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            key_id INTEGER,
+            key_prefix TEXT NOT NULL DEFAULT '',
+            action TEXT NOT NULL,
+            method TEXT NOT NULL,
+            path TEXT NOT NULL,
+            remote_addr TEXT NOT NULL DEFAULT '',
+            status_code INTEGER NOT NULL,
+            success INTEGER NOT NULL,
+            error TEXT NOT NULL DEFAULT '',
+            details_json TEXT NOT NULL DEFAULT '{}',
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (key_id) REFERENCES integration_api_keys(id)
+        )
+    """)
+
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS plugin_registry (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            plugin_id TEXT NOT NULL UNIQUE,
+            name TEXT NOT NULL,
+            version TEXT NOT NULL DEFAULT '0.0.0',
+            enabled INTEGER NOT NULL DEFAULT 1,
+            hooks_json TEXT NOT NULL DEFAULT '[]',
+            manifest_path TEXT NOT NULL DEFAULT '',
+            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+
     # Cross-machine compatibility metadata
     _ensure_app_metadata_table(conn)
 
@@ -3436,6 +3496,87 @@ def init_db():
             cur.execute("ALTER TABLE app_license ADD COLUMN ls_instance_id TEXT DEFAULT ''")
         if "ls_status" not in cols:
             cur.execute("ALTER TABLE app_license ADD COLUMN ls_status TEXT DEFAULT ''")
+        conn.commit()
+
+    # Ensure integration tables/columns exist for local plugin app access
+    with sqlite3.connect(DB_PATH) as conn:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS integration_api_keys (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                key_prefix TEXT NOT NULL,
+                key_hash TEXT NOT NULL,
+                key_salt TEXT NOT NULL,
+                scopes_json TEXT NOT NULL DEFAULT '[]',
+                bound_hwid TEXT NOT NULL DEFAULT '',
+                rate_limit_per_minute INTEGER NOT NULL DEFAULT 120,
+                active INTEGER NOT NULL DEFAULT 1,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                last_used_at TEXT DEFAULT '',
+                last_used_ip TEXT DEFAULT ''
+            )
+            """
+        )
+        cur.execute("PRAGMA table_info(integration_api_keys)")
+        cols = [r[1] for r in cur.fetchall()]
+        if "bound_hwid" not in cols:
+            cur.execute("ALTER TABLE integration_api_keys ADD COLUMN bound_hwid TEXT NOT NULL DEFAULT ''")
+        if "rate_limit_per_minute" not in cols:
+            cur.execute("ALTER TABLE integration_api_keys ADD COLUMN rate_limit_per_minute INTEGER NOT NULL DEFAULT 120")
+        if "last_used_at" not in cols:
+            cur.execute("ALTER TABLE integration_api_keys ADD COLUMN last_used_at TEXT DEFAULT ''")
+        if "last_used_ip" not in cols:
+            cur.execute("ALTER TABLE integration_api_keys ADD COLUMN last_used_ip TEXT DEFAULT ''")
+
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS integration_rate_limits (
+                key_id INTEGER NOT NULL,
+                window_start TEXT NOT NULL,
+                request_count INTEGER NOT NULL DEFAULT 0,
+                PRIMARY KEY (key_id, window_start),
+                FOREIGN KEY (key_id) REFERENCES integration_api_keys(id)
+            )
+            """
+        )
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS integration_audit_log (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                key_id INTEGER,
+                key_prefix TEXT NOT NULL DEFAULT '',
+                action TEXT NOT NULL,
+                method TEXT NOT NULL,
+                path TEXT NOT NULL,
+                remote_addr TEXT NOT NULL DEFAULT '',
+                status_code INTEGER NOT NULL,
+                success INTEGER NOT NULL,
+                error TEXT NOT NULL DEFAULT '',
+                details_json TEXT NOT NULL DEFAULT '{}',
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (key_id) REFERENCES integration_api_keys(id)
+            )
+            """
+        )
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS plugin_registry (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                plugin_id TEXT NOT NULL UNIQUE,
+                name TEXT NOT NULL,
+                version TEXT NOT NULL DEFAULT '0.0.0',
+                enabled INTEGER NOT NULL DEFAULT 1,
+                hooks_json TEXT NOT NULL DEFAULT '[]',
+                manifest_path TEXT NOT NULL DEFAULT '',
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )
+            """
+        )
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_integration_api_keys_active ON integration_api_keys(active)")
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_integration_audit_created ON integration_audit_log(created_at DESC)")
         conn.commit()
 
     with sqlite3.connect(DB_PATH) as conn:

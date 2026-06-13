@@ -1156,6 +1156,7 @@ from routes.books import register_book_routes
 from routes.materials import register_material_routes
 from routes.instructor_profile import register_instructor_profile_routes
 from routes.setup import register_setup_routes
+from routes.integration import register_integration_routes
 
 # Register scanner route
 @app.route('/qr/scanner')
@@ -1195,6 +1196,7 @@ register_reports_routes(app)
 register_book_routes(app)
 register_material_routes(app)
 register_setup_routes(app)
+register_integration_routes(app)
 
 
 

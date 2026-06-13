@@ -22,3 +22,12 @@ This file is automatically appended by `scripts/version_bump.py` on every versio
 ## v01.01.12 - 2026-06-12
 - TODO: summarize changes for this release.
 
+## v01.01.18 - 2026-06-13
+- VCF importer now splits multi-name FN contacts into unique student profiles and maps NOTE subject hints into subject fields.
+
+## v01.01.19 - 2026-06-13
+- TODO: summarize changes for this release.
+
+## v01.01.20 - 2026-06-13
+- TODO: summarize changes for this release.
+

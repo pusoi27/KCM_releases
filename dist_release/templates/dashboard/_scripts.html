@@ -1127,6 +1127,8 @@ resetIdleTimer();
       const j = await res.json().catch(()=>({}));
       if(!res.ok){
         console.warn('[dashboard][scan] toggle failed', j);
+        const errorMessage = (j && j.error) ? j.error : 'Scan action failed';
+        showQuickToast(errorMessage, true);
         logDebug(`TOGGLE FAIL id=${ident} status=${res.status} body=${JSON.stringify(j)}`);
       } else {
         const action = (j && j.action) ? (j.action==='started'?'Started':'Checked Out') : 'Updated';
