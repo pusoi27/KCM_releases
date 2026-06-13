@@ -280,6 +280,81 @@ def _extract_guardian_name(raw_name: str) -> str:
     return str(match.group(1) or '').strip()
 
 
+def _split_vcard_student_names(raw_name: str) -> list[str]:
+    """Expand a VCF contact name into one or more student display names.
+
+    Examples:
+    - "Ja'Sean Osceola" -> ["Ja'Sean O."]
+    - "Ja'Sean & Journi & Jail'a Osceola" ->
+      ["Ja'Sean O.", "Journi O.", "Jail'a O."]
+    """
+    if not raw_name:
+        return []
+
+    base_name = re.sub(r'\(.*?\)', '', str(raw_name)).strip()
+    if not base_name:
+        return []
+
+    name_chunks = [chunk.strip() for chunk in re.split(r'\s*&\s*', base_name) if chunk.strip()]
+    if len(name_chunks) <= 1:
+        normalized = _normalize_contact_name(base_name)
+        return [normalized] if normalized else []
+
+    surname = ''
+    for chunk in reversed(name_chunks):
+        parts = [part for part in chunk.split() if part]
+        if len(parts) >= 2:
+            surname = parts[-1]
+            break
+
+    if not surname:
+        normalized = _normalize_contact_name(base_name)
+        return [normalized] if normalized else []
+
+    names = []
+    seen = set()
+    for chunk in name_chunks:
+        parts = [part for part in chunk.split() if part]
+        if not parts:
+            continue
+        student_name = f"{parts[0]} {surname[0]}."
+        if student_name in seen:
+            continue
+        seen.add(student_name)
+        names.append(student_name)
+
+    return names
+
+
+def _normalize_vcard_subject_value(raw_value: str) -> str:
+    """Normalize a VCF note subject hint into a canonical subject name."""
+    token = str(raw_value or '').strip().lower()
+    if not token:
+        return ''
+
+    if token.startswith(('math', 'mat', 'm')):
+        return 'Math'
+    if token.startswith(('reading', 'read', 'rea', 'r')):
+        return 'Reading'
+    if token.startswith(('writing', 'write', 'wri', 'w')):
+        return 'Writing'
+    return ''
+
+
+def _subjects_from_vcard_notes(card_lines: list[str]) -> list[str]:
+    """Extract Math/Reading/Writing subject names from VCF NOTE fields."""
+    subjects = []
+    seen = set()
+    for note in _read_vcard_values(card_lines, 'NOTE'):
+        for match in re.finditer(r'(?i)\bsubject\s*:\s*([^\n,;]+)', note):
+            subject = _normalize_vcard_subject_value(match.group(1))
+            if not subject or subject in seen:
+                continue
+            seen.add(subject)
+            subjects.append(subject)
+    return subjects
+
+
 def _full_name_from_vcard(card_lines: list[str]) -> str:
     """Get best available full name from FN, then N fields."""
     fn_values = _read_vcard_values(card_lines, 'FN')
@@ -320,22 +395,29 @@ def _parse_vcf_contacts(vcf_text: str) -> list[dict]:
 
         email = str(email_values[0] or '').strip() if email_values else ''
         phone = str(tel_values[0] or '').strip() if tel_values else ''
-        student_name = _normalize_contact_name(full_name)
+        student_names = _split_vcard_student_names(full_name)
         guardian = _extract_guardian_name(full_name)
         student_identifier = _student_identifier_from_vcard(block)
+        subjects = _subjects_from_vcard_notes(block)
 
-        if not student_name:
+        if not student_names:
             continue
 
-        contacts.append(
-            {
-                'student_name': student_name,
-                'guardian': guardian,
-                'email': email,
-                'phone': phone,
-                'student_identifier': student_identifier,
-            }
-        )
+        match_on_email = len(student_names) == 1
+        match_on_identifier = len(student_names) == 1
+        for student_name in student_names:
+            contacts.append(
+                {
+                    'student_name': student_name,
+                    'guardian': guardian,
+                    'email': email,
+                    'phone': phone,
+                    'student_identifier': student_identifier,
+                    'subjects': subjects,
+                    'match_on_email': match_on_email,
+                    'match_on_identifier': match_on_identifier,
+                }
+            )
     return contacts
 
 
@@ -944,6 +1026,9 @@ def register_student_routes(app, upload_folder):
                     phone=contact.get('phone', ''),
                     guardian=contact.get('guardian', ''),
                     student_identifier=contact.get('student_identifier', ''),
+                    subjects=contact.get('subjects', []),
+                    match_on_email=bool(contact.get('match_on_email', True)),
+                    match_on_identifier=bool(contact.get('match_on_identifier', True)),
                 )
                 action = result.get('action') if isinstance(result, dict) else ''
                 if action == 'added':

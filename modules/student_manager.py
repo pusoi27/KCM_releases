@@ -680,14 +680,22 @@ def _is_missing_text(value):
     return not str(value or '').strip()
 
 
-def _find_existing_student_id_for_vcf(conn, student_identifier='', email='', name='', phone=''):
+def _find_existing_student_id_for_vcf(
+    conn,
+    student_identifier='',
+    email='',
+    name='',
+    phone='',
+    match_on_identifier=True,
+    match_on_email=True,
+):
     """Find an existing student for VCF upsert using priority: ID > email > name+phone."""
     normalized_identifier = normalize_student_identifier(student_identifier)
     email = str(email or '').strip()
     name = str(name or '').strip()
     phone = str(phone or '').strip()
 
-    if normalized_identifier:
+    if match_on_identifier and normalized_identifier:
         row = conn.execute(
             "SELECT id FROM students WHERE LOWER(COALESCE(student_identifier,'')) = LOWER(?) LIMIT 1",
             (normalized_identifier,),
@@ -695,7 +703,7 @@ def _find_existing_student_id_for_vcf(conn, student_identifier='', email='', nam
         if row:
             return int(row[0])
 
-    if email:
+    if match_on_email and email:
         row = conn.execute(
             "SELECT id FROM students WHERE LOWER(COALESCE(email,'')) = LOWER(?) LIMIT 1",
             (email,),
@@ -714,7 +722,17 @@ def _find_existing_student_id_for_vcf(conn, student_identifier='', email='', nam
     return None
 
 
-def upsert_student_from_vcf_contact(student_name, email='', phone='', guardian='', student_identifier=''):
+def upsert_student_from_vcf_contact(
+    student_name,
+    email='',
+    phone='',
+    guardian='',
+    student_identifier='',
+    subjects=None,
+    subject_minutes=None,
+    match_on_email=True,
+    match_on_identifier=True,
+):
     """Safely upsert one student from VCF data.
 
     Matching priority: student_identifier > email > name+phone.
@@ -736,6 +754,8 @@ def upsert_student_from_vcf_contact(student_name, email='', phone='', guardian='
             email=email,
             name=name,
             phone=phone,
+            match_on_identifier=match_on_identifier,
+            match_on_email=match_on_email,
         )
 
         if existing_id:
@@ -745,7 +765,10 @@ def upsert_student_from_vcf_contact(student_name, email='', phone='', guardian='
                     COALESCE(email, ''),
                     COALESCE(phone, ''),
                     COALESCE(guardian, ''),
-                    COALESCE(student_identifier, '')
+                    COALESCE(student_identifier, ''),
+                    COALESCE(subject, ''),
+                    COALESCE(subjects_json, '[]'),
+                    COALESCE(subject_minutes_json, '[]')
                 FROM students
                 WHERE id = ?
                 LIMIT 1
@@ -756,7 +779,7 @@ def upsert_student_from_vcf_contact(student_name, email='', phone='', guardian='
             if not row:
                 return {'action': 'skipped', 'reason': 'existing_not_found'}
 
-            existing_email, existing_phone, existing_guardian, existing_identifier = row
+            existing_email, existing_phone, existing_guardian, existing_identifier, existing_subject, existing_subjects_json, existing_subject_minutes_json = row
             updates = {}
 
             if email and _is_missing_text(existing_email):
@@ -767,6 +790,16 @@ def upsert_student_from_vcf_contact(student_name, email='', phone='', guardian='
                 updates['guardian'] = guardian
             if normalized_identifier and _is_missing_text(existing_identifier):
                 updates['student_identifier'] = normalized_identifier
+
+            subjects_list, minutes_list, total_minutes = normalize_subject_entries(
+                subjects if subjects is not None else [existing_subject] if existing_subject else [],
+                subject_minutes if subject_minutes is not None else [30] if subjects else [],
+            )
+            if subjects and _is_missing_text(existing_subject) and str(existing_subjects_json or '').strip() in ('', '[]'):
+                updates['subject'] = subjects_list[0]
+                updates['subjects_json'] = json.dumps(subjects_list)
+                updates['subject_minutes_json'] = json.dumps(minutes_list)
+                updates['total_study_minutes'] = total_minutes
 
             if not updates:
                 return {'action': 'skipped', 'student_id': existing_id, 'reason': 'already_complete'}
@@ -783,7 +816,7 @@ def upsert_student_from_vcf_contact(student_name, email='', phone='', guardian='
 
     student_id = add_student(
         name,
-        "Math",
+        (subjects[0] if subjects else "Math"),
         email,
         phone,
         book_loaned=0,
@@ -793,6 +826,8 @@ def upsert_student_from_vcf_contact(student_name, email='', phone='', guardian='
         ind=0,
         guardian=guardian,
         student_identifier=normalized_identifier,
+        subjects=subjects,
+        subject_minutes=subject_minutes,
     )
     return {'action': 'added', 'student_id': student_id}
 
