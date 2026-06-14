@@ -179,9 +179,36 @@ def ensure_integration_schema() -> None:
             conn.execute(
                 """
                 CREATE TABLE IF NOT EXISTS integration_api_keys (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    name TEXT NOT NULL,
+                    key_prefix TEXT NOT NULL,
+                    key_hash TEXT NOT NULL,
+                    key_salt TEXT NOT NULL,
+                    scopes_json TEXT NOT NULL DEFAULT '[]',
+                    bound_hwid TEXT NOT NULL DEFAULT '',
+                    rate_limit_per_minute INTEGER NOT NULL DEFAULT 120,
+                    active INTEGER NOT NULL DEFAULT 1,
+                    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    last_used_at TEXT DEFAULT '',
+                    last_used_ip TEXT DEFAULT ''
                 )
                 """
             )
+            existing_columns = {
+                str(row[1])
+                for row in conn.execute("PRAGMA table_info(integration_api_keys)").fetchall()
+            }
+            if "bound_hwid" not in existing_columns:
+                conn.execute("ALTER TABLE integration_api_keys ADD COLUMN bound_hwid TEXT NOT NULL DEFAULT ''")
+            if "rate_limit_per_minute" not in existing_columns:
+                conn.execute(
+                    "ALTER TABLE integration_api_keys ADD COLUMN rate_limit_per_minute INTEGER NOT NULL DEFAULT 120"
+                )
+            if "last_used_at" not in existing_columns:
+                conn.execute("ALTER TABLE integration_api_keys ADD COLUMN last_used_at TEXT DEFAULT ''")
+            if "last_used_ip" not in existing_columns:
+                conn.execute("ALTER TABLE integration_api_keys ADD COLUMN last_used_ip TEXT DEFAULT ''")
             conn.execute(
                 """
                 CREATE TABLE IF NOT EXISTS integration_rate_limits (
