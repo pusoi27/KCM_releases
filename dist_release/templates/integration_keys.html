@@ -30,22 +30,6 @@
     </div>
   </div>
 
-  <div class="card shadow-sm mb-4">
-    <div class="card-body d-flex flex-column flex-md-row align-items-md-center justify-content-between gap-3">
-      <div>
-        <div class="fw-semibold mb-1"><i class="bi bi-file-earmark-lock2 me-1"></i>KCTM credentials file</div>
-        <div class="small text-muted mb-1">Destination: <code>{{ kctm_credentials_path }}</code></div>
-        <div class="small text-muted">Last write: {% if kctm_credentials_last_write %}{{ kctm_credentials_last_write }}{% else %}never{% endif %}</div>
-      </div>
-      <form method="POST" action="{{ url_for('integration_kctm_credentials_regenerate') }}" class="m-0">
-        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-        <button type="submit" class="btn btn-outline-primary">
-          <i class="bi bi-arrow-repeat me-1"></i>Regenerate KCTM credentials file
-        </button>
-      </form>
-    </div>
-  </div>
-
   <!-- ===================== API KEYS ===================== -->
   <div class="card shadow-sm mb-4">
     <div class="card-header brand-card-header d-flex align-items-center justify-content-between">
@@ -273,10 +257,6 @@
               <div class="form-check">
                 <input class="form-check-input" type="checkbox" name="scopes" value="emails:send" id="scope_emails" checked>
                 <label class="form-check-label" for="scope_emails"><code>emails:send</code></label>
-              </div>
-              <div class="form-check">
-                <input class="form-check-input" type="checkbox" name="scopes" value="license:read" id="scope_license" checked>
-                <label class="form-check-label" for="scope_license"><code>license:read</code></label>
               </div>
               <div class="form-check">
                 <input class="form-check-input" type="checkbox" name="scopes" value="plugins:read" id="scope_plugins">

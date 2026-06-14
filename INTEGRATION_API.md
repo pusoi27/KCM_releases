@@ -53,6 +53,23 @@ Keys are stored **hashed + salted** (SHA-256) — the plaintext is shown once on
 3. Copy the displayed key immediately — it is shown only once.
 4. Note the **Machine HWID** displayed at the top of the page.
 
+### Local key sharing with KCTM (same machine)
+
+When a key is created with both scopes below, Stdytime will also write a local shared credentials bundle that KCTM can import automatically:
+
+- `students:read`
+- `emails:send`
+
+Default path on Windows:
+
+- `%LOCALAPPDATA%\\Stdytime\\integration\\kctm_integration_credentials.json`
+
+Override path (Stdytime):
+
+- `STDYTIME_SHARED_CREDENTIALS_PATH`
+
+The shared bundle includes API key, bound HWID, and base URL for same-host bootstrap.
+
 ### Via the API (for automation)
 
 ```http

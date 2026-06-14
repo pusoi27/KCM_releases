@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import hashlib
+import os
 import sqlite3
+from datetime import datetime, timezone
 from typing import Any
 
 from flask import flash, g, jsonify, redirect, render_template, request, url_for
@@ -17,6 +20,48 @@ def _json_error(message: str, status: int = 400, **extra):
     payload = {"error": message}
     payload.update(extra)
     return jsonify(payload), status
+
+
+def _format_utc_timestamp(value: str) -> str:
+    raw = str(value or "").strip()
+    if not raw:
+        return ""
+    try:
+        parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return parsed.astimezone(timezone.utc).isoformat()
+    except Exception:
+        return raw
+
+
+def _kctm_credentials_metadata() -> dict[str, str]:
+    path = integration_manager.get_kctm_credentials_path()
+    last_write = integration_manager.get_kctm_credentials_last_write()
+    return {
+        "path": path,
+        "last_write": _format_utc_timestamp(last_write),
+    }
+
+
+def _license_status_payload() -> dict[str, Any]:
+    status = integration_manager._license_context_snapshot()  # shared gate snapshot
+    payload = {
+        "ok": bool(status.get("ok")),
+        "activated": bool(status.get("activated")),
+        "license_valid": bool(status.get("license_valid")),
+        "machine_match": bool(status.get("machine_match")),
+        "license_tier": str(status.get("license_tier") or "pro"),
+        "expires_at": str(status.get("expires_at") or ""),
+        "issued_to": str(status.get("issued_to") or ""),
+        "checked_at": str(status.get("checked_at") or ""),
+        "reason": str(status.get("reason") or ""),
+        "error": str(status.get("message") or ""),
+        "is_activated": bool(status.get("activated")),
+        "valid": bool(status.get("license_valid")),
+        "hwid_match": bool(status.get("machine_match")),
+    }
+    return payload
 
 
 def _fetch_audit_log(limit: int = 50) -> list[dict[str, Any]]:
@@ -103,6 +148,24 @@ def register_integration_routes(app):
             key_prefix=(g.get("integration_client") or {}).get("key_prefix", ""),
             details={"count": len(payload), "include_inactive": include_inactive},
         )
+        return jsonify({"ok": True, "students": payload, "count": len(payload)}), 200
+
+    @app.route("/integration/v1/license/status", methods=["GET"])
+    @integration_manager.require_integration_auth([integration_manager.INTEGRATION_SCOPE_LICENSE_READ])
+    def integration_license_status():
+        payload = _license_status_payload()
+        integration_manager.log_audit(
+            action="integration_license_status",
+            status_code=200,
+            success=True,
+            key_id=(g.get("integration_client") or {}).get("id"),
+            key_prefix=(g.get("integration_client") or {}).get("key_prefix", ""),
+            details={
+                "activated": payload.get("activated"),
+                "license_valid": payload.get("license_valid"),
+                "machine_match": payload.get("machine_match"),
+            },
+        )
         return jsonify(payload), 200
 
     @app.route("/integration/v1/emails/send", methods=["POST"])
@@ -174,6 +237,15 @@ def register_integration_routes(app):
 
         ok = bool(result.get("success"))
         status_code = 200 if ok else 502
+        message_seed = "|".join(
+            [
+                recipient_email,
+                subject,
+                body,
+                str(email_payload.get("html_body") or ""),
+            ]
+        )
+        message_id = f"msg_{hashlib.sha256(message_seed.encode('utf-8')).hexdigest()[:12]}"
         integration_manager.log_audit(
             action="integration_email_send",
             status_code=status_code,
@@ -183,7 +255,18 @@ def register_integration_routes(app):
             error=str(result.get("error") or "") if not ok else "",
             details={"recipient": recipient_email},
         )
-        return jsonify(result), status_code
+        response = {
+            "ok": ok,
+            "message_id": message_id,
+            "queue_id": message_id,
+            "provider": "smtp",
+            "queued": False,
+        }
+        if ok:
+            response["message"] = str(result.get("message") or "Email sent successfully.")
+        else:
+            response["error"] = str(result.get("error") or "Email send failed.")
+        return jsonify(response), status_code
 
     @app.route("/integration/v1/plugins", methods=["GET"])
     @integration_manager.require_integration_auth([integration_manager.INTEGRATION_SCOPE_PLUGINS_READ])
@@ -225,15 +308,19 @@ def register_integration_routes(app):
             rate_limit_per_minute=rate_limit,
             bound_hwid=integration_manager.local_hwid(),
         )
+        shared = integration_manager.share_api_key_with_kctm(
+            created,
+            stdytime_base_url=request.host_url.rstrip("/"),
+        )
         integration_manager.log_audit(
             action="integration_key_create",
             status_code=201,
             success=True,
             key_id=created.get("id"),
             key_prefix=created.get("key_prefix", ""),
-            details={"name": name, "scopes": scopes},
+            details={"name": name, "scopes": scopes, "kctm_shared": bool(shared.get("ok"))},
         )
-        return jsonify(created), 201
+        return jsonify({**created, "kctm_shared": bool(shared.get("ok")), "kctm_shared_path": shared.get("path", "")}), 201
 
     @app.route("/integration/v1/keys/<int:key_id>", methods=["DELETE"])
     @require_login
@@ -278,6 +365,7 @@ def register_integration_routes(app):
         plugins = plugin_sdk.get_loaded_plugins()
         hwid = integration_manager.local_hwid()
         audit_log = _fetch_audit_log(limit=50)
+        kctm_credentials = _kctm_credentials_metadata()
 
         new_key = request.args.get("_new_key", "")
 
@@ -288,6 +376,8 @@ def register_integration_routes(app):
             hwid=hwid,
             audit_log=audit_log,
             new_key=new_key,
+            kctm_credentials_path=kctm_credentials["path"],
+            kctm_credentials_last_write=kctm_credentials["last_write"],
         )
 
     @app.route("/integration/manage/keys/create", methods=["POST"])
@@ -310,16 +400,46 @@ def register_integration_routes(app):
             rate_limit_per_minute=rate_limit,
             bound_hwid=integration_manager.local_hwid(),
         )
+        shared = integration_manager.share_api_key_with_kctm(
+            created,
+            stdytime_base_url=request.host_url.rstrip("/"),
+        )
         integration_manager.log_audit(
             action="integration_key_create_ui",
             status_code=201,
             success=True,
             key_id=created.get("id"),
             key_prefix=created.get("key_prefix", ""),
-            details={"name": name, "scopes": scopes},
+            details={"name": name, "scopes": scopes, "kctm_shared": bool(shared.get("ok"))},
         )
-        flash("API key created. Copy the key below — it won't be shown again.", "success")
+        if shared.get("ok"):
+            flash("API key created and shared with KCTM local credentials file.", "success")
+        else:
+            flash("API key created. Copy the key below — it won't be shown again.", "success")
         return redirect(url_for("integration_ui", _new_key=created["api_key"]))
+
+    @app.route("/integration/manage/kctm/credentials/regenerate", methods=["POST"])
+    @require_login
+    def integration_kctm_credentials_regenerate():
+        guard_error = _require_instructor_session_guard()
+        if guard_error:
+            return guard_error
+
+        refreshed = integration_manager.refresh_kctm_credentials_file(
+            stdytime_base_url=request.host_url.rstrip("/"),
+        )
+        if refreshed.get("ok"):
+            integration_manager.log_audit(
+                action="integration_kctm_credentials_regenerate",
+                status_code=200,
+                success=True,
+                key_prefix="",
+                details={"path": refreshed.get("path", "")},
+            )
+            flash(f"KCTM credentials file refreshed at {refreshed.get('path', '')}.", "success")
+        else:
+            flash(f"Could not refresh KCTM credentials file: {refreshed.get('error', 'unknown error')}", "warning")
+        return redirect(url_for("integration_ui"))
 
     @app.route("/integration/manage/keys/<int:key_id>/revoke", methods=["POST"])
     @require_login

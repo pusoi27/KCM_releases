@@ -1,0 +1,26 @@
+{% extends "base.html" %}
+{% block title %} — Plugin SDK Docs{% endblock %}
+
+{% block content %}
+<div class="container mt-4 mb-5" style="max-width:860px;">
+  <div class="d-flex align-items-center justify-content-between mb-4">
+    <h3 class="fw-bold mb-0"><i class="bi bi-book me-2 text-success"></i>Plugin SDK Docs</h3>
+    <a href="{{ url_for('integration_ui') }}" class="btn btn-sm btn-outline-secondary">
+      <i class="bi bi-arrow-left me-1"></i> Back to Integration
+    </a>
+  </div>
+
+  <div class="alert alert-secondary d-flex align-items-center gap-2 py-2 mb-4">
+    <i class="bi bi-folder2-open"></i>
+    <span>Plugins folder: <code class="user-select-all">{{ plugins_root }}</code></span>
+  </div>
+
+  <div class="card shadow-sm">
+    <div class="card-body">
+      <div id="readme-body" class="readme-content">
+        <pre class="p-3 rounded bg-light border" style="white-space:pre-wrap; font-size:.875rem;">{{ readme_content }}</pre>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
