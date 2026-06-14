@@ -51,6 +51,7 @@ _DB_CONFIG_FILE = os.path.join(_CONFIG_DIR, "db_config.json")
 _LEGACY_DB_CONFIG_FILE = os.path.join(_APP_ROOT, "db_config.json")
 _GDRIVE_DISCOVERY_ATTEMPTED = False
 _FIXED_SYNC_INTERVAL_MINUTES = 9
+_CHECKPOINT_INTERVAL_SECONDS = 11 * 60
 _APP_VERSION_META_KEY = "app_version"
 _LAST_SYNC_ERROR = ""
 _SHUTDOWN_SYNC_COMPLETED = False
@@ -63,6 +64,8 @@ _ONEDRIVE_MONITOR_STOP_EVENT = threading.Event()
 _ONEDRIVE_MONITOR_THREAD: threading.Thread | None = None
 _ONEDRIVE_MONITOR_LOCK = threading.Lock()
 _ONEDRIVE_QUARANTINED_FILES: dict[str, str] = {}
+_CHECKPOINT_STOP_EVENT = threading.Event()
+_CHECKPOINT_THREAD: threading.Thread | None = None
 _MAILBOX_SYNC_INTERVAL_MINUTES = 10
 _STATION_MAILBOX_STOP_EVENT = threading.Event()
 _STATION_MAILBOX_THREAD: threading.Thread | None = None
@@ -800,6 +803,60 @@ def _start_onedrive_folder_monitor(gdrive_sync_path: str) -> None:
 def stop_onedrive_folder_monitor() -> None:
     """Stop OneDrive monitor loop (best effort)."""
     _ONEDRIVE_MONITOR_STOP_EVENT.set()
+
+
+def run_manual_wal_checkpoint(mode: str = "FULL") -> bool:
+    """Run a manual SQLite WAL checkpoint against the local DB.
+
+    Returns True when checkpoint command executes successfully.
+    """
+    checkpoint_mode = str(mode or "FULL").strip().upper() or "FULL"
+    if checkpoint_mode not in {"PASSIVE", "FULL", "RESTART", "TRUNCATE"}:
+        checkpoint_mode = "FULL"
+
+    try:
+        with sqlite3.connect(DB_PATH, timeout=30) as conn:
+            conn.execute("PRAGMA busy_timeout=5000")
+            row = conn.execute(f"PRAGMA wal_checkpoint({checkpoint_mode})").fetchone()
+        print(
+            f"[checkpoint] Manual WAL checkpoint ({checkpoint_mode}) executed: result={row}",
+            file=sys.stderr,
+        )
+        return True
+    except Exception as exc:
+        print(
+            f"[checkpoint] WARNING: manual WAL checkpoint ({checkpoint_mode}) failed: {exc}",
+            file=sys.stderr,
+        )
+        return False
+
+
+def _start_manual_checkpoint_timer(interval_seconds: int = _CHECKPOINT_INTERVAL_SECONDS) -> None:
+    """Run periodic manual WAL checkpoints while the app process is alive."""
+    global _CHECKPOINT_THREAD
+
+    if _CHECKPOINT_THREAD and _CHECKPOINT_THREAD.is_alive():
+        return
+
+    wait_seconds = max(60, int(interval_seconds))
+    _CHECKPOINT_STOP_EVENT.clear()
+
+    def _loop() -> None:
+        while not _CHECKPOINT_STOP_EVENT.wait(wait_seconds):
+            run_manual_wal_checkpoint("FULL")
+
+    _CHECKPOINT_THREAD = threading.Thread(
+        target=_loop,
+        daemon=True,
+        name="sqlite-manual-checkpoint",
+    )
+    _CHECKPOINT_THREAD.start()
+    print(f"[checkpoint] Manual WAL checkpoint timer started (every {wait_seconds // 60} min)")
+
+
+def stop_manual_checkpoint_timer() -> None:
+    """Stop periodic manual checkpoint loop (best effort)."""
+    _CHECKPOINT_STOP_EVENT.set()
 
 
 def _resolve_db_path():
@@ -2929,6 +2986,7 @@ def _sync_on_exit():
     )
     stop_station_mailbox_sync()
     stop_onedrive_folder_monitor()
+    stop_manual_checkpoint_timer()
     restore_onedrive_quarantined_files()
 
 
@@ -3212,6 +3270,9 @@ def init_db():
                   " VALUES (?,?,?,?,?)",
                   ("Mathematics Basics","KumoPress","111222333",1,"5A"))
     conn.commit(); conn.close()
+
+    # Keep main DB file freshness predictable under WAL mode.
+    _start_manual_checkpoint_timer(_CHECKPOINT_INTERVAL_SECONDS)
 
     # Ensure additional columns exist on students table (migration for additional fields)
     with sqlite3.connect(DB_PATH) as conn:
