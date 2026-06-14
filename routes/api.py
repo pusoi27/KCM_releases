@@ -319,9 +319,11 @@ def _bridge_forbidden_error(message: str = "Bridge endpoints accept local reques
 
 def _bridge_token_is_valid() -> bool:
     expected = str(os.getenv("KCM_BRIDGE_TOKEN") or "").strip()
+    if not expected:
+        return True  # No token configured → allow all local requests
     auth = str(request.headers.get("Authorization") or "").strip()
     token = auth.removeprefix("Bearer ").strip() if auth.lower().startswith("bearer ") else ""
-    return bool(expected) and token == expected
+    return token == expected
 
 
 def _bridge_student_classification(student_row) -> str:

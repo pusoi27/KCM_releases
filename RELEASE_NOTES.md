@@ -40,3 +40,21 @@ This file is automatically appended by `scripts/version_bump.py` on every versio
 ## v01.01.28 - 2026-06-14
 - TODO: summarize changes for this release.
 
+## v01.01.32 - 2026-06-14
+- TODO: summarize changes for this release.
+
+## v01.01.33 - 2026-06-14
+- TODO: summarize changes for this release.
+
+## v01.01.34 - 2026-06-14
+- Added partner integration handoff documentation for third-party apps.
+- Documented required bridge settings, endpoint URLs, and bearer-token header expectations.
+
+## v01.01.35 - 2026-06-14
+- Added `THIRD_PARTY_INTEGRATION_SETTINGS.md` with one-page integration instructions.
+- Included explicit student export and email bridge request/response examples.
+
+## v01.01.36 - 2026-06-14
+- Clarified bridge token validation behavior for local requests when no token is configured.
+- Expanded third-party integration documentation with explicit access-control rules, status-code behavior, and raw SQLite copy guidance.
+
