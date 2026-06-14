@@ -8,6 +8,12 @@ from modules.database import DB_PATH, GDRIVE_SYNC_PATH, sync_to_gdrive, is_stati
 from modules.utils import duration_seconds, time_now
 from datetime import datetime
 import base64
+import binascii
+from email.message import EmailMessage
+import ipaddress
+import mimetypes
+import os
+import smtplib
 import sqlite3
 import json
 import traceback
@@ -277,6 +283,213 @@ def _elapsed_seconds_since(start_value: str) -> int:
         return 0
 
 
+def _bridge_allowed_hosts() -> set[str]:
+    raw = str(os.getenv("KCM_BRIDGE_ALLOWED_HOSTS") or "").strip()
+    hosts = {
+        "127.0.0.1",
+        "::1",
+        "localhost",
+    }
+    if raw:
+        hosts.update({item.strip().lower() for item in raw.split(",") if item.strip()})
+    return hosts
+
+
+def _bridge_request_is_local() -> bool:
+    remote_addr = str(request.remote_addr or "").strip().lower()
+    if not remote_addr:
+        return False
+
+    try:
+        if ipaddress.ip_address(remote_addr).is_loopback:
+            return True
+    except ValueError:
+        pass
+
+    return remote_addr in _bridge_allowed_hosts()
+
+
+def _bridge_auth_error(message: str = "Unauthorized"):
+    return jsonify({"error": message}), 401
+
+
+def _bridge_forbidden_error(message: str = "Bridge endpoints accept local requests only."):
+    return jsonify({"error": message}), 403
+
+
+def _bridge_token_is_valid() -> bool:
+    expected = str(os.getenv("KCM_BRIDGE_TOKEN") or "").strip()
+    auth = str(request.headers.get("Authorization") or "").strip()
+    token = auth.removeprefix("Bearer ").strip() if auth.lower().startswith("bearer ") else ""
+    return bool(expected) and token == expected
+
+
+def _bridge_student_classification(student_row) -> str:
+    if not student_row:
+        return ""
+
+    def _as_int(index: int) -> int:
+        try:
+            return int(bool(student_row[index])) if len(student_row) > index else 0
+        except Exception:
+            return 0
+
+    if _as_int(10):
+        return "assisted"
+    if _as_int(11):
+        return "monitored"
+    if _as_int(22):
+        return "independent"
+    if _as_int(12):
+        return "virtual"
+    return ""
+
+
+def _bridge_student_payload(student_row) -> dict:
+    raw_subjects = str(student_row[17] or "") if len(student_row) > 17 else ""
+    parsed_subjects = []
+    if raw_subjects:
+        try:
+            maybe_subjects = json.loads(raw_subjects)
+            if isinstance(maybe_subjects, list):
+                parsed_subjects = [str(item).strip() for item in maybe_subjects if str(item or "").strip()]
+        except (TypeError, ValueError, json.JSONDecodeError):
+            parsed_subjects = []
+
+    guardian_name = str(student_row[5] or "").strip() if len(student_row) > 5 else ""
+    email = str(student_row[3] or "").strip() if len(student_row) > 3 else ""
+    active_value = 1 if len(student_row) > 7 and bool(student_row[7]) else 0
+
+    return {
+        "id": int(student_row[0] or 0) if student_row else 0,
+        "name": str(student_row[1] or "").strip() if len(student_row) > 1 else "",
+        "email": email,
+        "student_email": email,
+        "phone": str(student_row[4] or "").strip() if len(student_row) > 4 else "",
+        "guardian_name": guardian_name,
+        "guardian": guardian_name,
+        "active": active_value,
+        "subject": str(student_row[2] or "").strip() if len(student_row) > 2 else "",
+        "subjects_json": raw_subjects or "[]",
+        "subjects": parsed_subjects or ([str(student_row[2]).strip()] if len(student_row) > 2 and str(student_row[2] or "").strip() else []),
+        "classification": _bridge_student_classification(student_row),
+        "el": 1 if len(student_row) > 10 and bool(student_row[10]) else 0,
+        "pi": 1 if len(student_row) > 11 and bool(student_row[11]) else 0,
+        "v": 1 if len(student_row) > 12 and bool(student_row[12]) else 0,
+    }
+
+
+def _bridge_send_email(data: dict) -> dict:
+    email_manager = get_email_manager()
+    sender_email = str(getattr(email_manager, "sender_email", "") or "").strip()
+    sender_password = str(getattr(email_manager, "sender_password", "") or "").strip()
+    smtp_server = str(getattr(email_manager, "smtp_server", "") or "").strip()
+    smtp_port = int(getattr(email_manager, "smtp_port", 587) or 587)
+
+    if not sender_email or not sender_password or not smtp_server:
+        return {
+            "success": False,
+            "error": "SMTP configuration is not set. Please configure SMTP_SERVER, SMTP_PORT, SENDER_EMAIL, and SENDER_PASSWORD.",
+        }
+
+    to_email = str(data.get("to") or "").strip()
+    subject = str(data.get("subject") or "").strip()
+    body = str(data.get("body") or "").strip()
+    html_body = data.get("html_body")
+    reply_to = str(data.get("reply_to") or "").strip()
+    no_reply = bool(data.get("no_reply"))
+    attachments_value = data.get("attachments")
+    if attachments_value is None:
+        attachments = []
+    elif isinstance(attachments_value, list):
+        attachments = attachments_value
+    else:
+        return {"success": False, "error": "attachments must be an array."}
+
+    if not to_email or "@" not in to_email:
+        return {"success": False, "error": "A valid recipient email address is required."}
+    if not subject:
+        return {"success": False, "error": "subject is required."}
+    if not body:
+        return {"success": False, "error": "body is required."}
+
+    msg = EmailMessage()
+    msg["From"] = sender_email
+    msg["To"] = to_email
+    msg["Subject"] = subject
+
+    if no_reply:
+        msg["Reply-To"] = reply_to or "noreply@kcm.local"
+        msg["Precedence"] = "bulk"
+        msg["List-Unsubscribe"] = "<mailto:noreply@kcm.local>"
+    elif reply_to:
+        msg["Reply-To"] = reply_to
+
+    msg.set_content(body, subtype="plain", charset="utf-8")
+    if isinstance(html_body, str) and html_body.strip():
+        msg.add_alternative(html_body, subtype="html", charset="utf-8")
+
+    for attachment in attachments:
+        if not isinstance(attachment, dict):
+            return {"success": False, "error": "Each attachment must be an object."}
+        filename = str(attachment.get("filename") or "").strip()
+        content_type = str(attachment.get("content_type") or "application/octet-stream").strip()
+        content_b64 = str(attachment.get("content_base64") or "").strip()
+        if not filename:
+            return {"success": False, "error": "Attachment filename is required."}
+        if not content_b64:
+            return {"success": False, "error": f"Attachment '{filename}' is missing content_base64."}
+
+        try:
+            raw_bytes = base64.b64decode(content_b64, validate=True)
+        except (binascii.Error, ValueError):
+            return {"success": False, "error": f"Attachment '{filename}' has invalid base64 content."}
+
+        main_type, sub_type = "application", "octet-stream"
+        if "/" in content_type:
+            main_type, sub_type = content_type.split("/", 1)
+        else:
+            guessed_type, _ = mimetypes.guess_type(filename)
+            if guessed_type and "/" in guessed_type:
+                main_type, sub_type = guessed_type.split("/", 1)
+
+        msg.add_attachment(raw_bytes, maintype=main_type, subtype=sub_type, filename=filename)
+
+    try:
+        if smtp_port == 465:
+            with smtplib.SMTP_SSL(smtp_server, smtp_port, timeout=15) as server:
+                server.login(sender_email, sender_password)
+                server.send_message(msg)
+        else:
+            with smtplib.SMTP(smtp_server, smtp_port, timeout=15) as server:
+                server.starttls()
+                server.login(sender_email, sender_password)
+                server.send_message(msg)
+    except smtplib.SMTPAuthenticationError:
+        compact_password = sender_password.replace(" ", "")
+        if compact_password and compact_password != sender_password:
+            if smtp_port == 465:
+                with smtplib.SMTP_SSL(smtp_server, smtp_port, timeout=15) as server:
+                    server.login(sender_email, compact_password)
+                    server.send_message(msg)
+            else:
+                with smtplib.SMTP(smtp_server, smtp_port, timeout=15) as server:
+                    server.starttls()
+                    server.login(sender_email, compact_password)
+                    server.send_message(msg)
+        else:
+            return {
+                "success": False,
+                "error": "Authentication failed. Please check SENDER_EMAIL/SENDER_PASSWORD.",
+            }
+    except smtplib.SMTPException as exc:
+        return {"success": False, "error": f"SMTP error: {exc}"}
+    except Exception as exc:
+        return {"success": False, "error": f"Error sending email: {exc}"}
+
+    return {"success": True, "message": f"Email sent successfully to {to_email}"}
+
+
 def _send_checkout_email(student_row, start_time: str, end_time: str):
     """Send checkout notification email to the student's email on file (best effort).
 
@@ -378,6 +591,46 @@ def _send_checkout_email(student_row, start_time: str, end_time: str):
 
 def register_api_routes(app):
     """Register API/AJAX routes."""
+
+    @app.route("/api/students/export")
+    def api_students_export():
+        if not _bridge_request_is_local():
+            return _bridge_forbidden_error()
+        if not _bridge_token_is_valid():
+            return _bridge_auth_error()
+
+        try:
+            students = [_bridge_student_payload(student_row) for student_row in student_manager.get_all_students()]
+        except Exception as exc:
+            return jsonify({"error": f"Database error: {exc}"}), 500
+
+        return jsonify({"students": students, "count": len(students)}), 200
+
+    @app.route("/api/email/send", methods=["POST"])
+    def api_email_send():
+        if not _bridge_request_is_local():
+            return _bridge_forbidden_error()
+        if not _bridge_token_is_valid():
+            return _bridge_auth_error()
+
+        data = request.get_json(silent=True)
+        if not isinstance(data, dict):
+            return jsonify({"success": False, "error": "JSON request body is required."}), 400
+
+        result = _bridge_send_email(data)
+        if result.get("success"):
+            status_code = 200
+        else:
+            error_text = str(result.get("error") or "")
+            if error_text.startswith("SMTP error:"):
+                status_code = 502
+            elif error_text.startswith("SMTP configuration is not set"):
+                status_code = 500
+            elif error_text.startswith("Error sending email:"):
+                status_code = 502
+            else:
+                status_code = 400
+        return jsonify(result), status_code
     
     @app.route("/api/students/list")
     @require_login

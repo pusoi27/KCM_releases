@@ -136,9 +136,6 @@
     </li>
     <li><a class="dropdown-item ps-4" href="{{ url_for('setup_storage') }}">DB Backup</a></li>
     <li><a class="dropdown-item ps-4" href="{{ url_for('license_page') }}">Upgrade License</a></li>
-    {% if subscription_access.is_instructor_station or not subscription_access.is_checkin_station %}
-    <li><a class="dropdown-item ps-4" href="{{ url_for('integration_ui') }}"><i class="bi bi-plug me-1"></i>Integration &amp; Plugins</a></li>
-    {% endif %}
     {% if dev_trace_enabled %}
     <li><hr class="dropdown-divider"></li>
     <li>
