@@ -58,3 +58,6 @@ This file is automatically appended by `scripts/version_bump.py` on every versio
 - Clarified bridge token validation behavior for local requests when no token is configured.
 - Expanded third-party integration documentation with explicit access-control rules, status-code behavior, and raw SQLite copy guidance.
 
+## v01.01.37 - 2026-06-14
+- Exempted the trusted `/api/email/send` bridge route from Flask-WTF CSRF so local email bridge requests no longer fail with "CSRF token is missing".
+

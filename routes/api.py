@@ -633,6 +633,18 @@ def register_api_routes(app):
             else:
                 status_code = 400
         return jsonify(result), status_code
+
+    # This endpoint is called by a trusted local bridge using bearer-token auth,
+    # so Flask-WTF CSRF protection would incorrectly reject machine-to-machine
+    # requests that do not include browser form tokens.
+    try:
+        from app import csrf
+
+        csrf.exempt(api_email_send)
+    except Exception:
+        # If CSRF is unavailable during an unusual import path, keep the route
+        # registered; app-level startup already ensures CSRF is configured.
+        pass
     
     @app.route("/api/students/list")
     @require_login
