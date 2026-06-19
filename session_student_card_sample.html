@@ -1,0 +1,212 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Session Student Card Sample</title>
+  <style>
+    :root {
+      --bg: #f4f7fb;
+      --card: #ffffff;
+      --border: #d7e7d5;
+      --name: #1f2937;
+      --timer-ok: #198754;
+      --badge-math-bg: #dbeafe;
+      --badge-math-border: #93c5fd;
+      --badge-math-text: #1e3a8a;
+      --badge-reading-bg: #fee2e2;
+      --badge-reading-border: #fca5a5;
+      --badge-reading-text: #991b1b;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      display: grid;
+      place-items: center;
+      background: var(--bg);
+      font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+      padding: 24px;
+    }
+
+    .sample-wrap {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+      gap: 18px;
+      width: min(960px, 100%);
+    }
+
+    .seat-card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      box-shadow: 0 8px 20px rgba(27, 94, 32, 0.08);
+      height: 260px;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    .seat-card-header {
+      padding: 10px 10px 6px;
+      border-bottom: 1px solid #eef1f4;
+      flex-shrink: 0;
+    }
+
+    .seat-name {
+      display: block;
+      width: 100%;
+      text-align: center;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      line-height: 1;
+      letter-spacing: 0.02em;
+      font-weight: 800;
+      color: var(--name);
+      font-size: clamp(1rem, 3vw, 2.8rem);
+    }
+
+    .seat-body {
+      min-height: 0;
+      overflow: hidden;
+      padding: 10px 12px 8px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 10px;
+      flex-shrink: 0;
+    }
+
+    .photo {
+      width: 56px;
+      height: 56px;
+      border-radius: 50%;
+      border: 2px solid #dee2e6;
+      background: #e9ecef;
+      display: grid;
+      place-items: center;
+      color: #6c757d;
+      font-size: 1.45rem;
+      flex-shrink: 0;
+    }
+
+    .seat-subjects {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      justify-content: center;
+      align-items: center;
+      min-width: 0;
+    }
+
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      border-width: 1px;
+      border-style: solid;
+      border-radius: 999px;
+      font-weight: 700;
+      line-height: 1;
+      padding: 5px 9px;
+      font-size: clamp(0.62rem, 0.95vw, 0.78rem);
+    }
+
+    .badge.math {
+      background-color: var(--badge-math-bg);
+      border-color: var(--badge-math-border);
+      color: var(--badge-math-text);
+    }
+
+    .badge.reading {
+      background-color: var(--badge-reading-bg);
+      border-color: var(--badge-reading-border);
+      color: var(--badge-reading-text);
+    }
+
+    .seat-timer-wrap {
+      flex: 1 1 0;
+      min-height: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 6px 10px 14px;
+    }
+
+    .timer {
+      font-family: "Courier New", monospace;
+      font-size: clamp(1rem, 3vw, 2.8rem);
+      line-height: 1;
+      letter-spacing: 0.02em;
+      font-weight: 700;
+      color: var(--timer-ok);
+    }
+
+    .caption {
+      grid-column: 1 / -1;
+      text-align: center;
+      color: #4b5563;
+      font-weight: 600;
+      margin-top: 2px;
+    }
+  </style>
+</head>
+<body>
+  <div class="sample-wrap">
+    <div class="seat-card">
+      <div class="seat-card-header">
+        <div class="seat-name" title="Alexander Johnson">Alexander Johnson</div>
+      </div>
+      <div class="seat-body">
+        <div class="photo">👤</div>
+        <div class="seat-subjects">
+          <span class="badge math">Math</span>
+          <span class="badge reading">Reading</span>
+        </div>
+      </div>
+      <div class="seat-timer-wrap">
+        <div class="timer">01:24</div>
+      </div>
+    </div>
+
+    <div class="seat-card">
+      <div class="seat-card-header">
+        <div class="seat-name" title="Maximilian Christopher Robertson">Maximilian Christopher Robertson</div>
+      </div>
+      <div class="seat-body">
+        <div class="photo">👤</div>
+        <div class="seat-subjects">
+          <span class="badge math">Math</span>
+        </div>
+      </div>
+      <div class="seat-timer-wrap">
+        <div class="timer">00:37</div>
+      </div>
+    </div>
+
+    <div class="caption">Sample in-session student cards (name top-centered, largest-fit style, timer in hh:mm)</div>
+  </div>
+
+  <script>
+    function fitSeatCardName(nameEl) {
+      if (!nameEl) return;
+      const maxPx = Math.max(20, Math.min(48, Math.floor((nameEl.clientWidth || 0) * 0.26)));
+      const minPx = 14;
+      for (let size = maxPx; size >= minPx; size--) {
+        nameEl.style.fontSize = `${size}px`;
+        if (nameEl.scrollWidth <= nameEl.clientWidth + 1) break;
+      }
+    }
+
+    function fitAllSeatCardNames() {
+      document.querySelectorAll('.seat-name').forEach(fitSeatCardName);
+    }
+
+    window.addEventListener('resize', () => requestAnimationFrame(fitAllSeatCardNames));
+    requestAnimationFrame(fitAllSeatCardNames);
+  </script>
+</body>
+</html>

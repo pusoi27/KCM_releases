@@ -103,9 +103,9 @@ function exitFullscreenMode(){
   fetchDashboardData();
 }
 
-function formatHHMMSS(sec){
-  const h=Math.floor(sec/3600), m=Math.floor(sec%3600/60), s=sec%60;
-  return [h,m,s].map(v=>String(v).padStart(2,"0")).join(":");
+function formatHHMM(sec){
+  const h=Math.floor(sec/3600), m=Math.floor(sec%3600/60);
+  return [h,m].map(v=>String(v).padStart(2,"0")).join(":");
 }
 function formatSessionTime(seconds){
   const mins=Math.floor(seconds/60), h=Math.floor(mins/60), m=mins%60;
@@ -153,6 +153,27 @@ function sessionLimitSeconds(session){
 
   return 30 * 60;
 }
+
+function fitSeatCardName(nameEl){
+  if(!nameEl) return;
+  const maxPx = Math.max(20, Math.min(48, Math.floor((nameEl.clientWidth || 0) * 0.26)));
+  const minPx = 14;
+
+  for(let size = maxPx; size >= minPx; size--){
+    nameEl.style.fontSize = `${size}px`;
+    if(nameEl.scrollWidth <= nameEl.clientWidth + 1){
+      break;
+    }
+  }
+}
+
+function fitAllSeatCardNames(){
+  document.querySelectorAll('#seatGrid .seat-card .seat-name').forEach(fitSeatCardName);
+}
+
+window.addEventListener('resize', () => {
+  requestAnimationFrame(fitAllSeatCardNames);
+});
 
 
 async function fetchDashboardData(){
@@ -554,6 +575,7 @@ function buildSeatGrid(activeSessions){
         // Reuse existing card — timer keeps running, no flicker
         col.appendChild(existing.card);
         grid.appendChild(col);
+        fitSeatCardName(existing.card.querySelector('.seat-name'));
         newMap.set(sid, existing);
       } else {
         // New session: build card and start timer
@@ -581,18 +603,15 @@ function buildSeatGrid(activeSessions){
           : '';
 
         card.innerHTML=`
-          <div class="d-flex align-items-center gap-2 p-2" style="min-height:0;overflow:hidden;">
+          <div class="seat-card-header p-2 pb-1" style="min-height:0;overflow:hidden;">
+            <div class="fw-bold seat-name seat-name-top" title="${safeName}">${safeName}</div>
+          </div>
+          <div class="d-flex align-items-center justify-content-center gap-2 px-2 pb-2" style="min-height:0;overflow:hidden;">
             ${photoHtml}
-            <div class="flex-grow-1 overflow-hidden">
-              <div class="fw-semibold text-truncate seat-name">${s.name}</div>
-              ${subjectsHtml ? `<div class="mt-1">${subjectsHtml}</div>` : ''}
-            </div>
+            ${subjectsHtml ? `<div class="seat-subjects text-center">${subjectsHtml}</div>` : ''}
           </div>
           <div class="flex-grow-1 d-flex align-items-center justify-content-center" style="min-height:0;">
-            <div class="timer fw-bold text-success">--:--:--</div>
-          </div>
-          <div class="text-center text-muted" style="font-size:0.7em; padding:0.2rem 0.5rem; border-top:1px solid #e9ecef; flex-shrink:0;">
-            Started: ${start.toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'})}
+            <div class="timer fw-bold text-success">--:--</div>
           </div>`;
         card.onclick=async()=>{
           if(confirm("Stop session for "+s.name+"?")){
@@ -609,11 +628,12 @@ function buildSeatGrid(activeSessions){
             }
           }
         };
+        fitSeatCardName(card.querySelector('.seat-name'));
         col.appendChild(card); grid.appendChild(col);
         const tEl=card.querySelector(".timer");
         const timerId = setInterval(()=>{
           const diff=Math.floor((new Date()-start)/1000);
-          tEl.textContent=formatHHMMSS(diff);
+          tEl.textContent=formatHHMM(diff);
           tEl.classList.toggle("text-danger",diff>limit);
           tEl.classList.toggle("text-success",diff<=limit);
         },1000);
@@ -626,6 +646,8 @@ function buildSeatGrid(activeSessions){
       col.appendChild(emptyCard);
       grid.appendChild(col);
     }
+
+    requestAnimationFrame(fitAllSeatCardNames);
   }
 
   // Swap in the new map (stale entries already cleared above)
@@ -654,7 +676,7 @@ function buildSeatGrid(activeSessions){
       row.className = 'overflow-student-row';
       row.innerHTML = `
         <span class="overflow-name fw-semibold">${escapeHtmlAttr(s.name)}</span>
-        <span class="overflow-timer-badge">--:--:--</span>`;
+        <span class="overflow-timer-badge">--:--</span>`;
 
       const timerEl = row.querySelector('.overflow-timer-badge');
       const nameEl  = row.querySelector('.overflow-name');
@@ -662,7 +684,7 @@ function buildSeatGrid(activeSessions){
       // Live elapsed timer for overflow student
       const tid = setInterval(() => {
         const elapsed = Math.floor((new Date() - start) / 1000);
-        timerEl.textContent = formatHHMMSS(elapsed);
+        timerEl.textContent = formatHHMM(elapsed);
         const over = elapsed > limit;
         row.classList.toggle('over-time', over);
       }, 1000);

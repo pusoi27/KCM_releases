@@ -354,13 +354,45 @@ img.rounded-circle[src*='default.png'] {
 
 /* Timer: fluid font size relative to viewport width */
 #seatGrid .seat-card .timer {
-  font-size: clamp(0.9rem, 2vw, 2rem) !important;
+  font-size: clamp(1rem, 3vw, 2.8rem) !important;
+  line-height: 1;
+  letter-spacing: 0.02em;
 }
 
 /* Name text: fluid font size */
 #seatGrid .seat-card .seat-name {
-  font-size: clamp(0.7rem, 1.4vw, 1rem);
-  line-height: 1.2;
+  display: block;
+  width: 100%;
+  text-align: center;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: clamp(1rem, 3vw, 2.8rem);
+  line-height: 1;
+  letter-spacing: 0.02em;
+}
+
+#seatGrid .seat-card .seat-name-top {
+  font-weight: 800;
+  color: #1f2937;
+}
+
+#seatGrid .seat-card .seat-card-header {
+  flex-shrink: 0;
+  border-bottom: 1px solid #eef1f4;
+}
+
+#seatGrid .seat-card .seat-subjects {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.2rem;
+  justify-content: center;
+  align-items: center;
+  min-width: 0;
+}
+
+#seatGrid .seat-card .seat-subjects .badge {
+  font-size: clamp(0.62rem, 0.95vw, 0.78rem) !important;
 }
 
 /* Overflow bar pinned at bottom — never grows to push grid */
