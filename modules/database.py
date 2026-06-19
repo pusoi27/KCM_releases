@@ -3171,6 +3171,27 @@ def init_db():
         )
     """)
 
+    # Cancellation notices (customer acknowledgement workflow)
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS cancellation_notices (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            student_ids_json TEXT NOT NULL DEFAULT '[]',
+            student_names_json TEXT NOT NULL DEFAULT '[]',
+            selection_label TEXT DEFAULT '',
+            notice_date TEXT NOT NULL,
+            effective_last_attendance_date TEXT NOT NULL,
+            customer_name TEXT NOT NULL DEFAULT '',
+            customer_email TEXT DEFAULT '',
+            ack_method TEXT NOT NULL DEFAULT 'checkbox',
+            ack_identity_confirmed INTEGER NOT NULL DEFAULT 0,
+            ack_last_day_confirmed INTEGER NOT NULL DEFAULT 0,
+            center_email_sent INTEGER NOT NULL DEFAULT 0,
+            center_email_status TEXT DEFAULT '',
+            center_email_sent_at TEXT DEFAULT '',
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+
     # Local machine license state
     c.execute("""
         CREATE TABLE IF NOT EXISTS app_license (
@@ -3549,6 +3570,64 @@ def init_db():
         cols = [r[1] for r in cur.fetchall()]
         if "reason" not in cols and cols:
             cur.execute("ALTER TABLE center_closed_dates ADD COLUMN reason TEXT DEFAULT 'Holiday / Center Closed'")
+        conn.commit()
+
+    # Ensure cancellation_notices table and columns exist
+    with sqlite3.connect(DB_PATH) as conn:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS cancellation_notices (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                student_ids_json TEXT NOT NULL DEFAULT '[]',
+                student_names_json TEXT NOT NULL DEFAULT '[]',
+                selection_label TEXT DEFAULT '',
+                notice_date TEXT NOT NULL,
+                effective_last_attendance_date TEXT NOT NULL,
+                customer_name TEXT NOT NULL DEFAULT '',
+                customer_email TEXT DEFAULT '',
+                ack_method TEXT NOT NULL DEFAULT 'checkbox',
+                ack_identity_confirmed INTEGER NOT NULL DEFAULT 0,
+                ack_last_day_confirmed INTEGER NOT NULL DEFAULT 0,
+                center_email_sent INTEGER NOT NULL DEFAULT 0,
+                center_email_status TEXT DEFAULT '',
+                center_email_sent_at TEXT DEFAULT '',
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP
+            )
+            """
+        )
+        cur.execute("PRAGMA table_info(cancellation_notices)")
+        cols = [r[1] for r in cur.fetchall()]
+
+        if "student_ids_json" not in cols:
+            cur.execute("ALTER TABLE cancellation_notices ADD COLUMN student_ids_json TEXT NOT NULL DEFAULT '[]'")
+        if "student_names_json" not in cols:
+            cur.execute("ALTER TABLE cancellation_notices ADD COLUMN student_names_json TEXT NOT NULL DEFAULT '[]'")
+        if "selection_label" not in cols:
+            cur.execute("ALTER TABLE cancellation_notices ADD COLUMN selection_label TEXT DEFAULT ''")
+        if "notice_date" not in cols:
+            cur.execute("ALTER TABLE cancellation_notices ADD COLUMN notice_date TEXT NOT NULL DEFAULT ''")
+        if "effective_last_attendance_date" not in cols:
+            cur.execute("ALTER TABLE cancellation_notices ADD COLUMN effective_last_attendance_date TEXT NOT NULL DEFAULT ''")
+        if "customer_name" not in cols:
+            cur.execute("ALTER TABLE cancellation_notices ADD COLUMN customer_name TEXT NOT NULL DEFAULT ''")
+        if "customer_email" not in cols:
+            cur.execute("ALTER TABLE cancellation_notices ADD COLUMN customer_email TEXT DEFAULT ''")
+        if "ack_method" not in cols:
+            cur.execute("ALTER TABLE cancellation_notices ADD COLUMN ack_method TEXT NOT NULL DEFAULT 'checkbox'")
+        if "ack_identity_confirmed" not in cols:
+            cur.execute("ALTER TABLE cancellation_notices ADD COLUMN ack_identity_confirmed INTEGER NOT NULL DEFAULT 0")
+        if "ack_last_day_confirmed" not in cols:
+            cur.execute("ALTER TABLE cancellation_notices ADD COLUMN ack_last_day_confirmed INTEGER NOT NULL DEFAULT 0")
+        if "center_email_sent" not in cols:
+            cur.execute("ALTER TABLE cancellation_notices ADD COLUMN center_email_sent INTEGER NOT NULL DEFAULT 0")
+        if "center_email_status" not in cols:
+            cur.execute("ALTER TABLE cancellation_notices ADD COLUMN center_email_status TEXT DEFAULT ''")
+        if "center_email_sent_at" not in cols:
+            cur.execute("ALTER TABLE cancellation_notices ADD COLUMN center_email_sent_at TEXT DEFAULT ''")
+        if "created_at" not in cols:
+            cur.execute("ALTER TABLE cancellation_notices ADD COLUMN created_at TEXT DEFAULT CURRENT_TIMESTAMP")
+
         conn.commit()
 
     # Ensure instructor_profile has center_hours column (migration for center operating hours)

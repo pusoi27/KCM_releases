@@ -61,3 +61,18 @@ This file is automatically appended by `scripts/version_bump.py` on every versio
 ## v01.01.37 - 2026-06-14
 - Exempted the trusted `/api/email/send` bridge route from Flask-WTF CSRF so local email bridge requests no longer fail with "CSRF token is missing".
 
+## v01.01.38 - 2026-06-18
+- TODO: summarize changes for this release.
+
+## v01.01.39 - 2026-06-18
+- TODO: summarize changes for this release.
+
+## v01.01.40 - 2026-06-18
+- TODO: summarize changes for this release.
+
+## v01.01.41 - 2026-06-18
+- TODO: summarize changes for this release.
+
+## v01.01.42 - 2026-06-18
+- TODO: summarize changes for this release.
+

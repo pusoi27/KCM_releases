@@ -1155,6 +1155,7 @@ from routes.reports import register_reports_routes
 from routes.books import register_book_routes
 from routes.materials import register_material_routes
 from routes.instructor_profile import register_instructor_profile_routes
+from routes.cancellation import register_cancellation_routes
 from routes.setup import register_setup_routes
 
 # Register scanner route
@@ -1194,6 +1195,7 @@ register_qr_routes(app)
 register_reports_routes(app)
 register_book_routes(app)
 register_material_routes(app)
+register_cancellation_routes(app)
 register_setup_routes(app)
 
 

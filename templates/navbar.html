@@ -125,6 +125,7 @@
     <li><a class="dropdown-item{% if not subscription_access.can_access_utilities_students_calendar %} disabled text-muted menu-item-disabled{% endif %}" href="{% if subscription_access.can_access_utilities_students_calendar %}{{ url_for('center_calendar') }}{% else %}#{% endif %}" {% if not subscription_access.can_access_utilities_students_calendar %}aria-disabled="true" tabindex="-1"{% endif %}>Students Calendar</a></li>
     <li><a class="dropdown-item{% if not subscription_access.can_access_utilities_manage_staff %} disabled text-muted menu-item-disabled{% endif %}" href="{% if subscription_access.can_access_utilities_manage_staff %}{{ url_for('assistants_list') }}{% else %}#{% endif %}" {% if not subscription_access.can_access_utilities_manage_staff %}aria-disabled="true" tabindex="-1"{% endif %}>Manage Staff</a></li>
     <li><a class="dropdown-item{% if not subscription_access.can_access_utilities_staff_calendar %} disabled text-muted menu-item-disabled{% endif %}" href="{% if subscription_access.can_access_utilities_staff_calendar %}{{ url_for('schedule_assistants') }}{% else %}#{% endif %}" {% if not subscription_access.can_access_utilities_staff_calendar %}aria-disabled="true" tabindex="-1"{% endif %}>Staff Calendar</a></li>
+    <li><a class="dropdown-item" href="{{ url_for('cancellation_notice_page') }}" target="_blank" rel="noopener">Cancellation Notice</a></li>
     <li><hr class="dropdown-divider"></li>
     <li><span class="dropdown-item-text text-muted small px-3">Settings</span></li>
     <li>
