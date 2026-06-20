@@ -5,7 +5,7 @@ REM - Commits and pushes to GitHub
 REM - Builds NSIS installer
 REM - Generates .sha256 for installer artifact
 
-setlocal EnableDelayedExpansion
+setlocal
 
 set "ROOT=%~dp0"
 cd /d "%ROOT%"
@@ -93,10 +93,10 @@ if errorlevel 1 (
 )
 
 set "APP_VERSION="
-if exist "Version" (
-  for /f "usebackq delims=" %%v in ("Version") do set "APP_VERSION=%%v"
-) else (
-  for /f "usebackq delims=" %%v in ("VERSION") do set "APP_VERSION=%%v"
+if exist "VERSION" (
+  set /p APP_VERSION=<"VERSION"
+) else if exist "Version" (
+  set /p APP_VERSION=<"Version"
 )
 
 if "%APP_VERSION%"=="" (
@@ -115,12 +115,12 @@ if not exist "%INSTALLER_FILE%" (
 
 set "SHA_HASH="
 
-REM Try PowerShell Get-FileHash first (newer systems)
-for /f "usebackq delims=" %%H in (`powershell -NoProfile -ExecutionPolicy Bypass -Command "$ErrorActionPreference='Stop'; try { (Get-FileHash -LiteralPath '%INSTALLER_FILE%' -Algorithm SHA256).Hash.ToLowerInvariant() } catch { exit 1 }"`) do (
+REM Primary hash path: Python (already validated at script start)
+for /f "usebackq delims=" %%H in (`".venv\Scripts\python.exe" -c "import hashlib,sys; f=open(sys.argv[1],'rb'); print(hashlib.sha256(f.read()).hexdigest()); f.close()" "%INSTALLER_FILE%"`) do (
   if not defined SHA_HASH set "SHA_HASH=%%H"
 )
 
-REM Fallback for older systems: certutil
+REM Fallback hash path: certutil
 if not defined SHA_HASH (
   for /f "tokens=1 delims= " %%H in ('certutil -hashfile "%INSTALLER_FILE%" SHA256 ^| findstr /R /I "^[0-9a-f][0-9a-f]*$"') do (
     if not defined SHA_HASH set "SHA_HASH=%%H"

@@ -52,6 +52,7 @@
         <div class="row g-3 align-items-end">
           <div class="col-md-8">
             <label class="form-label">Student (active students)</label>
+            <input type="text" id="studentSearch" class="form-control mb-2" placeholder="Scan student QR or type student name / ID">
             <select id="studentSelect" class="form-select">
               <option value="">Select student...</option>
             </select>
@@ -171,21 +172,33 @@ function clearLoan(bookId, studentId, bookTitle, studentName) {
   const loanCard = document.getElementById('loanCard');
   const loanAvailable = document.getElementById('loanAvailable');
   const loanBorrowed = document.getElementById('loanBorrowed');
+  const studentSearch = document.getElementById('studentSearch');
   const studentSelect = document.getElementById('studentSelect');
   const checkoutBtn = document.getElementById('checkoutBtn');
   const returnBtn = document.getElementById('returnBtn');
   const alertBox = document.getElementById('alertBox');
   const studentStatus = document.getElementById('studentStatus');
+  const CLASSROOM_HOME_URL = "{{ url_for(subscription_access.default_home_endpoint) }}";
 
   let currentBookId = null;
   let studentReady = false;
   let currentStudent = null;
   let activeStudentsLoaded = false;
+  const activeStudentsById = new Map();
+  let scanBuffer = '';
+  let scanFinalizeTimer = null;
+  const SCAN_IDLE_MS = 180;
 
   findBookBtn.addEventListener('click', findBook);
   bookSearch.addEventListener('keypress', e => { if (e.key === 'Enter') { e.preventDefault(); findBook(); } });
+  studentSearch.addEventListener('keypress', e => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      resolveStudentFromInput(studentSearch.value, { autoCheckout: false });
+    }
+  });
   studentSelect.addEventListener('change', handleStudentSelection);
-  checkoutBtn.addEventListener('click', checkoutBook);
+  checkoutBtn.addEventListener('click', () => checkoutBook({ autoReturn: false }));
   returnBtn.addEventListener('click', returnBook);
 
   loadActiveStudents();
@@ -233,17 +246,75 @@ function clearLoan(bookId, studentId, bookTitle, studentName) {
       if (!resp.ok) throw new Error(data.error || 'Failed to load active students');
 
       studentSelect.innerHTML = '<option value="">Select student...</option>';
+      activeStudentsById.clear();
       (data.students || []).forEach(student => {
         const option = document.createElement('option');
         option.value = String(student.id);
         option.textContent = student.name;
         option.dataset.name = student.name;
         studentSelect.appendChild(option);
+        activeStudentsById.set(Number(student.id), {
+          id: Number(student.id),
+          name: student.name,
+        });
       });
       activeStudentsLoaded = true;
     } catch (err) {
       showAlert(err.message, 'danger');
     }
+  }
+
+  function selectStudent(student) {
+    if (!student || !Number.isFinite(Number(student.id))) {
+      currentStudent = null;
+      studentReady = false;
+      setCheckoutEnabled(false);
+      setStudentStatus('');
+      return false;
+    }
+
+    currentStudent = {
+      id: Number(student.id),
+      name: student.name || `Student ${student.id}`,
+    };
+
+    studentSelect.value = String(currentStudent.id);
+    studentSearch.value = currentStudent.name;
+    studentReady = true;
+    setCheckoutEnabled(true);
+    setStudentStatus(`Student: ${currentStudent.name} (ID ${currentStudent.id})`, 'primary');
+    return true;
+  }
+
+  function lookupStudentByInput(input) {
+    const raw = String(input || '').trim();
+    if (!raw) return null;
+
+    if (/^\d+$/.test(raw)) {
+      const byId = activeStudentsById.get(Number(raw));
+      if (byId) return byId;
+    }
+
+    for (const student of activeStudentsById.values()) {
+      if (student.name && student.name.toLowerCase() === raw.toLowerCase()) {
+        return student;
+      }
+    }
+
+    return null;
+  }
+
+  function resolveStudentFromInput(input, options = {}) {
+    const student = lookupStudentByInput(input);
+    if (!student) {
+      showAlert('Active student not found for scanned/typed input.', 'warning');
+      return false;
+    }
+    const ok = selectStudent(student);
+    if (ok && options.autoCheckout) {
+      checkoutBook({ autoReturn: true });
+    }
+    return ok;
   }
 
   function handleStudentSelection() {
@@ -261,6 +332,7 @@ function clearLoan(bookId, studentId, bookTitle, studentName) {
       id: parseInt(studentId, 10),
       name: selectedOption.dataset.name || selectedOption.textContent || '',
     };
+    studentSearch.value = currentStudent.name;
     studentReady = true;
     setCheckoutEnabled(true);
     setStudentStatus(`Student: ${currentStudent.name} (ID ${currentStudent.id})`, 'primary');
@@ -292,10 +364,11 @@ function clearLoan(bookId, studentId, bookTitle, studentName) {
       currentStudent = null;
       setStudentStatus('');
       studentSelect.value = '';
+      studentSearch.value = '';
       if (!activeStudentsLoaded) {
         loadActiveStudents();
       }
-      studentSelect.focus();
+      studentSearch.focus();
     } else if (book.borrower_name) {
       // Book currently loaned to someone
       loanAvailable.classList.add('d-none');
@@ -363,7 +436,8 @@ function clearLoan(bookId, studentId, bookTitle, studentName) {
     }
   }
 
-  async function checkoutBook() {
+  async function checkoutBook(options = {}) {
+    const autoReturn = !!options.autoReturn;
     if (!currentBookId) { showAlert('Find a book first.', 'warning'); return; }
     if (!studentReady || !currentStudent) { showAlert('Select a student from the dropdown first.', 'warning'); return; }
     setStatus('Checking out...');
@@ -375,13 +449,22 @@ function clearLoan(bookId, studentId, bookTitle, studentName) {
       });
       const data = await resp.json();
       if (!resp.ok) throw new Error(data.error || 'Checkout failed');
-      showAlert('Book checked out successfully.', 'success');
+      const targetName = (data && data.student_name) || currentStudent.name || 'student';
+      showAlert(`Book loaned successfully to ${targetName}.`, 'success');
       studentReady = false;
       setCheckoutEnabled(false);
       currentStudent = null;
       setStudentStatus('');
       studentSelect.value = '';
-      // Refresh page so server-rendered "Currently Loaned Books" section updates immediately
+      studentSearch.value = '';
+      if (autoReturn) {
+        setStatus('Returning to classroom...');
+        setTimeout(() => {
+          window.location.href = CLASSROOM_HOME_URL;
+        }, 1400);
+        return;
+      }
+      // Manual flow: keep existing behavior
       window.location.reload();
     } catch (err) {
       showAlert(err.message, 'danger');
@@ -418,6 +501,164 @@ function clearLoan(bookId, studentId, bookTitle, studentName) {
     if (!resp.ok) { showAlert(data.error || 'Failed to refresh book.', 'danger'); return; }
     renderBook(data.book);
   }
+
+  function deduplicateCharacters(str) {
+    if (!str || str.length < 2) return str;
+    for (const n of [4, 3, 2]) {
+      if (str.length % n !== 0) continue;
+      let candidate = '';
+      let ok = true;
+      for (let i = 0; i < str.length; i += n) {
+        const chunk = str.substring(i, i + n);
+        if (!chunk.split('').every(ch => ch === chunk[0])) {
+          ok = false;
+          break;
+        }
+        candidate += chunk[0];
+      }
+      if (ok && candidate) return candidate;
+    }
+    return str;
+  }
+
+  function normalizeScanPayload(value) {
+    return String(value || '')
+      .replace(/\r\n/g, '\n')
+      .replace(/\r/g, '\n')
+      .replace(/[\u202F\u2009\u00A0]/g, ' ')
+      .trim();
+  }
+
+  function normalizeIsbnToken(value) {
+    return String(value || '').replace(/[^0-9Xx]/g, '').toUpperCase();
+  }
+
+  function isValidIsbn10(token) {
+    if (!token || token.length !== 10) return false;
+    const body = token.slice(0, 9);
+    const check = token[9];
+    if (!/^\d{9}$/.test(body) || !/^(\d|X)$/.test(check)) return false;
+    let sum = 0;
+    for (let i = 0; i < 9; i++) sum += (10 - i) * Number(body[i]);
+    sum += check === 'X' ? 10 : Number(check);
+    return (sum % 11) === 0;
+  }
+
+  function isValidIsbn13(token) {
+    if (!token || token.length !== 13 || !/^\d{13}$/.test(token)) return false;
+    let sum = 0;
+    for (let i = 0; i < 12; i++) {
+      const n = Number(token[i]);
+      sum += (i % 2 === 0) ? n : n * 3;
+    }
+    const expected = (10 - (sum % 10)) % 10;
+    return expected === Number(token[12]);
+  }
+
+  function extractIsbnFromPayload(payload) {
+    const txt = normalizeScanPayload(payload);
+    if (!txt) return null;
+
+    const labeled = txt.match(/ISBN(?:-1[03])?\s*[:;=]?\s*([0-9Xx\-\s]{10,20})/i);
+    if (labeled) {
+      const token = normalizeIsbnToken(labeled[1]);
+      if ((token.length === 10 && isValidIsbn10(token)) || (token.length === 13 && isValidIsbn13(token))) {
+        return token;
+      }
+    }
+
+    const whole = normalizeIsbnToken(txt);
+    if ((whole.length === 10 && isValidIsbn10(whole)) || (whole.length === 13 && isValidIsbn13(whole))) {
+      return whole;
+    }
+    return null;
+  }
+
+  function extractStudentCandidate(payload) {
+    const txt = normalizeScanPayload(payload);
+    if (!txt) return {};
+
+    // Typical QR format: ID:43\nName:John Doe
+    const idMatch = txt.match(/(?:^|\b)ID\s*[:;=]?\s*(\d{1,6})\b/i);
+    const nameMatch = txt.match(/(?:^|\b)NAME\s*[:;=]\s*([^\n\r]+)/i);
+
+    const candidate = {};
+    if (idMatch) candidate.id = Number(idMatch[1]);
+    if (nameMatch) candidate.name = String(nameMatch[1] || '').trim();
+
+    if (!candidate.id && /^\d{1,6}$/.test(txt)) {
+      candidate.id = Number(txt);
+    }
+    return candidate;
+  }
+
+  async function processScannerPayload(payload) {
+    const normalized = normalizeScanPayload(deduplicateCharacters(payload));
+    if (!normalized) return;
+
+    const isbn = extractIsbnFromPayload(normalized);
+    if (isbn) {
+      bookSearch.value = isbn;
+      await findBook();
+      return;
+    }
+
+    // Student QR handling only when a book is loaded and available to loan.
+    const bookReadyForLoan = currentBookId && !loanAvailable.classList.contains('d-none');
+    if (!bookReadyForLoan) return;
+
+    if (!activeStudentsLoaded) {
+      await loadActiveStudents();
+    }
+
+    const candidate = extractStudentCandidate(normalized);
+    if (candidate.id && activeStudentsById.has(Number(candidate.id))) {
+      const ok = selectStudent(activeStudentsById.get(Number(candidate.id)));
+      if (ok) {
+        await checkoutBook({ autoReturn: true });
+      }
+      return;
+    }
+
+    if (candidate.name) {
+      const ok = resolveStudentFromInput(candidate.name, { autoCheckout: false });
+      if (ok) {
+        await checkoutBook({ autoReturn: true });
+      }
+    }
+  }
+
+  function scheduleScanFinalize() {
+    if (scanFinalizeTimer) clearTimeout(scanFinalizeTimer);
+    scanFinalizeTimer = setTimeout(async () => {
+      const payload = scanBuffer;
+      scanBuffer = '';
+      if (!payload) return;
+      await processScannerPayload(payload);
+    }, SCAN_IDLE_MS);
+  }
+
+  function onGlobalScannerKeydown(e) {
+    if (e.ctrlKey || e.altKey || e.metaKey) return;
+    const key = e.key;
+    if (key === 'Enter') {
+      e.preventDefault();
+      const payload = scanBuffer;
+      scanBuffer = '';
+      if (scanFinalizeTimer) {
+        clearTimeout(scanFinalizeTimer);
+        scanFinalizeTimer = null;
+      }
+      processScannerPayload(payload);
+      return;
+    }
+    if (key && key.length === 1) {
+      scanBuffer += key;
+      scheduleScanFinalize();
+    }
+  }
+
+  document.addEventListener('keydown', onGlobalScannerKeydown, { capture: true });
 })();
 </script>
 {% endblock %}

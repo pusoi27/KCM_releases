@@ -12,8 +12,17 @@ let dashboardRefreshToken = 0;
 let activeSeatCards = new Map(); // student_id -> { card, timerId }
 let overflowTimers = new Map(); // student_id -> timerId  (for students beyond SEAT_LIMIT)
 let dashboardFetchInFlight = false;
+let dashboardRefreshQueued = false;
 let dashboardPollTimer = null;
-const DASHBOARD_POLL_MS = 4000;
+const DASHBOARD_POLL_MS = 12000;
+const CARD_TIMER_TICK_MS = 15000;
+const CHECKED_EMAIL_STORAGE_KEY = `stdytime.checkedEmailSent.${new Date().toISOString().slice(0,10)}`;
+const checkedEmailSentMap = new Map(); // student_id -> true when checkout confirmation email sent
+let dashboardState = {
+  students: [],
+  sessions: [],
+  assistants: [],
+};
 
 function pageIsReadyForScan(){
   return document.visibilityState === 'visible' && document.hasFocus();
@@ -69,7 +78,7 @@ function enterFullscreenMode(){
   }
   
   // Rebuild grid
-  fetchDashboardData();
+  fetchDashboardData({ priority: true });
 }
 
 function exitFullscreenMode(){
@@ -100,7 +109,7 @@ function exitFullscreenMode(){
   }
   
   // Rebuild grid with normal seat count
-  fetchDashboardData();
+  fetchDashboardData({ priority: true });
 }
 
 function formatHHMM(sec){
@@ -171,13 +180,141 @@ function fitAllSeatCardNames(){
   document.querySelectorAll('#seatGrid .seat-card .seat-name').forEach(fitSeatCardName);
 }
 
+function loadCheckedEmailSentMap(){
+  try {
+    const raw = localStorage.getItem(CHECKED_EMAIL_STORAGE_KEY);
+    if(!raw) return;
+    const parsed = JSON.parse(raw);
+    if(parsed && typeof parsed === 'object'){
+      Object.keys(parsed).forEach((sid) => {
+        if(parsed[sid]) checkedEmailSentMap.set(Number(sid), true);
+      });
+    }
+  } catch (_) {
+    // ignore storage parsing failures
+  }
+}
+
+function persistCheckedEmailSentMap(){
+  try {
+    const payload = {};
+    for(const [sid, sent] of checkedEmailSentMap.entries()){
+      if(sent) payload[String(sid)] = true;
+    }
+    localStorage.setItem(CHECKED_EMAIL_STORAGE_KEY, JSON.stringify(payload));
+  } catch (_) {
+    // ignore storage write failures
+  }
+}
+
+function renderDashboardFromState(){
+  const students = Array.isArray(dashboardState.students) ? dashboardState.students : [];
+  const sessions = Array.isArray(dashboardState.sessions) ? dashboardState.sessions : [];
+  const assistants = Array.isArray(dashboardState.assistants) ? dashboardState.assistants : [];
+
+  // Deduplicate active sessions by student id (safety against duplicates)
+  const seenActive = new Set();
+  const uniqueSessions = [];
+  for(const s of sessions){
+    const sid = s.id ?? s.student_id ?? s.sid;
+    if(sid == null) continue;
+    if(!seenActive.has(sid)){
+      seenActive.add(sid);
+      uniqueSessions.push(s);
+    }
+  }
+  const activeIds = seenActive;
+
+  // Filter lists to ensure exclusivity across columns
+  const studentsAvailable = (students||[])
+    .filter(st => !activeIds.has(st.id));
+  const checkedOnly = (students||[])
+    .filter(st => st.status === 'checked' && !activeIds.has(st.id));
+  const daySessionCount = checkedOnly.length + uniqueSessions.length;
+
+  buildStudentList(studentsAvailable);
+  buildSeatGrid(uniqueSessions);
+  buildCheckedList(checkedOnly, daySessionCount);
+  buildAssistantsList(assistants);
+}
+
+function applyLocalCheckin(studentId, fallbackName){
+  const sid = Number(studentId);
+  if(!Number.isFinite(sid)) return;
+
+  const nowIso = new Date().toISOString();
+  let student = dashboardState.students.find(st => Number(st.id) === sid);
+  if(!student){
+    student = {
+      id: sid,
+      name: fallbackName || `Student ${sid}`,
+      subject: '',
+      subjects: [],
+      status: 'active',
+      total_study_minutes: 30,
+      photo_url: '',
+      photo_data_uri: '',
+    };
+    dashboardState.students.push(student);
+  }
+
+  student.status = 'active';
+  student.start_time = nowIso;
+
+  if(!dashboardState.sessions.some(sess => Number(sess.id ?? sess.student_id ?? sess.sid) === sid)){
+    dashboardState.sessions.push({
+      id: sid,
+      student_id: sid,
+      name: student.name || fallbackName || `Student ${sid}`,
+      subject: student.subject || '',
+      subjects: Array.isArray(student.subjects) ? student.subjects : [],
+      total_study_minutes: Number(student.total_study_minutes) > 0 ? Number(student.total_study_minutes) : 30,
+      photo_url: student.photo_url || '',
+      photo_data_uri: student.photo_data_uri || '',
+      start_time: nowIso,
+    });
+  }
+
+  renderDashboardFromState();
+}
+
+function applyLocalCheckout(studentId, checkoutEmailStatus){
+  const sid = Number(studentId);
+  if(!Number.isFinite(sid)) return;
+
+  dashboardState.sessions = (dashboardState.sessions || []).filter(
+    sess => Number(sess.id ?? sess.student_id ?? sess.sid) !== sid
+  );
+
+  const student = dashboardState.students.find(st => Number(st.id) === sid);
+  if(student){
+    student.status = 'checked';
+    if(!Number.isFinite(Number(student.total_seconds))){
+      student.total_seconds = 0;
+    }
+  }
+
+  if(checkoutEmailStatus === 'sent'){
+    checkedEmailSentMap.set(sid, true);
+    persistCheckedEmailSentMap();
+  }
+
+  renderDashboardFromState();
+}
+
 window.addEventListener('resize', () => {
   requestAnimationFrame(fitAllSeatCardNames);
 });
 
 
-async function fetchDashboardData(){
-  if(dashboardFetchInFlight) return;
+async function fetchDashboardData(options = {}){
+  const priority = !!options.priority;
+  if(dashboardFetchInFlight){
+    if(priority){
+      dashboardRefreshQueued = true;
+    }
+    return;
+  }
   dashboardFetchInFlight = true;
   const refreshToken = ++dashboardRefreshToken;
   try {
@@ -193,34 +330,17 @@ async function fetchDashboardData(){
     if (Array.isArray(assistants)) {
       lastAssistantsSnapshot = assistants;
     }
-    
-    // Deduplicate active sessions by student id (safety against duplicates)
-    const seenActive = new Set();
-    const uniqueSessions = [];
-    for(const s of sessions){
-      const sid = s.id ?? s.student_id ?? s.sid;
-      if(sid == null) continue;
-      if(!seenActive.has(sid)){
-        seenActive.add(sid);
-        uniqueSessions.push(s);
-      }
-    }
-    const activeIds = seenActive;
-    
-    // Filter lists to ensure exclusivity across columns
-    // Column 1 should show any non-active student (including checked out today)
-    const studentsAvailable = (students||[])
-      .filter(st => !activeIds.has(st.id));
-    const checkedOnly = (students||[])
-      .filter(st => st.status === 'checked' && !activeIds.has(st.id));
-    const daySessionCount = checkedOnly.length + uniqueSessions.length;
 
-    buildStudentList(studentsAvailable);
-    buildSeatGrid(uniqueSessions);
-    buildCheckedList(checkedOnly, daySessionCount);
-    buildAssistantsList(assistants);
+    dashboardState.students = Array.isArray(students) ? students : [];
+    dashboardState.sessions = Array.isArray(sessions) ? sessions : [];
+    dashboardState.assistants = Array.isArray(assistants) ? assistants : [];
+    renderDashboardFromState();
   } finally {
     dashboardFetchInFlight = false;
+    if(dashboardRefreshQueued){
+      dashboardRefreshQueued = false;
+      fetchDashboardData({ priority: true });
+    }
   }
 }
 
@@ -228,7 +348,7 @@ function startDashboardPolling(){
   if(dashboardPollTimer) return;
   dashboardPollTimer = setInterval(() => {
     if(document.visibilityState !== 'visible') return;
-    fetchDashboardData();
+    fetchDashboardData({ priority: false });
   }, DASHBOARD_POLL_MS);
 }
 // ---------- Column 2 (Staff) ----------
@@ -281,7 +401,7 @@ function toggleAssistantDuty(assistantId) {
       if (data.success) {
         // Refresh dashboard to show duty changes and update timers
         if (typeof fetchDashboardData === 'function') {
-          fetchDashboardData();
+          fetchDashboardData({ priority: true });
         }
       }
     })
@@ -408,7 +528,7 @@ function toggleStaffAndRefresh(assistantId, rowEl) {
       loadStaffDutyModal();
       // Refresh dashboard to show duty changes
       if (typeof fetchDashboardData === 'function') {
-        fetchDashboardData();
+        fetchDashboardData({ priority: true });
       }
     })
     .catch(error => {
@@ -508,7 +628,8 @@ function toggleStaffAndRefresh(assistantId, rowEl) {
               return;
             }
             try {
-              fetchDashboardData();
+              applyLocalCheckin(s.id, s.name);
+              fetchDashboardData({ priority: true });
             } catch (refreshErr) {
               console.error('[dashboard] check-in succeeded but UI refresh failed', refreshErr);
               // Keep success path; this is a render/refresh issue, not a check-in failure.
@@ -618,25 +739,27 @@ function buildSeatGrid(activeSessions){
             try {
               const res = await fetch(`/api/students/stop/${s.id}`,{method:'POST'});
               const j = await res.json().catch(()=>({}));
-              if(res.ok && j && j.checkout_email_status === 'sent'){
-                showCheckoutEmailConfirmation(s.name);
+              if(res.ok){
+                applyLocalCheckout(s.id, j && j.checkout_email_status);
               }
             } catch(err){
               console.debug('[dashboard] student checkout request failed', err);
             } finally {
-              fetchDashboardData();
+              fetchDashboardData({ priority: true });
             }
           }
         };
         fitSeatCardName(card.querySelector('.seat-name'));
         col.appendChild(card); grid.appendChild(col);
         const tEl=card.querySelector(".timer");
-        const timerId = setInterval(()=>{
+        const updateSeatTimer = ()=>{
           const diff=Math.floor((new Date()-start)/1000);
           tEl.textContent=formatHHMM(diff);
           tEl.classList.toggle("text-danger",diff>limit);
           tEl.classList.toggle("text-success",diff<=limit);
-        },1000);
+        };
+        updateSeatTimer();
+        const timerId = setInterval(updateSeatTimer, CARD_TIMER_TICK_MS);
         newMap.set(sid, { card, timerId });
       }
     }else{
@@ -682,12 +805,14 @@ function buildSeatGrid(activeSessions){
       const nameEl  = row.querySelector('.overflow-name');
 
       // Live elapsed timer for overflow student
-      const tid = setInterval(() => {
+      const updateOverflowTimer = () => {
         const elapsed = Math.floor((new Date() - start) / 1000);
         timerEl.textContent = formatHHMM(elapsed);
         const over = elapsed > limit;
         row.classList.toggle('over-time', over);
-      }, 1000);
+      };
+      updateOverflowTimer();
+      const tid = setInterval(updateOverflowTimer, CARD_TIMER_TICK_MS);
       overflowTimers.set(sid, tid);
 
       row.onclick = async () => {
@@ -695,13 +820,13 @@ function buildSeatGrid(activeSessions){
           try {
             const res = await fetch(`/api/students/stop/${s.id}`, {method:'POST'});
             const j = await res.json().catch(()=>({}));
-            if(res.ok && j && j.checkout_email_status === 'sent'){
-              showCheckoutEmailConfirmation(s.name);
+            if(res.ok){
+              applyLocalCheckout(s.id, j && j.checkout_email_status);
             }
           } catch(err){
             console.debug('[dashboard] overflow checkout failed', err);
           } finally {
-            fetchDashboardData();
+            fetchDashboardData({ priority: true });
           }
         }
       };
@@ -721,10 +846,14 @@ function buildCheckedList(data, daySessionCount){
     checked.forEach(s=>{
       // prefer accumulated total_seconds (today) if available, otherwise fall back to last-session duration
       const dur = formatSessionTime(s.total_seconds || s.duration || 0);
+    const emailSent = checkedEmailSentMap.get(Number(s.id)) === true;
+    const emailBadge = emailSent
+      ? '<span class="badge bg-success-subtle text-success border border-success-subtle ms-2" title="Checkout confirmation email sent"><i class="bi bi-check-circle-fill"></i></span>'
+      : '';
     const li=document.createElement("li");
     li.className="list-group-item";
-    li.innerHTML=`<div class="d-flex align-items-center">
-      <div><div class="fw-semibold">${s.name}</div>
+    li.innerHTML=`<div class="d-flex align-items-center justify-content-between">
+      <div><div class="fw-semibold">${s.name}${emailBadge}</div>
       <div class="text-success small">${dur}</div></div></div>`;
     ul.appendChild(li);
   });
@@ -734,11 +863,12 @@ function buildCheckedList(data, daySessionCount){
     `${daySessionCount} students were in session today`;
 }
 
-fetchDashboardData();
+loadCheckedEmailSentMap();
+fetchDashboardData({ priority: true });
 startDashboardPolling();
 document.addEventListener('visibilitychange', () => {
   if(document.visibilityState === 'visible'){
-    fetchDashboardData();
+    fetchDashboardData({ priority: true });
   }
 });
 
@@ -778,7 +908,7 @@ function enterFullscreenMode(){
     if(card) card.style.height = '98vh';
   }
   
-  fetchDashboardData();
+  fetchDashboardData({ priority: true });
 }
 
 function exitFullscreenMode(){
@@ -797,7 +927,7 @@ function exitFullscreenMode(){
     if(card) card.style.height = '';
   }
   
-  fetchDashboardData();
+  fetchDashboardData({ priority: true });
 }
 
 // Track activity
@@ -1131,7 +1261,7 @@ resetIdleTimer();
             loadAssistants();
           }
         }
-        fetchDashboardData();
+        fetchDashboardData({ priority: true });
       }catch(err){
         console.error('[dashboard] staff toggle error', err);
         showQuickToast('Error toggling staff '+ident, true);
@@ -1155,16 +1285,15 @@ resetIdleTimer();
       } else {
         const action = (j && j.action) ? (j.action==='started'?'Started':'Checked Out') : 'Updated';
         if(j && j.action === 'started'){
+          applyLocalCheckin(j.student_id || ident, j.name || (`Student ${ident}`));
           showQuickToast(`${j.name||('Student '+ident)} — ${action}`);
         }
         if(j && j.action === 'checked_out'){
-          if(j.checkout_email_status === 'sent'){
-            showCheckoutEmailConfirmation(j.name || ('Student ' + ident));
-          }
+          applyLocalCheckout(j.student_id || ident, j.checkout_email_status);
         }
         logDebug(`TOGGLE OK id=${ident} action=${action}`);
       }
-      fetchDashboardData();
+      fetchDashboardData({ priority: true });
     }catch(err){
       console.error('[dashboard] toggle error', err);
       logDebug(`ERROR id=${ident} msg=${err.message}`);
@@ -1247,47 +1376,10 @@ resetIdleTimer();
     setTimeout(()=>{ if(el) el.innerHTML=''; }, 2500);
   }
 
-  function showCheckoutEmailConfirmation(studentName){
-    let backdrop = document.getElementById('checkoutEmailConfirmBackdrop');
-    if(!backdrop){
-      backdrop = document.createElement('div');
-      backdrop.id = 'checkoutEmailConfirmBackdrop';
-      backdrop.style.position = 'fixed';
-      backdrop.style.inset = '0';
-      backdrop.style.background = 'rgba(0, 0, 0, 0.35)';
-      backdrop.style.display = 'flex';
-      backdrop.style.alignItems = 'center';
-      backdrop.style.justifyContent = 'center';
-      backdrop.style.zIndex = '2200';
-      document.body.appendChild(backdrop);
-    }
-
-    const safeName = studentName || 'Student';
-    backdrop.innerHTML = `
-      <div class="card shadow-lg border-0" style="max-width:460px; width:92%; border-radius:14px; overflow:hidden;">
-        <div class="card-body text-center py-4 px-3">
-          <div class="mb-2" style="font-size:2.2rem;">✅</div>
-          <h5 class="mb-2">Checkout Confirmed</h5>
-          <p class="mb-1"><strong>${safeName}</strong> has been checked out.</p>
-          <p class="mb-0 text-success fw-semibold">Email sent successfully.</p>
-        </div>
-      </div>
-    `;
-
-    backdrop.style.display = 'flex';
-    setTimeout(() => {
-      const currentBackdrop = document.getElementById('checkoutEmailConfirmBackdrop');
-      if(currentBackdrop){
-        currentBackdrop.style.display = 'none';
-      }
-    }, 2000);
-  }
-
   // Attach global keydown listener on dashboard
   ensureDebugPanel();
   keepFocus();
   attachListeners();
   window.showQuickToast = showQuickToast;
-  window.showCheckoutEmailConfirmation = showCheckoutEmailConfirmation;
 })();
 </script>
