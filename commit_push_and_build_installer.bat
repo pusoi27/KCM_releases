@@ -113,9 +113,28 @@ if not exist "%INSTALLER_FILE%" (
   goto :done
 )
 
-powershell -NoProfile -ExecutionPolicy Bypass -Command "$h=(Get-FileHash -LiteralPath '%INSTALLER_FILE%' -Algorithm SHA256).Hash.ToLowerInvariant(); Set-Content -LiteralPath '%SHA_FILE%' -Value ($h + '  ' + '%INSTALLER_FILE%') -Encoding ascii"
+set "SHA_HASH="
+
+REM Try PowerShell Get-FileHash first (newer systems)
+for /f "usebackq delims=" %%H in (`powershell -NoProfile -ExecutionPolicy Bypass -Command "$ErrorActionPreference='Stop'; try { (Get-FileHash -LiteralPath '%INSTALLER_FILE%' -Algorithm SHA256).Hash.ToLowerInvariant() } catch { exit 1 }"`) do (
+  if not defined SHA_HASH set "SHA_HASH=%%H"
+)
+
+REM Fallback for older systems: certutil
+if not defined SHA_HASH (
+  for /f "tokens=1 delims= " %%H in ('certutil -hashfile "%INSTALLER_FILE%" SHA256 ^| findstr /R /I "^[0-9a-f][0-9a-f]*$"') do (
+    if not defined SHA_HASH set "SHA_HASH=%%H"
+  )
+)
+
+if not defined SHA_HASH (
+  echo [WARNING] Failed to generate SHA256 hash (Get-FileHash and certutil unavailable/failed).
+  goto :done
+)
+
+> "%SHA_FILE%" echo %SHA_HASH%  %INSTALLER_FILE%
 if errorlevel 1 (
-  echo [WARNING] Failed to generate SHA256 file.
+  echo [WARNING] Failed writing SHA256 file: %SHA_FILE%
   goto :done
 )
 

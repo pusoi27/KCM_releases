@@ -122,7 +122,7 @@
       <i class="bi bi-people-fill"></i>
     </a>
     {% endif %}
-    {% if subscription_access.can_access_books and not subscription_access.is_checkin_station %}
+    {% if subscription_access.can_access_books %}
     <a href="{{ url_for('books_list') }}" class="dash-sidebar-item" title="Books/Devices">
       <i class="bi bi-journal-bookmark-fill"></i>
     </a>
