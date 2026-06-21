@@ -31,6 +31,7 @@ from modules.database import (
     init_db,
     DB_PATH,
     get_db_config_status,
+    get_station_dataset_sync_status,
     record_app_version,
     get_version_compatibility_warning,
     ensure_blocking_cloud_flush_before_exit,
@@ -956,7 +957,11 @@ def inject_license_status():
         nav_badge = _ls.get_nav_badge_data()
     except Exception:
         pass
-    return dict(license_status=status, ls_nav_badge=nav_badge)
+    return dict(
+        license_status=status,
+        ls_nav_badge=nav_badge,
+        station_sync_badge=get_station_dataset_sync_status(),
+    )
 
 
 @app.context_processor

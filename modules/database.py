@@ -955,12 +955,13 @@ def _station_mailbox_paths(sync_path: str) -> dict[str, str]:
         "admin_outbox": os.path.join(root, "Admin_Outbox") if root else "",
         "archive_scanner": os.path.join(archive_root, "Scanner_Outbox") if root else "",
         "archive_admin": os.path.join(archive_root, "Admin_Outbox") if root else "",
+        "station_status": os.path.join(root, "Station_Status") if root else "",
     }
 
 
 def _ensure_station_mailbox_dirs(paths: dict[str, str]) -> bool:
     try:
-        for key in ("root", "scanner_outbox", "admin_outbox", "archive_scanner", "archive_admin"):
+        for key in ("root", "scanner_outbox", "admin_outbox", "archive_scanner", "archive_admin", "station_status"):
             target = paths.get(key, "")
             if target:
                 os.makedirs(target, exist_ok=True)
@@ -2049,6 +2050,219 @@ def _run_station_mailbox_cycle(local_path: str, sync_path: str) -> None:
     else:
         _admin_import_scanner_outbox(local_path, paths["scanner_outbox"], paths["archive_scanner"], paths["admin_outbox"])
         _admin_export_staff_snapshot(local_path, paths["admin_outbox"])
+
+    try:
+        _write_station_sync_heartbeat(local_path, sync_path, role)
+    except Exception as exc:
+        print(f"[mailbox-sync] WARNING: failed writing station heartbeat: {exc}", file=sys.stderr)
+
+
+def _dataset_signature_for_station(local_path: str) -> tuple[str, int]:
+    """Return a lightweight dataset signature + pending unsynced row count."""
+    try:
+        with sqlite3.connect(local_path) as conn:
+            cur = conn.cursor()
+            aggregates: dict[str, dict[str, int]] = {}
+
+            for table in ("students", "staff", "books", "materials", "sessions", "assistant_sessions"):
+                if not _table_exists(conn, table):
+                    continue
+                count = int(cur.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0] or 0)
+                max_id = int(cur.execute(f"SELECT COALESCE(MAX(id), 0) FROM {table}").fetchone()[0] or 0)
+                aggregates[table] = {
+                    "count": count,
+                    "max_id": max_id,
+                }
+
+            unsynced_sessions = 0
+            unsynced_assistants = 0
+            if _table_exists(conn, "sessions"):
+                unsynced_sessions = int(
+                    cur.execute("SELECT COUNT(*) FROM sessions WHERE COALESCE(sync_synced, 0) = 0").fetchone()[0] or 0
+                )
+            if _table_exists(conn, "assistant_sessions"):
+                unsynced_assistants = int(
+                    cur.execute("SELECT COUNT(*) FROM assistant_sessions WHERE COALESCE(sync_synced, 0) = 0").fetchone()[0] or 0
+                )
+
+            pending_unsynced = unsynced_sessions + unsynced_assistants
+            digest_payload = {
+                "aggregates": aggregates,
+                "pending_unsynced": pending_unsynced,
+            }
+            digest = uuid.uuid5(uuid.NAMESPACE_OID, json.dumps(digest_payload, sort_keys=True)).hex
+            return digest, pending_unsynced
+    except Exception:
+        return "", -1
+
+
+def _station_heartbeat_file(status_dir: str, role: str, machine_id: str) -> str:
+    safe_role = str(role or "").strip().lower() or "unknown"
+    safe_machine = str(machine_id or "").strip().lower() or "unknown-machine"
+    return os.path.join(status_dir, f"{safe_role}_{safe_machine}.json")
+
+
+def _write_station_sync_heartbeat(local_path: str, sync_path: str, role: str) -> dict:
+    paths = _station_mailbox_paths(sync_path)
+    status_dir = paths.get("station_status", "")
+    if not status_dir:
+        return {}
+    os.makedirs(status_dir, exist_ok=True)
+
+    machine_id = _station_machine_id()
+    activation_limit, _ = _read_station_sync_state()
+    signature, pending_unsynced = _dataset_signature_for_station(local_path)
+    payload = {
+        "schema": "stdytime-mailbox-v1",
+        "kind": "station_heartbeat",
+        "role": str(role or "").strip().lower(),
+        "machine_id": machine_id,
+        "activation_limit": int(activation_limit or 0),
+        "dataset_signature": signature,
+        "pending_unsynced": int(pending_unsynced),
+        "heartbeat_at": datetime.now(timezone.utc).isoformat(),
+    }
+    out_file = _station_heartbeat_file(status_dir, role, machine_id)
+    _write_json_atomic(out_file, payload)
+    return payload
+
+
+def _read_station_heartbeat(path: str) -> dict:
+    try:
+        with open(path, "r", encoding="utf-8") as fh:
+            payload = json.load(fh)
+        if isinstance(payload, dict):
+            return payload
+    except Exception:
+        pass
+    return {}
+
+
+def _parse_utc_iso(raw: str) -> datetime | None:
+    token = str(raw or "").strip()
+    if not token:
+        return None
+    try:
+        dt = datetime.fromisoformat(token)
+    except Exception:
+        return None
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc)
+
+
+def _latest_station_heartbeat(status_dir: str, role: str) -> dict:
+    role_prefix = f"{str(role or '').strip().lower()}_"
+    best_payload: dict = {}
+    best_ts: datetime | None = None
+
+    try:
+        for name in os.listdir(status_dir):
+            if not name.lower().endswith(".json"):
+                continue
+            if not name.lower().startswith(role_prefix):
+                continue
+            payload = _read_station_heartbeat(os.path.join(status_dir, name))
+            if not payload:
+                continue
+            ts = _parse_utc_iso(payload.get("heartbeat_at") or "")
+            if not ts:
+                continue
+            if best_ts is None or ts > best_ts:
+                best_ts = ts
+                best_payload = payload
+    except Exception:
+        return {}
+
+    return best_payload
+
+
+def get_station_dataset_sync_status(stale_after_minutes: int = 25) -> dict:
+    """Return navbar-friendly sync marker data for multi-station setups."""
+    activation_limit, role = _read_station_sync_state()
+    if activation_limit < 2 or role not in {"checkin", "instructor"}:
+        return {
+            "visible": False,
+            "tone": "secondary",
+            "label": "",
+            "tooltip": "",
+        }
+
+    sync_path = GDRIVE_SYNC_PATH or ""
+    paths = _station_mailbox_paths(sync_path)
+    status_dir = paths.get("station_status", "")
+    if not status_dir:
+        return {
+            "visible": True,
+            "tone": "warning",
+            "label": "DB Sync: setup",
+            "tooltip": "Cloud mailbox path is not configured.",
+        }
+
+    if not os.path.isdir(status_dir):
+        return {
+            "visible": True,
+            "tone": "warning",
+            "label": "DB Sync: waiting",
+            "tooltip": "Waiting for station status folder to be created.",
+        }
+
+    local_signature, local_pending = _dataset_signature_for_station(DB_PATH)
+    peer_role = "instructor" if role == "checkin" else "checkin"
+    peer_payload = _latest_station_heartbeat(status_dir, peer_role)
+
+    if not peer_payload:
+        return {
+            "visible": True,
+            "tone": "warning",
+            "label": "DB Sync: waiting peer",
+            "tooltip": f"No recent {peer_role} station heartbeat found yet.",
+        }
+
+    peer_signature = str(peer_payload.get("dataset_signature") or "").strip()
+    peer_pending = int(peer_payload.get("pending_unsynced") or 0)
+    peer_machine = str(peer_payload.get("machine_id") or "peer").strip() or "peer"
+    peer_heartbeat = _parse_utc_iso(peer_payload.get("heartbeat_at") or "")
+    now_utc = datetime.now(timezone.utc)
+    stale_seconds = max(60, int(stale_after_minutes) * 60)
+    age_seconds = int((now_utc - peer_heartbeat).total_seconds()) if peer_heartbeat else 10**9
+
+    if age_seconds > stale_seconds:
+        return {
+            "visible": True,
+            "tone": "warning",
+            "label": "DB Sync: stale",
+            "tooltip": (
+                f"Peer heartbeat from {peer_machine} is stale ({age_seconds // 60} min old). "
+                "Stations may not be on the same latest dataset."
+            ),
+        }
+
+    in_sync = (
+        bool(local_signature)
+        and bool(peer_signature)
+        and local_signature == peer_signature
+        and int(local_pending) == 0
+        and int(peer_pending) == 0
+    )
+
+    if in_sync:
+        return {
+            "visible": True,
+            "tone": "success",
+            "label": "DB Sync: in sync",
+            "tooltip": f"Both stations are synced and using the same dataset signature. Peer: {peer_machine}.",
+        }
+
+    return {
+        "visible": True,
+        "tone": "warning",
+        "label": "DB Sync: syncing",
+        "tooltip": (
+            f"Sync in progress or datasets differ (local pending: {local_pending}, "
+            f"peer pending: {peer_pending}, peer: {peer_machine})."
+        ),
+    }
 
 
 def _start_station_mailbox_sync(local_path: str, sync_path: str, interval_minutes: int) -> None:
