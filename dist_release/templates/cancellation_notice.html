@@ -4,14 +4,14 @@
 <div class="container py-3">
   <div class="d-flex justify-content-between align-items-center mb-3">
     <h4 class="mb-0">Cancellation Notice</h4>
-    <span class="badge text-bg-secondary">Acknowledgement Flow (Checkbox + Typed Name)</span>
+    <span class="badge text-bg-secondary">Prefilled PDF + Customer Email Flow</span>
   </div>
 
   <div class="card mb-3">
     <div class="card-body">
       <form method="get" action="{{ url_for('cancellation_notice_page') }}" class="row g-2 align-items-end">
         <div class="col-md-8">
-          <label for="selection" class="form-label small mb-1">Select student or family/siblings</label>
+          <label for="selection" class="form-label small mb-1">Select student</label>
           <select id="selection" name="selection" class="form-select" onchange="this.form.submit()" required>
             {% for option in options %}
               <option value="{{ option.value }}" {% if option.value == selected_option %}selected{% endif %}>{{ option.label }}</option>
@@ -19,8 +19,8 @@
           </select>
         </div>
         <div class="col-md-4">
-          <label for="notice_date" class="form-label small mb-1">Notice date</label>
-          <input id="notice_date" name="notice_date" type="date" class="form-control" value="{{ notice_date }}" onchange="this.form.submit()">
+          <label class="form-label small mb-1">Notice date (today)</label>
+          <input type="text" class="form-control" value="{{ notice_date }}" readonly>
         </div>
       </form>
     </div>
@@ -29,10 +29,10 @@
   {% if selected_students and selected_students|length > 0 %}
   <div class="card mb-3">
     <div class="card-header bg-light">
-      <strong>Cancellation Notice Preview</strong>
+      <strong>Prefilled Cancellation Notice Preview</strong>
     </div>
     <div class="card-body">
-      <p class="mb-2">This notice confirms customer acknowledgment of cancellation details.</p>
+      <p class="mb-2">This will generate a prefilled PDF and email it to the customer for digital signature.</p>
       <table class="table table-sm align-middle mb-3">
         <tbody>
           <tr>
@@ -44,7 +44,7 @@
             <td><strong>{{ effective_last_attendance_date }}</strong></td>
           </tr>
           <tr>
-            <th>Selected Student(s)</th>
+            <th>Selected Student</th>
             <td>
               <ul class="mb-0 ps-3">
                 {% for student in selected_students %}
@@ -58,34 +58,21 @@
 
       <form method="post" action="{{ url_for('cancellation_notice_page') }}" class="border rounded p-3 bg-light">
         <input type="hidden" name="selection" value="{{ selected_option }}">
-        <input type="hidden" name="notice_date" value="{{ notice_date }}">
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
 
         <div class="row g-2 mb-3">
-          <div class="col-md-6">
-            <label for="customer_name" class="form-label small mb-1">Customer typed full name</label>
-            <input id="customer_name" name="customer_name" type="text" class="form-control" required maxlength="120" placeholder="Type full name">
-          </div>
-          <div class="col-md-6">
-            <label for="customer_email" class="form-label small mb-1">Customer email (optional)</label>
-            <input id="customer_email" name="customer_email" type="email" class="form-control" value="{{ default_customer_email }}" maxlength="180" placeholder="name@example.com">
+          <div class="col-md-8">
+            <label for="customer_email" class="form-label small mb-1">Customer email</label>
+            <input id="customer_email" name="customer_email" type="email" class="form-control" value="{{ default_customer_email }}" required maxlength="180" placeholder="name@example.com">
           </div>
         </div>
 
-        <div class="form-check mb-2">
-          <input class="form-check-input" type="checkbox" id="identity_confirmed" name="identity_confirmed" required>
-          <label class="form-check-label" for="identity_confirmed">
-            I confirm I am the parent/guardian and I am who I say I am.
-          </label>
-        </div>
-        <div class="form-check mb-3">
-          <input class="form-check-input" type="checkbox" id="last_day_confirmed" name="last_day_confirmed" required>
-          <label class="form-check-label" for="last_day_confirmed">
-            I acknowledge the effective last attendance date is <strong>{{ effective_last_attendance_date }}</strong>.
-          </label>
+        <div class="alert alert-secondary small mb-3">
+          The generated PDF includes student name, guardian name, notice date, effective last attendance date, and center email.
+          Customer should digitally sign it and forward the signed copy to your center email.
         </div>
 
-        <button type="submit" class="btn btn-primary">Confirm and Email Back to Center</button>
+        <button type="submit" class="btn btn-primary">Generate PDF and Email Customer</button>
       </form>
     </div>
   </div>

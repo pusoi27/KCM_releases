@@ -95,7 +95,8 @@ if errorlevel 1 (
 set "APP_VERSION="
 if exist "VERSION" (
   set /p APP_VERSION=<"VERSION"
-) else if exist "Version" (
+)
+if not defined APP_VERSION if exist "Version" (
   set /p APP_VERSION=<"Version"
 )
 
