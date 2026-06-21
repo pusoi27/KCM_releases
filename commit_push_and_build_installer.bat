@@ -114,23 +114,20 @@ if not exist "%INSTALLER_FILE%" (
   goto :done
 )
 
-REM Primary hash path: Python writes SHA256 file directly (most reliable in this repo setup)
-".venv\Scripts\python.exe" -c "import hashlib,pathlib,sys; p=pathlib.Path(sys.argv[1]); out=pathlib.Path(sys.argv[2]); h=hashlib.sha256(p.read_bytes()).hexdigest(); out.write_text(f'{h}  {p.name}\\n', encoding='ascii')" "%INSTALLER_FILE%" "%SHA_FILE%"
+set "SHA_HASH="
+for /f "tokens=1 delims= " %%H in ('certutil -hashfile "%INSTALLER_FILE%" SHA256 ^| findstr /R /I "^[0-9a-f][0-9a-f]*$"') do (
+  if not defined SHA_HASH set "SHA_HASH=%%H"
+)
+
+if not defined SHA_HASH (
+  echo [WARNING] Failed to generate SHA256 hash with certutil.
+  goto :done
+)
+
+> "%SHA_FILE%" echo %SHA_HASH%  %INSTALLER_FILE%
 if errorlevel 1 (
-  echo [WARNING] Python SHA256 generation failed, trying certutil fallback...
-  set "SHA_HASH="
-  for /f "tokens=1 delims= " %%H in ('certutil -hashfile "%INSTALLER_FILE%" SHA256 ^| findstr /R /I "^[0-9a-f][0-9a-f]*$"') do (
-    if not defined SHA_HASH set "SHA_HASH=%%H"
-  )
-  if not defined SHA_HASH (
-    echo [WARNING] Failed to generate SHA256 hash (python and certutil failed).
-    goto :done
-  )
-  > "%SHA_FILE%" echo %SHA_HASH%  %INSTALLER_FILE%
-  if errorlevel 1 (
-    echo [WARNING] Failed writing SHA256 file: %SHA_FILE%
-    goto :done
-  )
+  echo [WARNING] Failed writing SHA256 file: %SHA_FILE%
+  goto :done
 )
 
 echo [INFO] SHA256 written: %SHA_FILE%
