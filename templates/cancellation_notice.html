@@ -4,14 +4,14 @@
 <div class="container py-3">
   <div class="d-flex justify-content-between align-items-center mb-3">
     <h4 class="mb-0">Cancellation Notice</h4>
-    <span class="badge text-bg-secondary">Prefilled PDF + Customer Email Flow</span>
+    <span class="badge text-bg-info">Automated Guardian Confirmation</span>
   </div>
 
   <div class="card mb-3">
     <div class="card-body">
       <form method="get" action="{{ url_for('cancellation_notice_page') }}" class="row g-2 align-items-end">
         <div class="col-md-8">
-          <label for="selection" class="form-label small mb-1">Select student</label>
+          <label for="selection" class="form-label small mb-1">Select student to send cancellation confirmation</label>
           <select id="selection" name="selection" class="form-select" onchange="this.form.submit()" required>
             {% for option in options %}
               <option value="{{ option.value }}" {% if option.value == selected_option %}selected{% endif %}>{{ option.label }}</option>
@@ -20,7 +20,7 @@
         </div>
         <div class="col-md-4">
           <label class="form-label small mb-1">Notice date (today)</label>
-          <input type="text" class="form-control" value="{{ notice_date }}" readonly>
+          <input type="text" class="form-control" value="{{ notice_date_display }}" readonly>
         </div>
       </form>
     </div>
@@ -29,19 +29,14 @@
   {% if selected_students and selected_students|length > 0 %}
   <div class="card mb-3">
     <div class="card-header bg-light">
-      <strong>Prefilled Cancellation Notice Preview</strong>
+      <strong>Cancellation Details</strong>
     </div>
     <div class="card-body">
-      <p class="mb-2">This will generate a prefilled PDF and email it to the customer for digital signature.</p>
-      <table class="table table-sm align-middle mb-3">
+      <table class="table table-sm align-middle mb-0">
         <tbody>
           <tr>
             <th style="width: 18rem;">Notice Date</th>
-            <td>{{ notice_date }}</td>
-          </tr>
-          <tr>
-            <th>Effective Last Attendance Date</th>
-            <td><strong>{{ effective_last_attendance_date }}</strong></td>
+            <td>{{ notice_date_display }}</td>
           </tr>
           <tr>
             <th>Selected Student</th>
@@ -53,31 +48,38 @@
               </ul>
             </td>
           </tr>
+          <tr>
+            <th>Last Day of Attendance</th>
+            <td><strong>{{ effective_last_attendance_date_display }}</strong></td>
+          </tr>
+          <tr>
+            <th>Last Payment Date</th>
+            <td>
+              {% if requires_payment %}
+                <strong>{{ last_payment_date_display }}</strong>
+              {% else %}
+                <em>No additional payment required</em>
+              {% endif %}
+            </td>
+          </tr>
         </tbody>
       </table>
 
-      <form method="post" action="{{ url_for('cancellation_notice_page') }}" class="border rounded p-3 bg-light">
-        <input type="hidden" name="selection" value="{{ selected_option }}">
-        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-
-        <div class="row g-2 mb-3">
-          <div class="col-md-8">
-            <label for="customer_email" class="form-label small mb-1">Customer email</label>
-            <input id="customer_email" name="customer_email" type="email" class="form-control" value="{{ default_customer_email }}" required maxlength="180" placeholder="name@example.com">
-          </div>
-        </div>
-
-        <div class="alert alert-secondary small mb-3">
-          The generated PDF includes student name, guardian name, notice date, effective last attendance date, and center email.
-          Customer should digitally sign it and forward the signed copy to your center email.
-        </div>
-
-        <button type="submit" class="btn btn-primary">Generate PDF and Email Customer</button>
-      </form>
+      {% if email_sent %}
+      <div class="alert alert-success mt-3 mb-0">
+        <strong>✓ Confirmation Email Sent</strong><br>
+        A cancellation confirmation email has been automatically sent to the guardian with all the details above.
+        The email includes the cancellation notice date, last day of attendance, and payment information.
+      </div>
+      {% else %}
+      <div class="alert alert-info mt-3 mb-0">
+        <strong>Email Status:</strong> A confirmation email will be sent to the guardian when the student is selected.
+      </div>
+      {% endif %}
     </div>
   </div>
   {% else %}
-  <div class="alert alert-info">No active students available to generate a cancellation notice.</div>
+  <div class="alert alert-info">No active students available to process a cancellation notice.</div>
   {% endif %}
 </div>
 {% endblock %}

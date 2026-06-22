@@ -5,7 +5,7 @@ import os
 import sqlite3
 from datetime import date, datetime, timedelta
 
-from flask import flash, redirect, render_template, request, url_for
+from flask import flash, redirect, render_template, request, session, url_for
 
 from modules import instructor_profile_manager, student_manager
 from modules.database import DB_PATH
@@ -45,6 +45,99 @@ def _effective_last_attendance_date(notice_date: date) -> date:
     candidate = notice_date + timedelta(days=30)
     next_month_last = _last_day_of_next_month(notice_date)
     return min(candidate, next_month_last)
+
+
+def _calculate_last_payment_date(notice_date: date) -> tuple[date | None, bool]:
+    """Calculate last payment date.
+
+    Policy:
+    - Add 30 days to notice date
+    - If result is in next month, last payment date is 1st of next month
+    - If result is still in current month, no payment required (return None)
+
+    Returns: (payment_date or None, requires_payment)
+    """
+    candidate = notice_date + timedelta(days=30)
+    
+    # If candidate month is different from notice month, payment needed for 1st of next month
+    if candidate.month != notice_date.month or candidate.year != notice_date.year:
+        # Result is in next month
+        next_month_first = date(candidate.year, candidate.month, 1)
+        return (next_month_first, True)
+    else:
+        # Result is still in current month - no payment required
+        return (None, False)
+
+
+def _format_ordinal_day(day: int) -> str:
+    if 11 <= day % 100 <= 13:
+        suffix = "th"
+    else:
+        suffix = {1: "st", 2: "nd", 3: "rd"}.get(day % 10, "th")
+    return f"{day}{suffix}"
+
+
+def _format_long_date(value: date | None) -> str:
+    if not value:
+        return ""
+    return f"{value.strftime('%B')} {_format_ordinal_day(value.day)}, {value.year}"
+
+
+def _send_cancellation_confirmation_email(
+    guardian_email: str,
+    guardian_name: str,
+    student_name: str,
+    notice_date: date,
+    last_attendance_date: date,
+    last_payment_date: date | None,
+    center_name: str,
+    center_phone: str,
+    center_email: str,
+) -> dict:
+    """Send enrollment cancellation confirmation email to guardian."""
+    email_manager = get_email_manager()
+
+    notice_text = _format_long_date(notice_date)
+    attendance_text = _format_long_date(last_attendance_date)
+    payment_text = _format_long_date(last_payment_date) if last_payment_date else "No additional payment required"
+
+    subject = f"Enrollment Cancellation Confirmation - {student_name}"
+
+    plain_body = (
+        f"Dear {guardian_name},\n\n"
+        f"We have received your cancellation notice for {student_name} on {notice_text}. "
+        f"The cancellation will be processed as follows:\n\n"
+        f"- Last day of attendance: {attendance_text}\n"
+        f"- Last payment date: {payment_text}\n\n"
+        f"Please keep a copy of this email for your records. If you have any questions or concerns, please feel free to contact the center directly at {center_phone} or {center_email}.\n\n"
+        f"Thank you for being a valued part of our family at {center_name}. We wish {student_name} all the best!\n"
+    )
+
+    html_body = render_branded_email_shell(
+        title="Enrollment Cancellation Confirmation",
+        center_name=center_name,
+        subtitle="Cancellation Processed",
+        footer_note=f"This is an automated confirmation from {center_name}.",
+        body_html=(
+            f"<p>Dear {guardian_name},</p>"
+            f"<p>We have received your cancellation notice for <strong>{student_name}</strong> on "
+            f"{notice_text}. The cancellation will be processed as follows:</p>"
+            f"<table class='report-table'>"
+            f"<tr><th>Last day of attendance</th><td>{attendance_text}</td></tr>"
+            f"<tr><th>Last payment date</th><td>{payment_text}</td></tr>"
+            f"</table>"
+            f"<p>Please keep a copy of this email for your records. If you have any questions or concerns, please feel free to contact the center directly at <strong>{center_phone}</strong> or <strong>{center_email}</strong>.</p>"
+            f"<p>Thank you for being a valued part of our family at {center_name}. We wish {student_name} all the best!</p>"
+        ),
+    )
+
+    return email_manager.send_email(
+        recipient_email=guardian_email,
+        subject=subject,
+        body=plain_body,
+        html_body=html_body,
+        no_reply=False,
+    )
 
 
 def _safe_student_rows():
@@ -180,12 +273,12 @@ def _build_cancellation_notice_pdf(
 
     y -= 0.35 * inch
     c.setFont("Helvetica-Bold", 12)
-    c.drawString(left, y, "Acknowledgement")
+    c.drawString(left, y, "Acknowledgement Instructions")
     y -= 0.24 * inch
     c.setFont("Helvetica", 10)
     text = (
-        "I acknowledge this cancellation notice and understand the effective last attendance date shown above. "
-        "Please digitally sign this PDF and forward the signed copy to the center email listed above for record keeping."
+        "No signature is required on this PDF. This email, together with the attached pre-filled PDF, is the customer's "
+        "acknowledgment. Please forward the email to the center email listed above as confirmation."
     )
     text_obj = c.beginText(left, y)
     text_obj.setFont("Helvetica", 10)
@@ -194,13 +287,9 @@ def _build_cancellation_notice_pdf(
         text_obj.textLine(line)
     c.drawText(text_obj)
 
-    y -= 1.05 * inch
-    c.setFont("Helvetica", 11)
-    c.drawString(left, y, "Customer Digital Signature: _________________________________")
-    y -= 0.32 * inch
-    c.drawString(left, y, "Customer Name (typed): ______________________________________")
-    y -= 0.32 * inch
-    c.drawString(left, y, "Signature Date: __________________")
+    y -= 0.75 * inch
+    c.setFont("Helvetica", 10)
+    c.drawString(left, y, "Forward this email to the center email above to confirm receipt of the cancellation notice.")
 
     y -= 0.55 * inch
     c.setFont("Helvetica-Oblique", 9)
@@ -234,8 +323,8 @@ def _send_customer_cancellation_notice_email(
         f"Please review the attached prefilled cancellation notice for {student_name}.\n"
         f"Notice Date: {notice_date.isoformat()}\n"
         f"Effective Last Attendance Date: {effective_date.isoformat()}\n\n"
-        f"Important: Please digitally sign the attached PDF and then forward this email (with the signed PDF) to {center_email or 'the center email listed in the PDF'} for record keeping.\n\n"
-        f"This message is sent from no-reply flow in Stdytime; replies are not monitored.\n"
+        f"Important: No signature is required. Please forward this email, with the attached PDF, to {center_email or 'the center email listed in the PDF'} as your acknowledgment.\n\n"
+        f"This message is sent from a no-reply flow in Stdytime; replies are not monitored.\n"
     )
 
     html_body = render_branded_email_shell(
@@ -254,7 +343,7 @@ def _send_customer_cancellation_notice_email(
             f"<tr><th>Effective Last Attendance Date</th><td>{effective_date.isoformat()}</td></tr>"
             f"<tr><th>Forward Signed Form To</th><td>{center_email or 'Center email in attached PDF'}</td></tr>"
             f"</table>"
-            f"<div class='highlight'>After digitally signing the PDF, forward this email (with the signed PDF) to the center email for record keeping.</div>"
+            f"<div class='highlight'>No signature is required. Please forward this email, with the attached PDF, to the center email for acknowledgment.</div>"
         ),
     )
 
@@ -265,6 +354,7 @@ def _send_customer_cancellation_notice_email(
         html_body=html_body,
         attachments=[pdf_path],
         no_reply=True,
+        from_email="noreply@stdytime.com",
     )
 
 
@@ -325,92 +415,74 @@ def register_cancellation_routes(app):
         student_rows = _safe_student_rows()
         options, option_map = _build_selection_options(student_rows)
 
-        if request.method == "POST":
-            selected_option = str(request.form.get("selection") or "").strip()
-            selected_ids = option_map.get(selected_option, [])
-            if not selected_ids:
-                flash("Please select a student.", "warning")
-                return redirect(url_for("cancellation_notice_page"))
-
-            selected_students = _selected_students(student_rows, selected_ids)
-            if not selected_students:
-                flash("Selected students could not be loaded.", "warning")
-                return redirect(url_for("cancellation_notice_page"))
-            student_item = selected_students[0]
-
-            notice_date = date.today()
-            effective_date = _effective_last_attendance_date(notice_date)
-
-            customer_email = str(request.form.get("customer_email") or "").strip()
-            if not customer_email or "@" not in customer_email:
-                flash("A valid customer email is required.", "warning")
-                return redirect(url_for("cancellation_notice_page", selection=selected_option))
-
-            profile = instructor_profile_manager.get_instructor_profile() or {}
-            center_email = str(profile.get("email") or "").strip()
-            center_name = resolve_center_name()
-            pdf_path = _build_cancellation_notice_pdf(
-                student_item=student_item,
-                notice_date=notice_date,
-                effective_date=effective_date,
-                center_name=center_name,
-                center_email=center_email,
-            )
-
-            email_result = _send_customer_cancellation_notice_email(
-                center_email=center_email,
-                center_name=center_name,
-                student_item=student_item,
-                notice_date=notice_date,
-                effective_date=effective_date,
-                pdf_path=pdf_path,
-                customer_email=customer_email,
-            )
-
-            selection_label = next((o["label"] for o in options if o["value"] == selected_option), "")
-            notice_id = _insert_cancellation_notice_email_dispatch(
-                student_item=student_item,
-                selection_label=selection_label,
-                notice_date=notice_date,
-                effective_last_attendance_date=effective_date,
-                customer_email=customer_email,
-                center_email_sent=bool(email_result.get("success")),
-                center_email_status=email_result.get("message") or email_result.get("error") or "",
-            )
-
-            if email_result.get("success"):
-                sender_email = str(getattr(get_email_manager(), "sender_email", "") or "").strip()
-                sender_note = ""
-                if sender_email and sender_email.lower() != "noreply@stdytime.com":
-                    sender_note = f" Sent via configured sender {sender_email} (no-reply flow enabled)."
-                flash(
-                    f"Cancellation notice sent to customer with prefilled PDF (Notice #{notice_id}). "
-                    f"Customer must digitally sign and forward it to {center_email or 'the center email shown in the PDF'}."
-                    f"{sender_note}",
-                    "success",
-                )
-            else:
-                flash(
-                    f"Cancellation notice PDF generated (Notice #{notice_id}), but customer email failed: {email_result.get('error', 'unknown error')}",
-                    "warning",
-                )
-
-            return redirect(url_for("cancellation_notice_page", selection=selected_option))
-
         selected_option = str(request.args.get("selection") or "").strip()
         if selected_option not in option_map and options:
             selected_option = options[0]["value"]
 
         notice_date = date.today()
         effective_date = _effective_last_attendance_date(notice_date)
+        last_payment_date, requires_payment = _calculate_last_payment_date(notice_date)
 
         selected_ids = option_map.get(selected_option, [])
         selected_students = _selected_students(student_rows, selected_ids) if selected_ids else []
 
-        default_customer_email = ""
-        if selected_students:
-            first = selected_students[0]
-            default_customer_email = str(first.get("email") or "").strip()
+        email_sent = False
+        email_result = None
+
+        selection_triggered = "selection" in request.args
+        sent_key = f"{selected_option}:{notice_date.isoformat()}"
+        already_sent_key = str(session.get("cancellation_notice_confirmation_sent_key") or "")
+
+        # Send confirmation email only when a student is explicitly selected
+        if selected_students and selection_triggered and sent_key != already_sent_key:
+            student_item = selected_students[0]
+            guardian_email = str(student_item.get("email") or "").strip()
+            guardian_name = str(student_item.get("guardian") or "").strip() or "Parent/Guardian"
+            student_name = str(student_item.get("name") or "").strip()
+
+            if guardian_email and "@" in guardian_email:
+                profile = instructor_profile_manager.get_instructor_profile() or {}
+                center_email = str(profile.get("email") or "").strip()
+                center_phone = str(profile.get("phone") or "").strip() or "954-931-1541"
+                center_name = resolve_center_name()
+
+                email_result = _send_cancellation_confirmation_email(
+                    guardian_email=guardian_email,
+                    guardian_name=guardian_name,
+                    student_name=student_name,
+                    notice_date=notice_date,
+                    last_attendance_date=effective_date,
+                    last_payment_date=last_payment_date,
+                    center_name=center_name,
+                    center_phone=center_phone,
+                    center_email=center_email,
+                )
+
+                if email_result.get("success"):
+                    selection_label = next((o["label"] for o in options if o["value"] == selected_option), "")
+                    notice_id = _insert_cancellation_notice(
+                        student_ids=[int(student_item.get("id"))],
+                        student_names=[student_name],
+                        selection_label=selection_label,
+                        notice_date=notice_date,
+                        effective_last_attendance_date=effective_date,
+                        customer_name=guardian_name,
+                        customer_email=guardian_email,
+                        center_email_sent=True,
+                        center_email_status="Confirmation email sent to guardian",
+                    )
+                    session["cancellation_notice_confirmation_sent_key"] = sent_key
+                    flash(
+                        f"Cancellation confirmation email sent to {guardian_name} at {guardian_email} (Notice #{notice_id}). "
+                        f"Last day of attendance: {_format_long_date(effective_date)}",
+                        "success",
+                    )
+                    email_sent = True
+                else:
+                    flash(
+                        f"Failed to send confirmation email to {guardian_email}: {email_result.get('error', 'unknown error')}",
+                        "warning",
+                    )
 
         return render_template(
             "cancellation_notice.html",
@@ -418,6 +490,11 @@ def register_cancellation_routes(app):
             selected_option=selected_option,
             selected_students=selected_students,
             notice_date=notice_date.isoformat(),
+            notice_date_display=_format_long_date(notice_date),
             effective_last_attendance_date=effective_date.isoformat(),
-            default_customer_email=default_customer_email,
+            effective_last_attendance_date_display=_format_long_date(effective_date),
+            last_payment_date=last_payment_date.isoformat() if last_payment_date else None,
+            last_payment_date_display=_format_long_date(last_payment_date) if last_payment_date else None,
+            requires_payment=requires_payment,
+            email_sent=email_sent,
         )

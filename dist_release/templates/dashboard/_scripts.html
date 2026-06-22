@@ -165,7 +165,7 @@ function sessionLimitSeconds(session){
 
 function fitSeatCardName(nameEl){
   if(!nameEl) return;
-  const maxPx = Math.max(20, Math.min(48, Math.floor((nameEl.clientWidth || 0) * 0.26)));
+  const maxPx = Math.max(22, Math.min(53, Math.floor((nameEl.clientWidth || 0) * 0.286)));
   const minPx = 14;
 
   for(let size = maxPx; size >= minPx; size--){
@@ -711,28 +711,43 @@ function buildSeatGrid(activeSessions){
         const safeName = escapeHtmlAttr(s.name || 'Student');
         const safePhotoSrc = escapeHtmlAttr(photoSrc);
         const photoHtml = photoSrc
-          ? `<div style="width:48px;height:48px;position:relative;flex-shrink:0;">
-               <img src="${safePhotoSrc}" alt="${safeName}" style="width:48px;height:48px;object-fit:cover;border-radius:50%;border:2px solid #dee2e6;display:block;">
-               <div style="width:48px;height:48px;border-radius:50%;border:2px solid #dee2e6;background:#e9ecef;display:none;align-items:center;justify-content:center;"><i class="bi bi-person" style="font-size:1.4em;color:#adb5bd;"></i></div>
+          ? `<div style="width:106px;height:106px;position:relative;flex-shrink:0;">
+               <img src="${safePhotoSrc}" alt="${safeName}" style="width:106px;height:106px;object-fit:cover;border-radius:50%;border:2px solid #dee2e6;display:block;">
+               <div style="width:106px;height:106px;border-radius:50%;border:2px solid #dee2e6;background:#e9ecef;display:none;align-items:center;justify-content:center;"><i class="bi bi-person" style="font-size:3em;color:#adb5bd;"></i></div>
              </div>`
-          : `<div style="width:48px;height:48px;border-radius:50%;border:2px solid #dee2e6;background:#e9ecef;display:flex;align-items:center;justify-content:center;flex-shrink:0;"><i class="bi bi-person" style="font-size:1.4em;color:#adb5bd;"></i></div>`;
+          : `<div style="width:106px;height:106px;border-radius:50%;border:2px solid #dee2e6;background:#e9ecef;display:flex;align-items:center;justify-content:center;flex-shrink:0;"><i class="bi bi-person" style="font-size:3em;color:#adb5bd;"></i></div>`;
 
         // Build subjects badges HTML
         const subjectsList = (s.subjects && s.subjects.length > 0) ? s.subjects : (s.subject ? [s.subject] : []);
-        const subjectsHtml = subjectsList.length > 0
-          ? subjectsList.map(sub => subjectBadgeHtml(sub)).join('')
-          : '';
+        const normalizedSubjects = new Set(
+          subjectsList
+            .map(sub => String(sub ?? '').trim().toLowerCase())
+            .filter(Boolean)
+        );
+        const subjectOrder = [
+          { key: 'math', label: 'Math' },
+          { key: 'reading', label: 'Reading' },
+          { key: 'writing', label: 'Writing' }
+        ];
+        const subjectsHtml = subjectOrder.map(({ key, label }) => {
+          if (normalizedSubjects.has(key)) {
+            return `<div class="subject-slot">${subjectBadgeHtml(label)}</div>`;
+          }
+          return `<div class="subject-slot subject-slot-empty"></div>`;
+        }).join('');
 
         card.innerHTML=`
-          <div class="seat-card-header p-2 pb-1" style="min-height:0;overflow:hidden;">
-            <div class="fw-bold seat-name seat-name-top" title="${safeName}">${safeName}</div>
+          <div class="seat-card-header">
+            <div class="fw-bold seat-name" title="${safeName}">${safeName}</div>
           </div>
-          <div class="d-flex align-items-center justify-content-center gap-2 px-2 pb-2" style="min-height:0;overflow:hidden;">
-            ${photoHtml}
-            ${subjectsHtml ? `<div class="seat-subjects text-center">${subjectsHtml}</div>` : ''}
-          </div>
-          <div class="flex-grow-1 d-flex align-items-center justify-content-center" style="min-height:0;">
-            <div class="timer fw-bold text-success">--:--</div>
+          <div class="seat-card-body">
+            <div class="column-left">
+              ${photoHtml}
+              <div class="seat-subjects">${subjectsHtml}</div>
+            </div>
+            <div class="column-right">
+              <div class="timer fw-bold text-success">--:--</div>
+            </div>
           </div>`;
         card.onclick=async()=>{
           if(confirm("Stop session for "+s.name+"?")){

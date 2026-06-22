@@ -142,7 +142,8 @@ class EmailManager:
     def send_email(self, recipient_email: str, subject: str, body: str, 
                    html_body: Optional[str] = None, 
                    attachments: Optional[List[str]] = None,
-                   no_reply: bool = False) -> Dict[str, any]:
+                   no_reply: bool = False,
+                   from_email: Optional[str] = None) -> Dict[str, any]:
         """
         Send an email
         
@@ -167,7 +168,7 @@ class EmailManager:
             
             # Create message
             message = MIMEMultipart('alternative')
-            message['From'] = self.sender_email
+            message['From'] = str(from_email or self.sender_email or '').strip()
             message['To'] = recipient_email
             message['Subject'] = subject
             

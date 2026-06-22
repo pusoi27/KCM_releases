@@ -1,0 +1,240 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>New Card Layout Demo</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.1/dist/css/bootstrap.min.css" rel="stylesheet">
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css" rel="stylesheet">
+  <style>
+    :root {
+      --bg: #f4f7fb;
+      --card: #ffffff;
+      --border: #d7e7d5;
+      --name: #1f2937;
+      --timer-ok: #198754;
+      --badge-math-bg: #dbeafe;
+      --badge-math-border: #93c5fd;
+      --badge-math-text: #1e3a8a;
+      --badge-reading-bg: #fee2e2;
+      --badge-reading-border: #fca5a5;
+      --badge-reading-text: #991b1b;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      display: grid;
+      place-items: center;
+      background: var(--bg);
+      font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+      padding: 24px;
+    }
+
+    .demo-wrap {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(280px, 1fr));
+      gap: 24px;
+      width: 100%;
+      max-width: 640px;
+    }
+
+    .seat-card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      box-shadow: 0 8px 20px rgba(27, 94, 32, 0.08);
+      height: 280px;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      cursor: pointer;
+      transition: all 0.2s ease;
+    }
+
+    .seat-card:hover {
+      transform: scale(1.02);
+      box-shadow: 0 0.5rem 1.5rem rgba(0, 0, 0, 0.2) !important;
+    }
+
+    .seat-card-header {
+      flex-shrink: 0;
+      padding: 8px 8px 6px;
+      border-bottom: 1px solid #eef1f4;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .seat-name {
+      display: block;
+      text-align: center;
+      font-weight: 800;
+      color: var(--name);
+      font-size: 2.2rem;
+      line-height: 1.2;
+      letter-spacing: 0.02em;
+      word-break: break-word;
+      overflow-wrap: break-word;
+      hyphens: auto;
+    }
+
+    .seat-card-body {
+      flex: 1 1 0;
+      min-height: 0;
+      display: flex;
+      gap: 12px;
+      padding: 10px;
+      align-items: stretch;
+      justify-content: space-between;
+    }
+
+    .column-left {
+      display: flex;
+      flex-direction: column;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 6px;
+      flex: 1;
+      min-width: 0;
+    }
+
+    .column-right {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex: 1;
+      min-width: 0;
+    }
+
+    .photo-placeholder {
+      width: 106px;
+      height: 106px;
+      border-radius: 50%;
+      border: 2px solid #dee2e6;
+      background: #e9ecef;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: #adb5bd;
+      font-size: 3em;
+      flex-shrink: 0;
+    }
+
+    .seat-subjects {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      align-items: flex-start;
+      justify-content: flex-end;
+      width: 100%;
+      min-height: 72px;
+    }
+
+    .subject-slot {
+      height: 20px;
+      display: flex;
+      align-items: center;
+      justify-content: flex-start;
+    }
+
+    .subject-slot-empty {
+      visibility: hidden;
+    }
+
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      border-width: 1px;
+      border-style: solid;
+      border-radius: 999px;
+      font-weight: 700;
+      line-height: 1;
+      padding: 4px 8px;
+      font-size: 0.75rem;
+    }
+
+    .badge.math {
+      background-color: var(--badge-math-bg);
+      border-color: var(--badge-math-border);
+      color: var(--badge-math-text);
+    }
+
+    .badge.reading {
+      background-color: var(--badge-reading-bg);
+      border-color: var(--badge-reading-border);
+      color: var(--badge-reading-text);
+    }
+
+    .timer {
+      font-family: "Courier New", monospace;
+      font-size: 2.6rem;
+      line-height: 1;
+      letter-spacing: 0.02em;
+      font-weight: 700;
+      color: var(--timer-ok);
+    }
+
+    .caption {
+      grid-column: 1 / -1;
+      text-align: center;
+      color: #4b5563;
+      font-weight: 600;
+      margin-top: 12px;
+      font-size: 0.95rem;
+    }
+  </style>
+</head>
+<body>
+  <div class="demo-wrap">
+    <!-- Card 1: Ace S. - Math only -->
+    <div class="seat-card">
+      <div class="seat-card-header">
+        <div class="seat-name">Ace S.</div>
+      </div>
+      <div class="seat-card-body">
+        <div class="column-left">
+          <div class="photo-placeholder">
+            <i class="bi bi-person"></i>
+          </div>
+          <div class="seat-subjects">
+            <div class="subject-slot"><span class="badge math">Math</span></div>
+            <div class="subject-slot subject-slot-empty"><span class="badge reading">Reading</span></div>
+            <div class="subject-slot subject-slot-empty"><span class="badge bg-secondary">Writing</span></div>
+          </div>
+        </div>
+        <div class="column-right">
+          <div class="timer">01:45</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Card 2: Sebastian R. - Math and Reading -->
+    <div class="seat-card">
+      <div class="seat-card-header">
+        <div class="seat-name">Sebastian R.</div>
+      </div>
+      <div class="seat-card-body">
+        <div class="column-left">
+          <div class="photo-placeholder">
+            <i class="bi bi-person"></i>
+          </div>
+          <div class="seat-subjects">
+            <div class="subject-slot"><span class="badge math">Math</span></div>
+            <div class="subject-slot"><span class="badge reading">Reading</span></div>
+            <div class="subject-slot subject-slot-empty"><span class="badge bg-secondary">Writing</span></div>
+          </div>
+        </div>
+        <div class="column-right">
+          <div class="timer">02:30</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="caption">New two-column card layout: Name (top center) • Left: Photo + Subjects (stacked) • Right: Timer</div>
+  </div>
+</body>
+</html>

@@ -177,6 +177,14 @@
             {% endif %}
           </span>
         {% endif %}
+        {% if station_sync_badge and station_sync_badge.visible %}
+          <span
+            class="badge rounded-pill me-3 text-bg-{{ station_sync_badge.tone or 'secondary' }}"
+            title="{{ station_sync_badge.tooltip or 'Station sync status' }}"
+          >
+            <i class="bi bi-arrow-repeat"></i> {{ station_sync_badge.label }}
+          </span>
+        {% endif %}
         
           <div class="me-3">
             <a class="btn btn-sm btn-outline-light" href="{{ url_for('license_page') }}"><i class="bi bi-key"></i> License</a>

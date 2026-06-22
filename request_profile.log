@@ -51564,3 +51564,15 @@ Total WRITEs (POST/PUT/DELETE):        1
 Total Requests:                        10
 ================================================================================
 
+2026-06-22 14:20:06 | [READ] GET    /api/students/list                       200
+2026-06-22 14:20:06 | [READ] GET    /api/sessions/active                     200
+2026-06-22 14:20:06 | [READ] GET    /api/assistants/list                     200
+2026-06-22 14:20:09 | [READ] GET    /api/students/list                       200
+2026-06-22 14:20:09 | [READ] GET    /api/sessions/active                     200
+2026-06-22 14:20:09 | [READ] GET    /api/assistants/list                     200
+2026-06-22 14:20:09 | [READ] GET    /api/students/list                       200
+2026-06-22 14:20:09 | [READ] GET    /api/sessions/active                     200
+2026-06-22 14:20:09 | [READ] GET    /api/assistants/list                     200
+2026-06-22 14:20:12 | [READ] GET    /api/students/list                       200
+2026-06-22 14:20:12 | [READ] GET    /api/sessions/active                     200
+2026-06-22 14:20:12 | [READ] GET    /api/assistants/list                     200
