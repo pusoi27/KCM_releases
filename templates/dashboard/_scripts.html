@@ -167,12 +167,32 @@ function sessionLimitSeconds(session){
 }
 
 function fitSeatCardName(nameEl){
-  if(!nameEl) return;
-  nameEl.style.fontSize = '2.2rem';
+  // Font size is now driven by --card-name-fs CSS variable via applyCardScaling()
 }
 
 function fitAllSeatCardNames(){
   document.querySelectorAll('#seatGrid .seat-card .seat-name').forEach(fitSeatCardName);
+}
+
+function applyCardScaling() {
+  const grid = document.getElementById('seatGrid');
+  if (!grid) return;
+  const gw = grid.clientWidth;
+  const gh = grid.clientHeight;
+  if (!gw || !gh) return;
+  const gap = 6; // ~0.35rem between cells
+  const cardW = (gw - 3 * gap) / 4;
+  const cardH = (gh - 3 * gap) / 4;
+  const photoSize = Math.round(Math.min(cardH * 0.43, cardW * 0.34, 140));
+  const nameFs   = Math.round(Math.min(cardW * 0.11,  cardH * 0.14, 44));
+  const timerFs  = Math.round(Math.min(cardH * 0.17,  cardW * 0.13, 52));
+  const badgeFs  = Math.round(Math.min(cardH * 0.055, 12));
+  const slotH    = Math.round(Math.min(cardH * 0.082, 22));
+  grid.style.setProperty('--card-photo-size', `${photoSize}px`);
+  grid.style.setProperty('--card-name-fs',    `${nameFs}px`);
+  grid.style.setProperty('--card-timer-fs',   `${timerFs}px`);
+  grid.style.setProperty('--card-badge-fs',   `${badgeFs}px`);
+  grid.style.setProperty('--card-slot-h',     `${slotH}px`);
 }
 
 function loadCheckedEmailSentMap(){
@@ -298,8 +318,15 @@ function applyLocalCheckout(studentId, checkoutEmailStatus){
 }
 
 window.addEventListener('resize', () => {
-  requestAnimationFrame(fitAllSeatCardNames);
+  requestAnimationFrame(applyCardScaling);
 });
+
+// Re-scale cards whenever the grid itself changes size (e.g. panel show/hide)
+(function setupCardScalingObserver() {
+  const grid = document.getElementById('seatGrid');
+  if (!grid || !window.ResizeObserver) return;
+  new ResizeObserver(() => requestAnimationFrame(applyCardScaling)).observe(grid);
+})();
 
 
 async function fetchDashboardData(options = {}){
@@ -815,11 +842,11 @@ function buildSeatGrid(activeSessions){
         const safeName = escapeHtmlAttr(s.name || 'Student');
         const safePhotoSrc = escapeHtmlAttr(photoSrc);
         const photoHtml = photoSrc
-          ? `<div style="width:106px;height:106px;position:relative;flex-shrink:0;">
-               <img src="${safePhotoSrc}" alt="${safeName}" style="width:106px;height:106px;object-fit:cover;border-radius:50%;border:2px solid #dee2e6;display:block;">
-               <div style="width:106px;height:106px;border-radius:50%;border:2px solid #dee2e6;background:#e9ecef;display:none;align-items:center;justify-content:center;"><i class="bi bi-person" style="font-size:3em;color:#adb5bd;"></i></div>
+          ? `<div style="width:var(--card-photo-size);height:var(--card-photo-size);position:relative;flex-shrink:0;">
+               <img src="${safePhotoSrc}" alt="${safeName}" style="width:var(--card-photo-size);height:var(--card-photo-size);object-fit:cover;border-radius:50%;border:2px solid #dee2e6;display:block;">
+               <div style="width:var(--card-photo-size);height:var(--card-photo-size);border-radius:50%;border:2px solid #dee2e6;background:#e9ecef;display:none;align-items:center;justify-content:center;"><i class="bi bi-person" style="font-size:3em;color:#adb5bd;"></i></div>
              </div>`
-          : `<div style="width:106px;height:106px;border-radius:50%;border:2px solid #dee2e6;background:#e9ecef;display:flex;align-items:center;justify-content:center;flex-shrink:0;"><i class="bi bi-person" style="font-size:3em;color:#adb5bd;"></i></div>`;
+          : `<div style="width:var(--card-photo-size);height:var(--card-photo-size);border-radius:50%;border:2px solid #dee2e6;background:#e9ecef;display:flex;align-items:center;justify-content:center;flex-shrink:0;"><i class="bi bi-person" style="font-size:3em;color:#adb5bd;"></i></div>`;
 
         // Build subjects badges HTML
         const subjectsList = (s.subjects && s.subjects.length > 0) ? s.subjects : (s.subject ? [s.subject] : []);
@@ -889,7 +916,7 @@ function buildSeatGrid(activeSessions){
       grid.appendChild(col);
     }
 
-    requestAnimationFrame(fitAllSeatCardNames);
+    requestAnimationFrame(applyCardScaling);
   }
 
   // Swap in the new map (stale entries already cleared above)

@@ -334,6 +334,12 @@ img.rounded-circle[src*='default.png'] {
   height: 100%;
   flex: 1 1 0 !important;
   min-height: 0;
+  /* Dynamic scaling variables — updated by applyCardScaling() in JS */
+  --card-photo-size: 106px;
+  --card-name-fs: 2.2rem;
+  --card-timer-fs: 2.6rem;
+  --card-badge-fs: 0.72rem;
+  --card-slot-h: 20px;
 }
 
 /* Each wrapper div inside the grid fills its cell */
@@ -369,7 +375,7 @@ img.rounded-circle[src*='default.png'] {
   text-align: center;
   font-weight: 800;
   color: #1f2937;
-  font-size: 2.2rem;
+  font-size: var(--card-name-fs);
   line-height: 1.2;
   letter-spacing: 0.02em;
   word-break: break-word;
@@ -394,8 +400,8 @@ img.rounded-circle[src*='default.png'] {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  flex: 0 0 106px;
-  width: 106px;
+  flex: 0 0 var(--card-photo-size);
+  width: var(--card-photo-size);
   min-width: 0;
 }
 
@@ -411,9 +417,9 @@ img.rounded-circle[src*='default.png'] {
   overflow: hidden;
 }
 
-/* Timer: fluid font size */
+/* Timer: scaled by applyCardScaling() */
 #seatGrid .seat-card .timer {
-  font-size: clamp(1.42rem, 4.9vw, 2.6rem) !important;
+  font-size: var(--card-timer-fs) !important;
   line-height: 1;
   letter-spacing: 0.02em;
   font-weight: 700;
@@ -434,7 +440,7 @@ img.rounded-circle[src*='default.png'] {
 }
 
 #seatGrid .seat-card .seat-subjects .subject-slot {
-  height: 20px;
+  height: var(--card-slot-h);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -446,7 +452,7 @@ img.rounded-circle[src*='default.png'] {
 }
 
 #seatGrid .seat-card .seat-subjects .badge {
-  font-size: clamp(0.62rem, 0.82vw, 0.72rem) !important;
+  font-size: var(--card-badge-fs) !important;
   padding: 3px 7px;
 }
 
