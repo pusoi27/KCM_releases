@@ -17,7 +17,6 @@
       Stdytime
     </a>
     {% if branding_center_name and branding_center_name != 'Stdytime' %}
-    <span class="navbar-center-label">{{ branding_center_name }}</span>
     {% endif %}
     <span class="text-white-50 small">Version {{ app_version }}</span>
 
@@ -153,6 +152,10 @@
 
       <!-- License menu + Date/Time -->
       <div class="d-flex align-items-center text-white small">
+        {% if branding_center_name and branding_center_name != 'Stdytime' %}
+        <span class="navbar-center-label me-3">{{ branding_center_name }}</span>
+        <span class="me-3 text-white-50">|</span>
+        {% endif %}
         <span class="me-3"><i class="bi bi-calendar3"></i> {{ date_str }}</span>
         <span class="me-3"><i class="bi bi-clock"></i> {{ time_str }}</span>
         {% if (license_status.activation_limit or 0)|int < 2 %}
