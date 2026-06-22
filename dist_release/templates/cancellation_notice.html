@@ -9,10 +9,11 @@
 
   <div class="card mb-3">
     <div class="card-body">
-      <form method="get" action="{{ url_for('cancellation_notice_page') }}" class="row g-2 align-items-end">
+      <form method="post" action="{{ url_for('cancellation_notice_page') }}" class="row g-2 align-items-end">
         <div class="col-md-8">
-          <label for="selection" class="form-label small mb-1">Select student to send cancellation confirmation</label>
-          <select id="selection" name="selection" class="form-select" onchange="this.form.submit()" required>
+          <label for="selection" class="form-label small mb-1">Select student to send cancellation notice</label>
+          <select id="selection" name="selection" class="form-select" onchange="document.getElementById('student-preview').style.display = (this.value ? 'block' : 'none')" required>
+            <option value="">-- Select a student --</option>
             {% for option in options %}
               <option value="{{ option.value }}" {% if option.value == selected_option %}selected{% endif %}>{{ option.label }}</option>
             {% endfor %}
@@ -26,59 +27,65 @@
     </div>
   </div>
 
-  {% if selected_students and selected_students|length > 0 %}
-  <div class="card mb-3">
-    <div class="card-header bg-light">
-      <strong>Cancellation Details</strong>
-    </div>
-    <div class="card-body">
-      <table class="table table-sm align-middle mb-0">
-        <tbody>
-          <tr>
-            <th style="width: 18rem;">Notice Date</th>
-            <td>{{ notice_date_display }}</td>
-          </tr>
-          <tr>
-            <th>Selected Student</th>
-            <td>
-              <ul class="mb-0 ps-3">
-                {% for student in selected_students %}
-                  <li>{{ student.name }}{% if student.guardian %} (Guardian: {{ student.guardian }}){% endif %}</li>
-                {% endfor %}
-              </ul>
-            </td>
-          </tr>
-          <tr>
-            <th>Last Day of Attendance</th>
-            <td><strong>{{ effective_last_attendance_date_display }}</strong></td>
-          </tr>
-          <tr>
-            <th>Last Payment Date</th>
-            <td>
-              {% if requires_payment %}
-                <strong>{{ last_payment_date_display }}</strong>
-              {% else %}
-                <em>No additional payment required</em>
-              {% endif %}
-            </td>
-          </tr>
-        </tbody>
-      </table>
+  <div id="student-preview" style="display: {% if selected_students and selected_students|length > 0 %}block{% else %}none{% endif %};\">\n    {% if selected_students and selected_students|length > 0 %}
+    <div class="card mb-3">
+      <div class="card-header bg-light">
+        <strong>Cancellation Details Preview</strong>
+      </div>
+      <div class="card-body">
+        <table class="table table-sm align-middle mb-0">
+          <tbody>
+            <tr>
+              <th style="width: 18rem;">Notice Date</th>
+              <td>{{ notice_date_display }}</td>
+            </tr>
+            <tr>
+              <th>Selected Student</th>
+              <td>
+                <ul class="mb-0 ps-3">
+                  {% for student in selected_students %}
+                    <li>{{ student.name }}{% if student.guardian %} (Guardian: {{ student.guardian }}){% endif %}</li>
+                  {% endfor %}
+                </ul>
+              </td>
+            </tr>
+            <tr>
+              <th>Last Day of Attendance</th>
+              <td><strong>{{ effective_last_attendance_date_display }}</strong></td>
+            </tr>
+            <tr>
+              <th>Last Payment Date</th>
+              <td>
+                {% if requires_payment %}
+                  <strong>{{ last_payment_date_display }}</strong>
+                {% else %}
+                  <em>No additional payment required</em>
+                {% endif %}
+              </td>
+            </tr>
+          </tbody>
+        </table>
 
-      {% if email_sent %}
-      <div class="alert alert-success mt-3 mb-0">
-        <strong>✓ Confirmation Email Sent</strong><br>
-        A cancellation confirmation email has been automatically sent to the guardian with all the details above.
-        The email includes the cancellation notice date, last day of attendance, and payment information.
+        <form method="post" action="{{ url_for('cancellation_notice_page') }}" class="mt-3">
+          <input type="hidden" name="selection" value="{{ selected_option }}">
+          <div class="d-grid gap-2 d-md-flex justify-content-md-end">
+            <button type="submit" name="action" value="send_notice" class="btn btn-primary">Send Notice</button>
+          </div>
+        </form>
+
+        {% if email_sent %}
+        <div class="alert alert-success mt-3 mb-0">
+          <strong>✓ Confirmation Email Sent</strong><br>
+          A cancellation confirmation email has been sent to the guardian with all the details above.
+          The email includes the cancellation notice date, last day of attendance, and payment information.
+        </div>
+        {% endif %}
       </div>
-      {% else %}
-      <div class="alert alert-info mt-3 mb-0">
-        <strong>Email Status:</strong> A confirmation email will be sent to the guardian when the student is selected.
-      </div>
-      {% endif %}
     </div>
+    {% endif %}
   </div>
-  {% else %}
+
+  {% if not options %}
   <div class="alert alert-info">No active students available to process a cancellation notice.</div>
   {% endif %}
 </div>

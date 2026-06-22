@@ -415,9 +415,8 @@ def register_cancellation_routes(app):
         student_rows = _safe_student_rows()
         options, option_map = _build_selection_options(student_rows)
 
-        selected_option = str(request.args.get("selection") or "").strip()
-        if selected_option not in option_map and options:
-            selected_option = options[0]["value"]
+        # Get selection from POST data (form submission) or GET args (initial page load)
+        selected_option = str(request.form.get("selection") or request.args.get("selection") or "").strip()
 
         notice_date = date.today()
         effective_date = _effective_last_attendance_date(notice_date)
@@ -429,12 +428,9 @@ def register_cancellation_routes(app):
         email_sent = False
         email_result = None
 
-        selection_triggered = "selection" in request.args
-        sent_key = f"{selected_option}:{notice_date.isoformat()}"
-        already_sent_key = str(session.get("cancellation_notice_confirmation_sent_key") or "")
-
-        # Send confirmation email only when a student is explicitly selected
-        if selected_students and selection_triggered and sent_key != already_sent_key:
+        # Send confirmation email only when "Send Notice" button is clicked
+        action = str(request.form.get("action") or "").strip()
+        if request.method == "POST" and action == "send_notice" and selected_students:
             student_item = selected_students[0]
             guardian_email = str(student_item.get("email") or "").strip()
             guardian_name = str(student_item.get("guardian") or "").strip() or "Parent/Guardian"
@@ -471,7 +467,6 @@ def register_cancellation_routes(app):
                         center_email_sent=True,
                         center_email_status="Confirmation email sent to guardian",
                     )
-                    session["cancellation_notice_confirmation_sent_key"] = sent_key
                     flash(
                         f"Cancellation confirmation email sent to {guardian_name} at {guardian_email} (Notice #{notice_id}). "
                         f"Last day of attendance: {_format_long_date(effective_date)}",
@@ -483,6 +478,11 @@ def register_cancellation_routes(app):
                         f"Failed to send confirmation email to {guardian_email}: {email_result.get('error', 'unknown error')}",
                         "warning",
                     )
+            else:
+                flash(
+                    f"Cannot send email: No valid email address found for guardian.",
+                    "warning",
+                )
 
         return render_template(
             "cancellation_notice.html",
