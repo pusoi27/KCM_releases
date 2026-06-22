@@ -37,12 +37,7 @@ if not exist "build_nsis_installer.bat" (
 
 set "COMMIT_MSG=%~1"
 if "%COMMIT_MSG%"=="" (
-  set /p COMMIT_MSG=Enter commit message: 
-)
-
-if "%COMMIT_MSG%"=="" (
-  echo [ERROR] Commit message is required.
-  exit /b 1
+  set "COMMIT_MSG=release"
 )
 
 echo.
