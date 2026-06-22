@@ -8,6 +8,9 @@
         <div class="d-flex align-items-center on-duty-inline-row">
           <h6 class="text-primary fw-bold mb-0 small on-duty-inline-title"><i class="bi bi-person-badge"></i> Staff On Duty</h6>
           <div id="assistantsDutyList" class="d-flex flex-wrap align-items-center gap-1 ms-2"></div>
+          <button id="offTimeAllAssistantsButton" type="button" class="btn btn-sm btn-outline-danger py-0 px-2 ms-2" title="Turn off duty for all active assistants" onclick="offTimeAllAssistants()">
+            <i class="bi bi-person-dash"></i> Off Time All
+          </button>
         </div>
       </div>
       {% endif %}

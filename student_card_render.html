@@ -1,0 +1,174 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Student Card Render - Sebastian</title>
+  <style>
+    :root {
+      --card-bg: #ffffff;
+      --border: #dbe3ea;
+      --name: #1f2937;
+      --timer: #198754;
+    }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      display: grid;
+      place-items: center;
+      background: #f3f6f9;
+      font-family: Inter, Segoe UI, Arial, sans-serif;
+    }
+
+    .seat-card {
+      width: 360px;
+      height: 210px;
+      background: var(--card-bg);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      box-shadow: 0 8px 20px rgba(0, 0, 0, 0.08);
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+    }
+
+    .seat-card-header {
+      padding: 8px 8px 6px;
+      border-bottom: 1px solid #eef1f4;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+    }
+
+    .seat-name {
+      display: block;
+      text-align: center;
+      font-family: 'Courier New', monospace;
+      font-weight: 800;
+      color: var(--name);
+      font-size: 2rem;
+      line-height: 1.2;
+      letter-spacing: 0.02em;
+    }
+
+    .seat-card-body {
+      flex: 1 1 0;
+      min-height: 0;
+      display: flex;
+      gap: 10px;
+      padding: 8px;
+      align-items: stretch;
+      justify-content: space-between;
+    }
+
+    .column-left {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex: 0 0 106px;
+      width: 106px;
+    }
+
+    .column-right {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: flex-start;
+      gap: 6px;
+      flex: 1;
+      min-height: 0;
+      overflow: hidden;
+    }
+
+    .photo {
+      width: 106px;
+      height: 106px;
+      border-radius: 50%;
+      border: 2px solid #dee2e6;
+      background: linear-gradient(135deg, #dce7f4, #f5f8fc);
+      display: grid;
+      place-items: center;
+      color: #6b7280;
+      font-size: 2.6rem;
+      font-weight: 700;
+      user-select: none;
+    }
+
+    .timer {
+      font-family: 'Courier New', monospace;
+      font-size: 2.3rem;
+      line-height: 1;
+      letter-spacing: 0.02em;
+      font-weight: 700;
+      color: var(--timer);
+      text-align: center;
+    }
+
+    .seat-subjects {
+      display: flex;
+      flex-direction: column;
+      gap: 3px;
+      align-items: center;
+      justify-content: flex-end;
+      width: 100%;
+      min-height: 0;
+      overflow: hidden;
+      margin-top: auto;
+    }
+
+    .subject-slot {
+      height: 20px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      width: 100%;
+    }
+
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 0.72rem;
+      padding: 3px 7px;
+      border-radius: 999px;
+      font-weight: 700;
+      border: 1px solid transparent;
+      line-height: 1;
+    }
+
+    .subject-badge-math {
+      background-color: #dbeafe;
+      border-color: #93c5fd;
+      color: #1e3a8a;
+    }
+
+    .subject-badge-reading {
+      background-color: #fee2e2;
+      border-color: #fca5a5;
+      color: #991b1b;
+    }
+  </style>
+</head>
+<body>
+  <div class="seat-card" aria-label="Student card for Sebastian">
+    <div class="seat-card-header">
+      <div class="seat-name" title="Sebastian">Sebastian</div>
+    </div>
+    <div class="seat-card-body">
+      <div class="column-left">
+        <div class="photo" aria-hidden="true">S</div>
+      </div>
+      <div class="column-right">
+        <div class="timer" aria-label="Elapsed time">00:42</div>
+        <div class="seat-subjects">
+          <div class="subject-slot"><span class="badge subject-badge-math">Math</span></div>
+          <div class="subject-slot"><span class="badge subject-badge-reading">Reading</span></div>
+          <div class="subject-slot"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</body>
+</html>

@@ -375,15 +375,16 @@ img.rounded-circle[src*='default.png'] {
   word-break: break-word;
   overflow-wrap: break-word;
   hyphens: auto;
+  font-family: 'Courier New', monospace;
 }
 
-/* Two-column body: left (photo+subjects) + right (timer) */
+/* Two-column body: left (photo) + right (timer+subjects) */
 #seatGrid .seat-card .seat-card-body {
   flex: 1 1 0;
   min-height: 0;
   display: flex;
-  gap: 12px;
-  padding: 10px;
+  gap: 10px;
+  padding: 8px;
   align-items: stretch;
   justify-content: space-between;
 }
@@ -391,45 +392,53 @@ img.rounded-circle[src*='default.png'] {
 #seatGrid .seat-card .column-left {
   display: flex;
   flex-direction: column;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 6px;
-  flex: 1;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 106px;
+  width: 106px;
   min-width: 0;
 }
 
 #seatGrid .seat-card .column-right {
   display: flex;
+  flex-direction: column;
   align-items: center;
-  justify-content: center;
+  justify-content: flex-start;
+  gap: 6px;
   flex: 1;
   min-width: 0;
+  min-height: 0;
+  overflow: hidden;
 }
 
 /* Timer: fluid font size */
 #seatGrid .seat-card .timer {
-  font-size: clamp(1.56rem, 5.2vw, 2.86rem) !important;
+  font-size: clamp(1.42rem, 4.9vw, 2.6rem) !important;
   line-height: 1;
   letter-spacing: 0.02em;
   font-weight: 700;
+  text-align: center;
 }
 
-/* Subjects: stacked vertically under photo */
+/* Subjects: stacked vertically under timer */
 #seatGrid .seat-card .seat-subjects {
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  align-items: flex-start;
+  gap: 3px;
+  align-items: center;
   justify-content: flex-end;
   width: 100%;
-  min-height: 72px;
+  min-height: 0;
+  overflow: hidden;
+  margin-top: auto;
 }
 
 #seatGrid .seat-card .seat-subjects .subject-slot {
   height: 20px;
   display: flex;
   align-items: center;
-  justify-content: flex-start;
+  justify-content: center;
+  width: 100%;
 }
 
 #seatGrid .seat-card .seat-subjects .subject-slot.subject-slot-empty {
@@ -437,8 +446,8 @@ img.rounded-circle[src*='default.png'] {
 }
 
 #seatGrid .seat-card .seat-subjects .badge {
-  font-size: clamp(0.65rem, 0.9vw, 0.75rem) !important;
-  padding: 4px 8px;
+  font-size: clamp(0.62rem, 0.82vw, 0.72rem) !important;
+  padding: 3px 7px;
 }
 
 /* Overflow bar pinned at bottom — never grows to push grid */

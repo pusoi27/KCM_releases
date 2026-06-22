@@ -16,6 +16,7 @@ let dashboardRefreshQueued = false;
 let dashboardPollTimer = null;
 const DASHBOARD_POLL_MS = 12000;
 const CARD_TIMER_TICK_MS = 15000;
+const IS_INSTRUCTOR_STATION = {{ 'true' if subscription_access and subscription_access.is_instructor_station else 'false' }};
 const CHECKED_EMAIL_STORAGE_KEY = `stdytime.checkedEmailSent.${new Date().toISOString().slice(0,10)}`;
 const checkedEmailSentMap = new Map(); // student_id -> true when checkout confirmation email sent
 let dashboardState = {
@@ -42,8 +43,10 @@ function resetIdleTimer(){
 }
 
 function checkIdleState(){
+  if (IS_INSTRUCTOR_STATION) return;
   // Only enter fullscreen if there are active students
   const seatGrid = document.getElementById('seatGrid');
+  if(!seatGrid) return;
   const activeCards = seatGrid.querySelectorAll('.seat-card');
   if(activeCards.length > 0 && !isFullscreenMode){
     enterFullscreenMode();
@@ -165,15 +168,7 @@ function sessionLimitSeconds(session){
 
 function fitSeatCardName(nameEl){
   if(!nameEl) return;
-  const maxPx = Math.max(22, Math.min(53, Math.floor((nameEl.clientWidth || 0) * 0.286)));
-  const minPx = 14;
-
-  for(let size = maxPx; size >= minPx; size--){
-    nameEl.style.fontSize = `${size}px`;
-    if(nameEl.scrollWidth <= nameEl.clientWidth + 1){
-      break;
-    }
-  }
+  nameEl.style.fontSize = '2.2rem';
 }
 
 function fitAllSeatCardNames(){
@@ -406,6 +401,82 @@ function toggleAssistantDuty(assistantId) {
       }
     })
     .catch(error => console.error('Error toggling staff:', error));
+}
+
+// Manually turn all active assistants off duty at once
+async function offTimeAllAssistants() {
+  const btn = document.getElementById('offTimeAllAssistantsButton');
+  const prevHtml = btn ? btn.innerHTML : '';
+  const prevDisabled = btn ? btn.disabled : false;
+
+  try {
+    if (!confirm('Turn OFF duty for all currently active assistants?')) {
+      return;
+    }
+
+    if (btn) {
+      btn.disabled = true;
+      btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1" role="status" aria-hidden="true"></span> Off Timing...';
+    }
+
+    const listRes = await fetch('/api/assistants/list', { cache: 'no-store' });
+    const assistants = await listRes.json().catch(() => []);
+    if (!listRes.ok || !Array.isArray(assistants)) {
+      throw new Error('Could not load staff list');
+    }
+
+    const onDuty = assistants.filter(a => a && a.on_duty && Number.isFinite(Number(a.id)));
+
+    if (onDuty.length === 0) {
+      if (typeof window.showQuickToast === 'function') {
+        window.showQuickToast('All assistants are already off duty');
+      }
+      if (typeof fetchDashboardData === 'function') {
+        fetchDashboardData({ priority: true });
+      }
+      return;
+    }
+
+    const results = await Promise.all(onDuty.map(async (asst) => {
+      try {
+        const res = await fetch(`/api/assistants/select/${asst.id}`, { method: 'POST' });
+        const payload = await res.json().catch(() => ({}));
+        return { ok: !!(res.ok && payload && payload.success), name: asst.name || `Staff ${asst.id}` };
+      } catch (_) {
+        return { ok: false, name: asst.name || `Staff ${asst.id}` };
+      }
+    }));
+
+    const successCount = results.filter(r => r.ok).length;
+    const failCount = results.length - successCount;
+
+    if (typeof window.showQuickToast === 'function') {
+      if (failCount === 0) {
+        window.showQuickToast(`${successCount} assistant${successCount === 1 ? '' : 's'} set to off duty`);
+      } else {
+        window.showQuickToast(`${successCount} off duty, ${failCount} failed`, true);
+      }
+    }
+
+    if (typeof fetchDashboardData === 'function') {
+      fetchDashboardData({ priority: true });
+    }
+
+    const staffDutyListEl = document.getElementById('staffDutyList');
+    if (staffDutyListEl && typeof loadStaffDutyModal === 'function') {
+      loadStaffDutyModal();
+    }
+  } catch (error) {
+    console.error('Error setting all assistants off duty:', error);
+    if (typeof window.showQuickToast === 'function') {
+      window.showQuickToast(error.message || 'Failed to set assistants off duty', true);
+    }
+  } finally {
+    if (btn) {
+      btn.disabled = prevDisabled;
+      btn.innerHTML = prevHtml || '<i class="bi bi-person-dash"></i> Off Time All';
+    }
+  }
 }
 
 // Open Staff on Duty modal
@@ -661,6 +732,39 @@ function toggleStaffAndRefresh(assistantId, rowEl) {
 // ---------- Column 2 ----------
 function buildSeatGrid(activeSessions){
   const grid=document.getElementById("seatGrid");
+  if(!grid) return;
+
+  if (IS_INSTRUCTOR_STATION) {
+    // Clear running timers and maps to avoid stale updates while cards are hidden.
+    for(const [, handle] of activeSeatCards.entries()){
+      clearInterval(handle.timerId);
+    }
+    activeSeatCards = new Map();
+    for(const [, tid] of overflowTimers.entries()) clearInterval(tid);
+    overflowTimers.clear();
+
+    const activeCountEl = document.getElementById("activeCount");
+    if (activeCountEl) {
+      activeCountEl.innerText = `(${activeSessions.length} active)`;
+    }
+
+    grid.innerHTML = `
+      <div class="alert alert-info mb-0 py-3" role="status">
+        <i class="bi bi-info-circle"></i>
+        Active student cards are hidden on Instructor Station to prevent misleading check-in status display.
+      </div>`;
+
+    const overflowContainer = document.getElementById('overflowStudents');
+    if (overflowContainer) {
+      overflowContainer.style.display = 'none';
+    }
+    const overflowCountEl = document.getElementById('overflowCount');
+    if (overflowCountEl) overflowCountEl.textContent = '';
+    const overflowList = document.getElementById('overflowList');
+    if (overflowList) overflowList.innerHTML = '';
+    return;
+  }
+
   document.getElementById("activeCount").innerText=
     `(${activeSessions.length} active)`;
   const seatLimit = SEAT_LIMIT; // always 16 (4×4)
@@ -743,10 +847,10 @@ function buildSeatGrid(activeSessions){
           <div class="seat-card-body">
             <div class="column-left">
               ${photoHtml}
-              <div class="seat-subjects">${subjectsHtml}</div>
             </div>
             <div class="column-right">
               <div class="timer fw-bold text-success">--:--</div>
+              <div class="seat-subjects">${subjectsHtml}</div>
             </div>
           </div>`;
         card.onclick=async()=>{

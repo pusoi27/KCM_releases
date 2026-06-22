@@ -27,7 +27,8 @@
     </div>
   </div>
 
-  <div id="student-preview" style="display: {% if selected_students and selected_students|length > 0 %}block{% else %}none{% endif %};\">\n    {% if selected_students and selected_students|length > 0 %}
+  <div id="student-preview" style="display: {% if selected_students and selected_students|length > 0 %}block{% else %}none{% endif %};">
+    {% if selected_students and selected_students|length > 0 %}
     <div class="card mb-3">
       <div class="card-header bg-light">
         <strong>Cancellation Details Preview</strong>
