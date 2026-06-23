@@ -168,30 +168,7 @@ function sessionLimitSeconds(session){
 
 function fitSeatCardName(nameEl){
   if(!nameEl) return;
-  const header = nameEl.closest('.seat-card-header');
-  if(!header) return;
-
-  const headerStyle = getComputedStyle(header);
-  const padTop = parseFloat(headerStyle.paddingTop || '0') || 0;
-  const padBottom = parseFloat(headerStyle.paddingBottom || '0') || 0;
-  const maxH = Math.max(12, header.clientHeight - padTop - padBottom);
-  const maxW = Math.max(40, nameEl.clientWidth);
-  if(!maxH || !maxW) return;
-
-  const fits = (sizePx) => {
-    nameEl.style.fontSize = `${sizePx}px`;
-    return nameEl.scrollWidth <= maxW && nameEl.scrollHeight <= maxH;
-  };
-
-  const preferred = parseFloat(getComputedStyle(nameEl).fontSize || '16') || 16;
-  let lo = 10;
-  let hi = Math.max(preferred, Math.ceil(maxH * 1.15), 64);
-  while (lo < hi) {
-    const mid = Math.ceil((lo + hi) / 2);
-    if (fits(mid)) lo = mid;
-    else hi = mid - 1;
-  }
-  nameEl.style.fontSize = `${lo}px`;
+  nameEl.style.removeProperty('font-size');
 }
 
 function fitAllSeatCardNames(){
@@ -208,16 +185,9 @@ function applyCardScaling() {
   const cardW = (gw - 3 * gap) / 4;
   const cardH = (gh - 3 * gap) / 4;
   const photoSize = Math.round(Math.min(cardH * 0.43, cardW * 0.34, 140));
-  const nameFs   = Math.round(Math.min(cardW * 0.155, cardH * 0.23, 62));
   const slotH    = Math.round(Math.min(cardH * 0.075, 20));
-  const bodyInnerH = Math.max(80, cardH - Math.round(cardH * 0.24) - 16);
-  const subjectsBlockH = (slotH * 3) + 6 + 4;
-  const timerBudget = Math.max(20, bodyInnerH - subjectsBlockH - 8);
-  const timerFs  = Math.round(Math.min(cardH * 0.15, cardW * 0.12, timerBudget, 48));
   const badgeFs  = Math.round(Math.min(cardH * 0.055, 12));
   grid.style.setProperty('--card-photo-size', `${photoSize}px`);
-  grid.style.setProperty('--card-name-fs',    `${nameFs}px`);
-  grid.style.setProperty('--card-timer-fs',   `${timerFs}px`);
   grid.style.setProperty('--card-badge-fs',   `${badgeFs}px`);
   grid.style.setProperty('--card-slot-h',     `${slotH}px`);
   fitAllSeatCardNames();

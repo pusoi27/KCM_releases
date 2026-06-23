@@ -336,8 +336,8 @@ img.rounded-circle[src*='default.png'] {
   min-height: 0;
   /* Dynamic scaling variables — updated by applyCardScaling() in JS */
   --card-photo-size: 106px;
-  --card-name-fs: 2.2rem;
-  --card-timer-fs: 2.6rem;
+  --card-name-fs: 28px;
+  --card-timer-fs: 28px;
   --card-badge-fs: 0.72rem;
   --card-slot-h: 20px;
 }
@@ -367,25 +367,25 @@ img.rounded-circle[src*='default.png'] {
   border-bottom: 1px solid #eef1f4;
   display: flex;
   align-items: stretch;
-  justify-content: center;
+  justify-content: flex-start;
 }
 
 #seatGrid .seat-card .seat-name {
   display: flex;
   align-items: center;
-  justify-content: center;
+  justify-content: flex-start;
   width: 100%;
   height: 100%;
-  text-align: center;
-  font-weight: 800;
+  text-align: left;
+  font-weight: 700;
   color: #1f2937;
-  font-size: var(--card-name-fs);
+  font-size: 28px;
   line-height: 1;
   letter-spacing: 0.02em;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  font-family: 'Courier New', monospace;
+  font-family: Calibri, 'Segoe UI', Arial, sans-serif;
 }
 
 /* Two-column body: left (photo) + right (timer+subjects) */
@@ -412,7 +412,7 @@ img.rounded-circle[src*='default.png'] {
 #seatGrid .seat-card .column-right {
   display: flex;
   flex-direction: column;
-  align-items: center;
+  align-items: flex-start;
   justify-content: space-between;
   gap: 0;
   flex: 1;
@@ -423,11 +423,13 @@ img.rounded-circle[src*='default.png'] {
 
 /* Timer: scaled by applyCardScaling() */
 #seatGrid .seat-card .timer {
-  font-size: var(--card-timer-fs) !important;
+  font-family: Calibri, 'Segoe UI', Arial, sans-serif !important;
+  font-size: 28px !important;
   line-height: 1;
   letter-spacing: 0.02em;
   font-weight: 700;
-  text-align: center;
+  text-align: left;
+  width: 100%;
   flex: 0 0 auto;
   margin: 2px 0 6px;
 }
