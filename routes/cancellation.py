@@ -40,12 +40,22 @@ def _last_day_of_next_month(notice_date: date) -> date:
 def _effective_last_attendance_date(notice_date: date) -> date:
     """Calculate effective last attendance date.
 
-    Policy: notice date + 30 days, capped at last day of next month.
-    Example: Jan 31 + 30 days would spill into March, so cap to Feb 28/29.
+    Policy:
+    - flag = current day + 30
+    - if flag == 31 and current month has 31 days, use last day of current month
+    - if flag > 31, use last day of next month
+    - otherwise, use notice date + 30 days
     """
-    candidate = notice_date + timedelta(days=30)
-    next_month_last = _last_day_of_next_month(notice_date)
-    return min(candidate, next_month_last)
+    flag = int(notice_date.day) + 30
+    current_month_last_day = calendar.monthrange(notice_date.year, notice_date.month)[1]
+
+    if flag == 31 and current_month_last_day == 31:
+        return date(notice_date.year, notice_date.month, current_month_last_day)
+
+    if flag > 31:
+        return _last_day_of_next_month(notice_date)
+
+    return notice_date + timedelta(days=30)
 
 
 def _calculate_last_payment_date(notice_date: date) -> tuple[date | None, bool]:
@@ -111,7 +121,7 @@ def _send_cancellation_confirmation_email(
         f"- Last day of attendance: {attendance_text}\n"
         f"- Last payment date: {payment_text}\n\n"
         f"Please keep a copy of this email for your records. If you have any questions or concerns, please contact your center at {center_phone} or {center_email}.\n\n"
-        f"Thank you for being a valued part of our family at {center_name}. We wish {student_name} all the best!\n"
+        f"Thank you for being a valued part of our family at {center_name}. We wish {student_name} success and the best grades in school!\n"
     )
 
     html_body = render_branded_email_shell(
@@ -128,7 +138,7 @@ def _send_cancellation_confirmation_email(
             f"<tr><th>Last payment date</th><td>{payment_text}</td></tr>"
             f"</table>"
             f"<p>Please keep a copy of this email for your records. If you have any questions or concerns, please contact your center at <strong>{center_phone}</strong> or <strong>{center_email}</strong>.</p>"
-            f"<p>Thank you for being a valued part of our family at {center_name}. We wish {student_name} all the best!</p>"
+            f"<p>Thank you for being a valued part of our family at {center_name}. We wish {student_name} success and the best grades in school!</p>"
         ),
     )
 
