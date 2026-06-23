@@ -6,6 +6,7 @@ import sqlite3
 from datetime import date, datetime, timedelta
 
 from flask import flash, redirect, render_template, request, session, url_for
+from flask_wtf.csrf import ValidationError, validate_csrf
 
 from modules import instructor_profile_manager, student_manager
 from modules.database import DB_PATH
@@ -109,7 +110,7 @@ def _send_cancellation_confirmation_email(
         f"The cancellation will be processed as follows:\n\n"
         f"- Last day of attendance: {attendance_text}\n"
         f"- Last payment date: {payment_text}\n\n"
-        f"Please keep a copy of this email for your records. If you have any questions or concerns, please feel free to contact the center directly at {center_phone} or {center_email}.\n\n"
+        f"Please keep a copy of this email for your records. If you have any questions or concerns, please contact your center at {center_phone} or {center_email}.\n\n"
         f"Thank you for being a valued part of our family at {center_name}. We wish {student_name} all the best!\n"
     )
 
@@ -126,7 +127,7 @@ def _send_cancellation_confirmation_email(
             f"<tr><th>Last day of attendance</th><td>{attendance_text}</td></tr>"
             f"<tr><th>Last payment date</th><td>{payment_text}</td></tr>"
             f"</table>"
-            f"<p>Please keep a copy of this email for your records. If you have any questions or concerns, please feel free to contact the center directly at <strong>{center_phone}</strong> or <strong>{center_email}</strong>.</p>"
+            f"<p>Please keep a copy of this email for your records. If you have any questions or concerns, please contact your center at <strong>{center_phone}</strong> or <strong>{center_email}</strong>.</p>"
             f"<p>Thank you for being a valued part of our family at {center_name}. We wish {student_name} all the best!</p>"
         ),
     )
@@ -414,6 +415,12 @@ def register_cancellation_routes(app):
     def cancellation_notice_page():
         student_rows = _safe_student_rows()
         options, option_map = _build_selection_options(student_rows)
+        profile = instructor_profile_manager.get_instructor_profile() or {}
+        center_name = resolve_center_name()
+        center_email = str(profile.get("email") or "").strip()
+        center_phone = str(profile.get("phone") or "").strip()
+        center_location = str(profile.get("center_location") or "").strip()
+        center_address = str(profile.get("center_address") or "").strip()
 
         # Get selection from POST data (form submission) or GET args (initial page load)
         selected_option = str(request.form.get("selection") or request.args.get("selection") or "").strip()
@@ -428,19 +435,28 @@ def register_cancellation_routes(app):
         email_sent = False
         email_result = None
 
-        # Send confirmation email only when "Send Notice" button is clicked
+        # Send confirmation email only when "Send Notice" button is clicked.
+        # Preview submissions are intentionally CSRF-exempt because they are read-only.
         action = str(request.form.get("action") or "").strip()
-        if request.method == "POST" and action == "send_notice" and selected_students:
+        send_notice_requested = request.method == "POST" and action == "send_notice"
+        if send_notice_requested:
+            try:
+                validate_csrf(str(request.form.get("csrf_token") or "").strip())
+            except (ValidationError, ValueError):
+                flash(
+                    "Your preview loaded, but the send action needs a fresh security token. Please reload the page and try again.",
+                    "warning",
+                )
+                send_notice_requested = False
+
+        if send_notice_requested and selected_students:
             student_item = selected_students[0]
             guardian_email = str(student_item.get("email") or "").strip()
             guardian_name = str(student_item.get("guardian") or "").strip() or "Parent/Guardian"
             student_name = str(student_item.get("name") or "").strip()
 
             if guardian_email and "@" in guardian_email:
-                profile = instructor_profile_manager.get_instructor_profile() or {}
-                center_email = str(profile.get("email") or "").strip()
-                center_phone = str(profile.get("phone") or "").strip() or "954-931-1541"
-                center_name = resolve_center_name()
+                center_phone_display = center_phone or "954-931-1541"
 
                 email_result = _send_cancellation_confirmation_email(
                     guardian_email=guardian_email,
@@ -450,7 +466,7 @@ def register_cancellation_routes(app):
                     last_attendance_date=effective_date,
                     last_payment_date=last_payment_date,
                     center_name=center_name,
-                    center_phone=center_phone,
+                    center_phone=center_phone_display,
                     center_email=center_email,
                 )
 
@@ -497,4 +513,18 @@ def register_cancellation_routes(app):
             last_payment_date_display=_format_long_date(last_payment_date) if last_payment_date else None,
             requires_payment=requires_payment,
             email_sent=email_sent,
+            center_name=center_name,
+            center_phone=center_phone,
+            center_phone_display=center_phone or "Not set",
+            center_email=center_email,
+            center_location=center_location,
+            center_address=center_address,
         )
+
+    try:
+        from app import csrf
+
+        csrf.exempt(cancellation_notice_page)
+    except Exception:
+        # If CSRF isn't available during a nonstandard import path, keep the route registered.
+        pass
