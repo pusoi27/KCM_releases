@@ -42,6 +42,10 @@
       </div>
       <div class="card-body">
         {% if selected_students and selected_students|length > 0 %}
+        <form id="sendCancellationNoticeForm" method="post" action="{{ url_for('cancellation_notice_page') }}" class="mt-0">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <input type="hidden" name="selection" value="{{ selected_option }}">
+
         <table class="table table-sm align-middle mb-3">
           <tbody>
             <tr>
@@ -60,16 +64,26 @@
             </tr>
             <tr>
               <th>Last Day of Attendance</th>
-              <td><strong>{{ effective_last_attendance_date_display }}</strong></td>
+              <td>
+                <div class="d-flex flex-wrap align-items-center gap-2">
+                  <strong>{{ effective_last_attendance_date_display }}</strong>
+                  <button type="button" id="modifyAttendanceBtn" class="btn btn-outline-secondary btn-sm" onclick="toggleDateOverride('custom_last_attendance_date', 'modifyAttendanceBtn')">Modify Date</button>
+                </div>
+                <input type="date" id="custom_last_attendance_date" name="custom_last_attendance_date" value="{{ effective_last_attendance_date }}" class="form-control form-control-sm mt-2 d-none" style="max-width: 240px;">
+              </td>
             </tr>
             <tr>
               <th>Last Payment Date</th>
               <td>
-                {% if requires_payment %}
-                  <strong>{{ last_payment_date_display }}</strong>
-                {% else %}
-                  <em>No additional payment required</em>
-                {% endif %}
+                <div class="d-flex flex-wrap align-items-center gap-2">
+                  {% if requires_payment %}
+                    <strong>{{ last_payment_date_display }}</strong>
+                  {% else %}
+                    <em>No additional payment required</em>
+                  {% endif %}
+                  <button type="button" id="modifyPaymentBtn" class="btn btn-outline-secondary btn-sm" onclick="toggleDateOverride('custom_last_payment_date', 'modifyPaymentBtn')">Modify Date</button>
+                </div>
+                <input type="date" id="custom_last_payment_date" name="custom_last_payment_date" value="{{ last_payment_date or '' }}" class="form-control form-control-sm mt-2 d-none" style="max-width: 240px;">
               </td>
             </tr>
           </tbody>
@@ -100,10 +114,7 @@
           <div class="small text-muted">This email will use the center contact details shown above.</div>
         </div>
 
-        <form method="post" action="{{ url_for('cancellation_notice_page') }}" class="mt-3">
-          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-          <input type="hidden" name="selection" value="{{ selected_option }}">
-          <div class="d-grid gap-2 d-md-flex justify-content-md-end">
+          <div class="d-grid gap-2 d-md-flex justify-content-md-end mt-3">
             <button type="submit" name="action" value="send_notice" class="btn btn-primary">Send Notice</button>
           </div>
         </form>
@@ -128,4 +139,23 @@
   <div class="alert alert-info">No active students available to process a cancellation notice.</div>
   {% endif %}
 </div>
+
+<script>
+  function toggleDateOverride(inputId, buttonId) {
+    const input = document.getElementById(inputId);
+    const button = document.getElementById(buttonId);
+    if (!input || !button) return;
+
+    const isHidden = input.classList.contains('d-none');
+    if (isHidden) {
+      input.classList.remove('d-none');
+      button.textContent = 'Use Calculated Date';
+      input.focus();
+    } else {
+      input.classList.add('d-none');
+      input.value = '';
+      button.textContent = 'Modify Date';
+    }
+  }
+</script>
 {% endblock %}

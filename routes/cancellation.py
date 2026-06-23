@@ -27,6 +27,16 @@ def _parse_notice_date(raw_value: str) -> date:
         return date.today()
 
 
+def _parse_optional_iso_date(raw_value: str) -> date | None:
+    token = str(raw_value or "").strip()
+    if not token:
+        return None
+    try:
+        return date.fromisoformat(token)
+    except ValueError:
+        return None
+
+
 def _last_day_of_next_month(notice_date: date) -> date:
     year = notice_date.year
     month = notice_date.month + 1
@@ -464,6 +474,21 @@ def register_cancellation_routes(app):
             guardian_email = str(student_item.get("email") or "").strip()
             guardian_name = str(student_item.get("guardian") or "").strip() or "Parent/Guardian"
             student_name = str(student_item.get("name") or "").strip()
+
+            custom_last_attendance_raw = str(request.form.get("custom_last_attendance_date") or "").strip()
+            custom_last_attendance = _parse_optional_iso_date(custom_last_attendance_raw)
+            if custom_last_attendance_raw and custom_last_attendance:
+                effective_date = custom_last_attendance
+            elif custom_last_attendance_raw and not custom_last_attendance:
+                flash("Invalid custom last day of attendance. Using calculated date.", "warning")
+
+            custom_last_payment_raw = str(request.form.get("custom_last_payment_date") or "").strip()
+            custom_last_payment = _parse_optional_iso_date(custom_last_payment_raw)
+            if custom_last_payment_raw and custom_last_payment:
+                last_payment_date = custom_last_payment
+                requires_payment = True
+            elif custom_last_payment_raw and not custom_last_payment:
+                flash("Invalid custom last payment date. Using calculated date.", "warning")
 
             if guardian_email and "@" in guardian_email:
                 center_phone_display = center_phone or "954-931-1541"
