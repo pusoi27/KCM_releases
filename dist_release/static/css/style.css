@@ -336,8 +336,8 @@ img.rounded-circle[src*='default.png'] {
   min-height: 0;
   /* Dynamic scaling variables — updated by applyCardScaling() in JS */
   --card-photo-size: 106px;
-  --card-name-fs: 28px;
-  --card-timer-fs: 28px;
+  --card-name-fs: 34px;
+  --card-timer-fs: 34px;
   --card-badge-fs: 0.72rem;
   --card-slot-h: 20px;
 }
@@ -379,7 +379,7 @@ img.rounded-circle[src*='default.png'] {
   text-align: left;
   font-weight: 700;
   color: #1f2937;
-  font-size: 28px;
+  font-size: 34px;
   line-height: 1;
   letter-spacing: 0.02em;
   white-space: nowrap;
@@ -424,7 +424,7 @@ img.rounded-circle[src*='default.png'] {
 /* Timer: scaled by applyCardScaling() */
 #seatGrid .seat-card .timer {
   font-family: Calibri, 'Segoe UI', Arial, sans-serif !important;
-  font-size: 28px !important;
+  font-size: 34px !important;
   line-height: 1;
   letter-spacing: 0.02em;
   font-weight: 700;
