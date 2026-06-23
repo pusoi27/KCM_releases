@@ -363,24 +363,28 @@ img.rounded-circle[src*='default.png'] {
 /* Header: centered student name, no truncation, unified font size */
 #seatGrid .seat-card .seat-card-header {
   flex-shrink: 0;
-  padding: 8px 8px 6px;
+  padding: 4px 8px 3px;
   border-bottom: 1px solid #eef1f4;
   display: flex;
-  align-items: center;
+  align-items: stretch;
   justify-content: center;
 }
 
 #seatGrid .seat-card .seat-name {
-  display: block;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
   text-align: center;
   font-weight: 800;
   color: #1f2937;
   font-size: var(--card-name-fs);
-  line-height: 1.2;
+  line-height: 1;
   letter-spacing: 0.02em;
-  word-break: break-word;
-  overflow-wrap: break-word;
-  hyphens: auto;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
   font-family: 'Courier New', monospace;
 }
 
@@ -409,8 +413,8 @@ img.rounded-circle[src*='default.png'] {
   display: flex;
   flex-direction: column;
   align-items: center;
-  justify-content: flex-start;
-  gap: 6px;
+  justify-content: space-between;
+  gap: 0;
   flex: 1;
   min-width: 0;
   min-height: 0;
@@ -424,6 +428,8 @@ img.rounded-circle[src*='default.png'] {
   letter-spacing: 0.02em;
   font-weight: 700;
   text-align: center;
+  flex: 0 0 auto;
+  margin: 2px 0 6px;
 }
 
 /* Subjects: stacked vertically under timer */
@@ -434,9 +440,11 @@ img.rounded-circle[src*='default.png'] {
   align-items: center;
   justify-content: flex-end;
   width: 100%;
-  min-height: 0;
+  min-height: calc((var(--card-slot-h) * 3) + 6px);
   overflow: hidden;
-  margin-top: auto;
+  margin-top: 0;
+  padding-top: 4px;
+  flex: 0 0 auto;
 }
 
 #seatGrid .seat-card .seat-subjects .subject-slot {
