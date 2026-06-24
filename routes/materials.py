@@ -7,6 +7,7 @@ from flask import flash, jsonify, redirect, render_template, request, url_for
 
 from modules import auth_manager, db_backup_recovery, server_cache
 from modules.database import DB_PATH, sync_to_gdrive_now
+from modules.database import qr_token_exists
 from modules.materials_manager import (
     add_material,
     clear_active_material_loan,
@@ -249,10 +250,13 @@ def register_material_routes(app):
         copies = 1
         existing_id = payload.get('id')
 
-        if not existing_id and qr_code:
+        if qr_code:
             existing_by_qr = find_material_by_qr_code(qr_code)
             if existing_by_qr:
-                existing_id = existing_by_qr[0]
+                if not existing_id or int(existing_id) != int(existing_by_qr[0]):
+                    return jsonify({'error': 'QR code already exists and cannot be reused.'}), 409
+            elif qr_token_exists(qr_code):
+                return jsonify({'error': 'QR code was previously issued and cannot be reused.'}), 409
 
         if not existing_id and title:
             existing = find_material_by_title(title)

@@ -25,6 +25,12 @@
       <i class="bi bi-person-badge"></i> Staff on Duty
   </button>
 
+    {% if current_user and current_user.is_admin() %}
+    <button id="resetDutyBtn" class="btn btn-outline-danger mb-3 ms-2" type="button">
+      <i class="bi bi-arrow-counterclockwise"></i> Reset all on-duty flags
+    </button>
+    {% endif %}
+
   <!-- Staff on Duty Modal -->
   <div class="modal fade" id="staffDutyModal" tabindex="-1" aria-labelledby="staffDutyModalLabel" aria-hidden="true">
       <div class="modal-dialog">
@@ -121,7 +127,8 @@ document.addEventListener('DOMContentLoaded', () => {
       const data = await res.json();
       if (!data || !data.success) {
         checkbox.checked = previousState;
-        alert('Could not update On Duty status.');
+        const msg = (data && data.error) ? data.error : 'Could not update On Duty status.';
+        alert(msg);
         return;
       }
       checkbox.checked = !!data.on_duty;
@@ -135,6 +142,31 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   checkboxes.forEach(cb => cb.addEventListener('change', toggleOnDuty));
+
+  const resetBtn = document.getElementById('resetDutyBtn');
+  if (resetBtn){
+    resetBtn.addEventListener('click', async () => {
+      const ok = confirm('Reset all open staff duty sessions now?');
+      if (!ok) return;
+      resetBtn.disabled = true;
+      try {
+        const res = await fetch('/api/assistants/reset-duty', { method: 'POST' });
+        const data = await res.json();
+        if (!data || !data.success){
+          alert((data && data.error) ? data.error : 'Reset failed.');
+        } else {
+          alert(`Reset complete. Closed ${data.closed || 0} open duty session(s).`);
+          await syncOnDutyStates();
+        }
+      } catch (err) {
+        console.error('reset-duty failed', err);
+        alert('Reset request failed.');
+      } finally {
+        resetBtn.disabled = false;
+      }
+    });
+  }
+
   syncOnDutyStates();
 });
 </script>

@@ -71,6 +71,7 @@ _STATION_MAILBOX_STOP_EVENT = threading.Event()
 _STATION_MAILBOX_THREAD: threading.Thread | None = None
 _MAILBOX_LAST_STAFF_EXPORT_HASH = ""
 _MAILBOX_LAST_REFERENCE_EXPORT_HASH = ""
+_DB_HEALTH_STALE_AFTER_MINUTES = 25
 
 # Adaptive retry mechanism for OneDrive sync
 _SYNC_FAILURE_COUNT = 0
@@ -585,10 +586,13 @@ def get_db_config_status() -> dict:
                 "Configured cloud backup path does not exist yet. Create the folder first, then save again."
             )
 
+    health = get_database_health_report(mode="quick_check")
+
     return {
         "is_ready": len(issues) == 0,
         "issues": issues,
         "warnings": warnings,
+        "health": health,
         "config": {
             "db_path": db_path,
             "cloud_provider": cloud_provider,
@@ -649,11 +653,11 @@ def _can_use_db_parent(path):
     except Exception as exc:
         return False, str(exc)
 
-    probe_path = os.path.join(parent, ".stdytime_db_write_probe")
     try:
-        with open(probe_path, "w", encoding="utf-8") as probe:
+        fd, probe_path = tempfile.mkstemp(prefix=".stdytime_db_write_probe_", dir=parent)
+        with os.fdopen(fd, "w", encoding="utf-8") as probe:
             probe.write("ok")
-        os.remove(probe_path)
+        _safe_remove_file(probe_path, context="db write probe", silent=True)
         return True, ""
     except Exception as exc:
         return False, str(exc)
@@ -675,6 +679,175 @@ def _safe_remove_file(path: str, *, context: str = "temp file", silent: bool = T
         if not silent:
             print(f"[cleanup] WARNING: could not remove {context} '{target}': {exc}", file=sys.stderr)
     return False
+
+
+def _ensure_qr_registry_table(conn: sqlite3.Connection) -> None:
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS qr_token_registry (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            token TEXT NOT NULL,
+            owner_type TEXT NOT NULL,
+            owner_id INTEGER,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            retired INTEGER DEFAULT 0,
+            retired_at TEXT,
+            UNIQUE(token)
+        )
+        """
+    )
+
+
+def register_qr_token(token: str, owner_type: str, owner_id: int | None = None, *, retired: int = 0) -> bool:
+    """Register a QR token as consumed globally (never reusable)."""
+    value = str(token or '').strip()
+    kind = str(owner_type or '').strip().lower()
+    if not value or not kind:
+        return False
+    try:
+        with sqlite3.connect(DB_PATH) as conn:
+            _ensure_qr_registry_table(conn)
+            conn.execute(
+                """
+                INSERT OR IGNORE INTO qr_token_registry (token, owner_type, owner_id, retired)
+                VALUES (?, ?, ?, ?)
+                """,
+                (value, kind, owner_id, 1 if retired else 0),
+            )
+            conn.commit()
+        return True
+    except Exception:
+        return False
+
+
+def qr_token_exists(token: str) -> bool:
+    value = str(token or '').strip()
+    if not value:
+        return False
+    try:
+        with sqlite3.connect(DB_PATH) as conn:
+            _ensure_qr_registry_table(conn)
+            row = conn.execute(
+                "SELECT 1 FROM qr_token_registry WHERE token = ? LIMIT 1",
+                (value,),
+            ).fetchone()
+            return row is not None
+    except Exception:
+        return False
+
+
+def issue_unique_qr_token(prefix: str, owner_type: str, owner_id: int | None = None) -> str:
+    """Issue globally unique, never-before-used token and reserve it in registry."""
+    safe_prefix = str(prefix or 'QR').strip().upper() or 'QR'
+    kind = str(owner_type or 'unknown').strip().lower() or 'unknown'
+
+    with sqlite3.connect(DB_PATH) as conn:
+        _ensure_qr_registry_table(conn)
+        for _ in range(64):
+            candidate = f"{safe_prefix}-{uuid.uuid4().hex[:12].upper()}"
+            try:
+                conn.execute(
+                    """
+                    INSERT INTO qr_token_registry (token, owner_type, owner_id, retired)
+                    VALUES (?, ?, ?, 0)
+                    """,
+                    (candidate, kind, owner_id),
+                )
+                conn.commit()
+                return candidate
+            except sqlite3.IntegrityError:
+                continue
+
+    raise RuntimeError("Unable to issue a unique QR token after multiple attempts.")
+
+
+def _db_health_backup_dir() -> str:
+    """Return persistent directory for emergency DB health snapshots."""
+    return os.path.join(_CONFIG_DIR, "backups", "db_health")
+
+
+def _sanitize_backup_label(label: str) -> str:
+    token = "".join(ch if ch.isalnum() or ch in ("-", "_") else "_" for ch in str(label or "manual"))
+    return token.strip("_") or "manual"
+
+
+def _is_probable_corruption_error(error_text: str) -> bool:
+    raw = str(error_text or "").strip().lower()
+    return any(
+        marker in raw
+        for marker in (
+            "database disk image is malformed",
+            "file is not a database",
+            "malformed",
+            "not a database",
+        )
+    )
+
+
+def _check_sqlite_db_file(db_path: str, *, label: str, mode: str = "quick_check") -> dict:
+    """Run a lightweight SQLite health check for one DB file."""
+    checked_at = datetime.now(timezone.utc).isoformat()
+    normalized_mode = str(mode or "quick_check").strip().lower()
+    pragma_mode = "integrity_check" if normalized_mode == "integrity_check" else "quick_check"
+
+    target = str(db_path or "").strip()
+    status = {
+        "label": str(label or "database"),
+        "path": target,
+        "configured": bool(target),
+        "exists": False,
+        "healthy": None,
+        "status": "unconfigured",
+        "mode": pragma_mode,
+        "result": "",
+        "error": "",
+        "probable_corruption": False,
+        "checked_at": checked_at,
+        "size_bytes": 0,
+    }
+
+    if not target:
+        return status
+
+    if not os.path.exists(target):
+        status["status"] = "missing"
+        return status
+
+    status["exists"] = True
+    try:
+        status["size_bytes"] = int(os.path.getsize(target) or 0)
+    except Exception:
+        status["size_bytes"] = 0
+
+    try:
+        with sqlite3.connect(target, timeout=15) as conn:
+            conn.execute("PRAGMA busy_timeout=5000")
+            row = conn.execute(f"PRAGMA {pragma_mode}").fetchone()
+            result = str((row[0] if row else "") or "").strip()
+            status["result"] = result
+            if result.lower() != "ok":
+                status["healthy"] = False
+                status["status"] = "corrupt"
+                status["error"] = f"PRAGMA {pragma_mode} returned '{result or 'unknown'}'"
+                status["probable_corruption"] = True
+                return status
+
+            # Additional simple metadata query to surface obvious parse/open issues.
+            conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name LIMIT 1",
+                (),
+            ).fetchone()
+
+        status["healthy"] = True
+        status["status"] = "ok"
+        return status
+    except Exception as exc:
+        message = str(exc)
+        status["healthy"] = False
+        status["status"] = "error"
+        status["error"] = message
+        status["probable_corruption"] = _is_probable_corruption_error(message)
+        return status
 
 
 def _onedrive_monitor_keep_filenames(sync_target: str) -> set[str]:
@@ -2057,10 +2230,10 @@ def _run_station_mailbox_cycle(local_path: str, sync_path: str) -> None:
         print(f"[mailbox-sync] WARNING: failed writing station heartbeat: {exc}", file=sys.stderr)
 
 
-def _dataset_signature_for_station(local_path: str) -> tuple[str, int]:
-    """Return a lightweight dataset signature + pending unsynced row count."""
+def _dataset_signature_for_db(db_path: str) -> tuple[str, int]:
+    """Return a lightweight dataset signature + pending unsynced row count for a DB file."""
     try:
-        with sqlite3.connect(local_path) as conn:
+        with sqlite3.connect(db_path) as conn:
             cur = conn.cursor()
             aggregates: dict[str, dict[str, int]] = {}
 
@@ -2096,6 +2269,25 @@ def _dataset_signature_for_station(local_path: str) -> tuple[str, int]:
         return "", -1
 
 
+def _dataset_signature_for_station(local_path: str) -> tuple[str, int]:
+    """Backward-compatible alias for station-local signature calculations."""
+    return _dataset_signature_for_db(local_path)
+
+
+def _cloud_dataset_signature(sync_path: str) -> tuple[str, int, str]:
+    """Return cloud DB signature, pending count, and optional error string."""
+    target_path = _resolve_gdrive_sync_target(sync_path or "")
+    if not target_path:
+        return "", -1, "Cloud backup DB path is not configured."
+    if not os.path.exists(target_path):
+        return "", -1, f"Cloud backup DB was not found at: {target_path}"
+
+    signature, pending = _dataset_signature_for_db(target_path)
+    if not signature:
+        return "", pending, "Cloud backup DB signature could not be computed."
+    return signature, pending, ""
+
+
 def _station_heartbeat_file(status_dir: str, role: str, machine_id: str) -> str:
     safe_role = str(role or "").strip().lower() or "unknown"
     safe_machine = str(machine_id or "").strip().lower() or "unknown-machine"
@@ -2112,6 +2304,7 @@ def _write_station_sync_heartbeat(local_path: str, sync_path: str, role: str) ->
     machine_id = _station_machine_id()
     activation_limit, _ = _read_station_sync_state()
     signature, pending_unsynced = _dataset_signature_for_station(local_path)
+    local_health = _check_sqlite_db_file(local_path, label="local", mode="quick_check")
     payload = {
         "schema": "stdytime-mailbox-v1",
         "kind": "station_heartbeat",
@@ -2120,6 +2313,8 @@ def _write_station_sync_heartbeat(local_path: str, sync_path: str, role: str) ->
         "activation_limit": int(activation_limit or 0),
         "dataset_signature": signature,
         "pending_unsynced": int(pending_unsynced),
+        "local_db_health": str(local_health.get("status") or "unknown"),
+        "local_db_health_error": str(local_health.get("error") or "").strip(),
         "heartbeat_at": datetime.now(timezone.utc).isoformat(),
     }
     out_file = _station_heartbeat_file(status_dir, role, machine_id)
@@ -2208,6 +2403,7 @@ def get_station_dataset_sync_status(stale_after_minutes: int = 25) -> dict:
         }
 
     local_signature, local_pending = _dataset_signature_for_station(DB_PATH)
+    cloud_signature, cloud_pending, cloud_error = _cloud_dataset_signature(sync_path)
     peer_role = "instructor" if role == "checkin" else "checkin"
     peer_payload = _latest_station_heartbeat(status_dir, peer_role)
 
@@ -2238,12 +2434,26 @@ def get_station_dataset_sync_status(stale_after_minutes: int = 25) -> dict:
             ),
         }
 
+    if cloud_error:
+        return {
+            "visible": True,
+            "tone": "warning",
+            "label": "DB Sync: waiting cloud",
+            "tooltip": cloud_error,
+        }
+
+    local_tag = local_signature[:12] if local_signature else "none"
+    peer_tag = peer_signature[:12] if peer_signature else "none"
+    cloud_tag = cloud_signature[:12] if cloud_signature else "none"
+
     in_sync = (
         bool(local_signature)
         and bool(peer_signature)
-        and local_signature == peer_signature
+        and bool(cloud_signature)
+        and local_signature == peer_signature == cloud_signature
         and int(local_pending) == 0
         and int(peer_pending) == 0
+        and int(cloud_pending) == 0
     )
 
     if in_sync:
@@ -2251,7 +2461,11 @@ def get_station_dataset_sync_status(stale_after_minutes: int = 25) -> dict:
             "visible": True,
             "tone": "success",
             "label": "DB Sync: in sync",
-            "tooltip": f"Both stations are synced and using the same dataset signature. Peer: {peer_machine}.",
+            "tooltip": (
+                f"All databases share sync tag {local_tag} (scanner/instructor/OneDrive) "
+                f"with zero pending rows. Peer: {peer_machine}."
+            ),
+            "sync_tag": local_tag,
         }
 
     return {
@@ -2259,9 +2473,12 @@ def get_station_dataset_sync_status(stale_after_minutes: int = 25) -> dict:
         "tone": "warning",
         "label": "DB Sync: syncing",
         "tooltip": (
-            f"Sync in progress or datasets differ (local pending: {local_pending}, "
-            f"peer pending: {peer_pending}, peer: {peer_machine})."
+            "Sync in progress or identifiers differ "
+            f"(local={local_tag}, peer={peer_tag}, cloud={cloud_tag}; "
+            f"pending local/peer/cloud={local_pending}/{peer_pending}/{cloud_pending}; "
+            f"peer={peer_machine})."
         ),
+        "sync_tag": local_tag,
     }
 
 
@@ -2384,6 +2601,274 @@ def _db_summary(db_path: str) -> str:
         )
     except Exception as exc:
         return f"(summary unavailable: {exc})"
+
+
+def _create_health_snapshot(db_path: str, *, source_label: str, reason: str) -> dict:
+    """Create an emergency snapshot of the given DB using SQLite backup API."""
+    target = str(db_path or "").strip()
+    if not target:
+        return {"ok": False, "path": "", "error": "No database path provided."}
+    if not os.path.exists(target):
+        return {"ok": False, "path": "", "error": f"Database file not found: {target}"}
+
+    backup_dir = _db_health_backup_dir()
+    os.makedirs(backup_dir, exist_ok=True)
+    stamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+    safe_label = _sanitize_backup_label(source_label)
+    backup_path = os.path.join(backup_dir, f"{safe_label}_{stamp}.db")
+
+    try:
+        with sqlite3.connect(target, timeout=15) as src_conn, sqlite3.connect(backup_path) as dst_conn:
+            src_conn.execute("PRAGMA busy_timeout=5000")
+            src_conn.backup(dst_conn)
+
+        print(
+            f"[db-health] Snapshot created for {safe_label} ({reason}): {backup_path}",
+            file=sys.stderr,
+        )
+        return {"ok": True, "path": backup_path, "error": ""}
+    except Exception as exc:
+        _safe_remove_file(backup_path, context="failed db-health snapshot", silent=True)
+        return {"ok": False, "path": "", "error": str(exc)}
+
+
+def _restore_db_from_path(*, source_path: str, target_path: str, reason: str) -> dict:
+    """Restore one SQLite file into another path via online backup API."""
+    src = str(source_path or "").strip()
+    dst = str(target_path or "").strip()
+    if not src or not dst:
+        return {
+            "ok": False,
+            "source": src,
+            "target": dst,
+            "error": "Source and target paths are required.",
+            "reason": reason,
+        }
+    if not os.path.exists(src):
+        return {
+            "ok": False,
+            "source": src,
+            "target": dst,
+            "error": f"Source database not found: {src}",
+            "reason": reason,
+        }
+
+    try:
+        os.makedirs(os.path.dirname(dst) or ".", exist_ok=True)
+        _sqlite_restore_live(src, dst)
+        print(f"[db-health] Restored DB ({reason}): {src} -> {dst}")
+        return {
+            "ok": True,
+            "source": src,
+            "target": dst,
+            "error": "",
+            "reason": reason,
+        }
+    except Exception as exc:
+        return {
+            "ok": False,
+            "source": src,
+            "target": dst,
+            "error": str(exc),
+            "reason": reason,
+        }
+
+
+def get_database_health_report(*, mode: str = "quick_check") -> dict:
+    """Return a health report for local/peer/cloud DB topology.
+
+    - Local: always checks current machine DB_PATH.
+    - Cloud: checks configured OneDrive DB (when configured).
+    - Peer: in 2-station mode, checks latest heartbeat metadata for opposite role.
+    """
+    activation_limit, role = _read_station_sync_state()
+    station_mode = activation_limit >= 2 and role in {"checkin", "instructor"}
+
+    local_result = _check_sqlite_db_file(DB_PATH, label="local", mode=mode)
+
+    cloud_target = _resolve_gdrive_sync_target(GDRIVE_SYNC_PATH or "") if GDRIVE_SYNC_PATH else ""
+    cloud_result = _check_sqlite_db_file(cloud_target, label="cloud", mode=mode)
+
+    peer = {
+        "role": "",
+        "machine_id": "",
+        "healthy": None,
+        "status": "not_applicable",
+        "dataset_signature": "",
+        "pending_unsynced": -1,
+        "age_seconds": None,
+        "heartbeat_at": "",
+        "note": "",
+    }
+
+    if station_mode:
+        peer_role = "instructor" if role == "checkin" else "checkin"
+        status_dir = _station_mailbox_paths(GDRIVE_SYNC_PATH or "").get("station_status", "")
+        peer["role"] = peer_role
+        if status_dir and os.path.isdir(status_dir):
+            payload = _latest_station_heartbeat(status_dir, peer_role)
+            if payload:
+                heartbeat = _parse_utc_iso(payload.get("heartbeat_at") or "")
+                now_utc = datetime.now(timezone.utc)
+                age_seconds = int((now_utc - heartbeat).total_seconds()) if heartbeat else None
+                stale_threshold = max(60, int(_DB_HEALTH_STALE_AFTER_MINUTES) * 60)
+
+                peer["machine_id"] = str(payload.get("machine_id") or "").strip()
+                peer["dataset_signature"] = str(payload.get("dataset_signature") or "").strip()
+                peer["pending_unsynced"] = int(payload.get("pending_unsynced") or 0)
+                peer["age_seconds"] = age_seconds
+                peer["heartbeat_at"] = str(payload.get("heartbeat_at") or "").strip()
+
+                health_token = str(payload.get("local_db_health") or "").strip().lower()
+                if health_token == "ok":
+                    peer["healthy"] = True
+                    peer["status"] = "ok" if (age_seconds is None or age_seconds <= stale_threshold) else "stale"
+                    if peer["status"] == "stale":
+                        peer["note"] = f"Peer heartbeat is stale ({age_seconds}s old)."
+                elif health_token in {"corrupt", "error"}:
+                    peer["healthy"] = False
+                    peer["status"] = health_token
+                    peer["note"] = str(payload.get("local_db_health_error") or "").strip()
+                else:
+                    peer["status"] = "unknown"
+                    peer["note"] = "Peer heartbeat does not include DB health metadata yet."
+            else:
+                peer["status"] = "waiting"
+                peer["note"] = f"No heartbeat file found for peer role '{peer_role}'."
+        else:
+            peer["status"] = "waiting"
+            peer["note"] = "Station status folder is not available yet."
+
+    checked_at = datetime.now(timezone.utc).isoformat()
+    overall_ok = bool(local_result.get("healthy") is True)
+    if cloud_result.get("configured") and cloud_result.get("exists"):
+        overall_ok = overall_ok and bool(cloud_result.get("healthy") is True)
+
+    if station_mode and peer.get("healthy") is False:
+        overall_ok = False
+
+    return {
+        "checked_at": checked_at,
+        "mode": str(mode or "quick_check").strip().lower() or "quick_check",
+        "station_mode": station_mode,
+        "station_role": role,
+        "activation_limit": activation_limit,
+        "overall_ok": bool(overall_ok),
+        "local": local_result,
+        "cloud": cloud_result,
+        "peer": peer,
+    }
+
+
+def run_startup_db_auto_heal() -> dict:
+    """Run startup DB health checks and attempt safe auto-repair when needed."""
+    initial = get_database_health_report(mode="quick_check")
+    local_status = initial.get("local", {})
+
+    attempted_actions: list[dict] = []
+    repaired = False
+
+    local_bad = local_status.get("healthy") is False or local_status.get("status") in {"corrupt", "error"}
+    if local_bad:
+        cloud_info = initial.get("cloud", {})
+        cloud_path = str(cloud_info.get("path") or "").strip()
+        cloud_good = bool(cloud_info.get("healthy") is True)
+
+        if cloud_good and cloud_path:
+            restore_result = _restore_db_from_path(
+                source_path=cloud_path,
+                target_path=DB_PATH,
+                reason="startup_auto_heal_from_cloud",
+            )
+            attempted_actions.append({"kind": "restore_from_cloud", **restore_result})
+            repaired = bool(restore_result.get("ok"))
+        else:
+            emergency_local_backup = _create_health_snapshot(
+                DB_PATH,
+                source_label="local_corrupt",
+                reason="pre_repair_snapshot",
+            )
+            attempted_actions.append({"kind": "snapshot_local", **emergency_local_backup})
+            repaired = False
+
+    final_report = get_database_health_report(mode="quick_check")
+    return {
+        "checked_at": datetime.now(timezone.utc).isoformat(),
+        "initial": initial,
+        "actions": attempted_actions,
+        "repaired": bool(repaired),
+        "ready": bool(final_report.get("local", {}).get("healthy") is True),
+        "final": final_report,
+    }
+
+
+def backup_database_now(*, source: str = "local", label: str = "manual") -> dict:
+    """Create an immediate DB backup snapshot.
+
+    source:
+        - local: snapshot current machine DB into local backup folder.
+        - cloud: snapshot OneDrive DB into local backup folder.
+    """
+    normalized_source = str(source or "local").strip().lower()
+    if normalized_source not in {"local", "cloud"}:
+        normalized_source = "local"
+
+    target_path = DB_PATH if normalized_source == "local" else _resolve_gdrive_sync_target(GDRIVE_SYNC_PATH or "")
+    result = _create_health_snapshot(
+        target_path,
+        source_label=f"{normalized_source}_{label}",
+        reason="manual_backup",
+    )
+    return {
+        "source": normalized_source,
+        "target_path": target_path,
+        **result,
+    }
+
+
+def restore_database_now(*, target: str = "local", source: str = "cloud") -> dict:
+    """Restore DB content between local/cloud endpoints.
+
+    Supported combinations:
+        - source=cloud,target=local  (pull from OneDrive)
+        - source=local,target=cloud  (push local to OneDrive via restore semantics)
+    """
+    src = str(source or "cloud").strip().lower()
+    dst = str(target or "local").strip().lower()
+
+    if src == dst:
+        return {
+            "ok": False,
+            "source": src,
+            "target": dst,
+            "error": "Source and target must be different.",
+            "reason": "manual_restore",
+        }
+
+    path_local = DB_PATH
+    path_cloud = _resolve_gdrive_sync_target(GDRIVE_SYNC_PATH or "")
+
+    if src == "cloud" and dst == "local":
+        return _restore_db_from_path(
+            source_path=path_cloud,
+            target_path=path_local,
+            reason="manual_restore_cloud_to_local",
+        )
+
+    if src == "local" and dst == "cloud":
+        return _restore_db_from_path(
+            source_path=path_local,
+            target_path=path_cloud,
+            reason="manual_restore_local_to_cloud",
+        )
+
+    return {
+        "ok": False,
+        "source": src,
+        "target": dst,
+        "error": "Unsupported restore direction.",
+        "reason": "manual_restore",
+    }
 
 
 def _student_photos_dir() -> str:
@@ -3211,6 +3696,16 @@ def init_db():
     if db_parent:
         os.makedirs(db_parent, exist_ok=True)
 
+    startup_heal = run_startup_db_auto_heal()
+    if startup_heal.get("repaired"):
+        print("[db-health] Startup auto-heal restored local DB from a healthy source.")
+    if not startup_heal.get("ready"):
+        final_local = startup_heal.get("final", {}).get("local", {})
+        raise RuntimeError(
+            "Local database failed health checks and could not be auto-repaired: "
+            f"{final_local.get('error') or final_local.get('result') or final_local.get('status') or 'unknown error'}"
+        )
+
     # Start cloud sync runtime; lease is acquired only around sync events.
     _initialize_cloud_sync_runtime()
 
@@ -3423,6 +3918,7 @@ def init_db():
 
     # Cross-machine compatibility metadata
     _ensure_app_metadata_table(conn)
+    _ensure_qr_registry_table(conn)
 
     conn.commit()
 
@@ -3765,6 +4261,37 @@ def init_db():
         cur.execute("PRAGMA table_info(assistant_schedule)")
         cols = [r[1] for r in cur.fetchall()]
         conn.commit()
+
+    # Backfill all existing QR values into global registry (including inactive students).
+    with sqlite3.connect(DB_PATH) as conn:
+        cur = conn.cursor()
+        _ensure_qr_registry_table(conn)
+
+        student_qr_rows = cur.execute(
+            "SELECT id, qr_code FROM students WHERE qr_code IS NOT NULL",
+            (),
+        ).fetchall()
+        for sid, qr_blob in student_qr_rows:
+            if qr_blob is None:
+                continue
+            if isinstance(qr_blob, memoryview):
+                qr_blob = qr_blob.tobytes()
+            # Student QR data is stored as image blob; track deterministic ID token as retired sentinel.
+            register_qr_token(f"ID:{int(sid)}", "student", int(sid), retired=1)
+
+        material_qr_rows = cur.execute(
+            "SELECT id, qr_code FROM materials WHERE COALESCE(TRIM(qr_code), '') <> ''",
+            (),
+        ).fetchall()
+        for mid, qr_value in material_qr_rows:
+            register_qr_token(str(qr_value).strip(), "material", int(mid), retired=0)
+
+        assistant_rows = cur.execute(
+            "SELECT id FROM staff",
+            (),
+        ).fetchall()
+        for row in assistant_rows:
+            register_qr_token(f"ASST:{int(row[0])}", "assistant", int(row[0]), retired=1)
 
     # Ensure center_closed_dates table and columns exist
     with sqlite3.connect(DB_PATH) as conn:

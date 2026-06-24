@@ -3,7 +3,7 @@
 #*****************************
 
 import sqlite3, csv, os, json
-from modules.database import DB_PATH
+from modules.database import DB_PATH, issue_unique_qr_token
 from modules import qr_generator
 
 MAX_SUBJECTS = 3
@@ -668,7 +668,8 @@ def add_student(name, subject, email, phone, book_loaned=0, el=0, pi=0, v=0, ind
     try:
         existing_qr = get_student_qr_code(student_id)
         if not existing_qr:
-            qr_data = f"ID:{student_id}\nName:{name}"
+            unique_token = issue_unique_qr_token("STU", "student", student_id)
+            qr_data = f"ID:{student_id}\nName:{name}\nUID:{unique_token}"
             qr_blob = qr_generator.generate_qr_bytes(qr_data)
             set_student_qr_code(student_id, qr_blob)
     except Exception as e:
@@ -1038,7 +1039,8 @@ def import_csv(file_path):
                 )
                 student_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
                 try:
-                    qr_data = f"ID:{student_id}\nName:{name}"
+                    unique_token = issue_unique_qr_token("STU", "student", student_id)
+                    qr_data = f"ID:{student_id}\nName:{name}\nUID:{unique_token}"
                     qr_blob = qr_generator.generate_qr_bytes(qr_data)
                     conn.execute("UPDATE students SET qr_code=? WHERE id=?", (sqlite3.Binary(qr_blob), student_id))
                 except Exception as qr_err:

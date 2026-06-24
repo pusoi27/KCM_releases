@@ -4,7 +4,7 @@ import io
 import sqlite3
 from flask import render_template, request, jsonify, send_file, flash, redirect, url_for
 from modules import student_manager, assistant_manager, qr_generator, auth_manager, book_manager, materials_manager
-from modules.database import DB_PATH
+from modules.database import DB_PATH, issue_unique_qr_token
 from routes.auth import require_login, require_feature
 from reportlab.lib.pagesizes import A4, letter, landscape
 from reportlab.lib.units import mm
@@ -31,7 +31,8 @@ def _generate_missing_student_qrs():
             if existing_qr:
                 skipped.append(f"student_{sid}.png")
                 continue
-            qr_data = f"ID:{sid}\nName:{s[1]}"
+            unique_token = issue_unique_qr_token("STU", "student", sid)
+            qr_data = f"ID:{sid}\nName:{s[1]}\nUID:{unique_token}"
             qr_blob = qr_generator.generate_qr_bytes(qr_data)
             student_manager.set_student_qr_code(sid, qr_blob)
             generated.append(f"student_{sid}.png")
@@ -62,7 +63,8 @@ def register_qr_routes(app):
         student = student_manager.get_student(sid)
         if not student:
             return "Student not found", 404
-        qr_data = f"ID:{student[0]}\nName:{student[1]}"
+        unique_token = issue_unique_qr_token("STU", "student", sid)
+        qr_data = f"ID:{student[0]}\nName:{student[1]}\nUID:{unique_token}"
         qr_blob = qr_generator.generate_qr_bytes(qr_data)
         student_manager.set_student_qr_code(sid, qr_blob)
         return send_file(io.BytesIO(qr_blob), mimetype='image/png')
@@ -143,7 +145,8 @@ def register_qr_routes(app):
                 if existing_qr:
                     skipped.append(f"assistant_{aid}.png")
                     continue
-                qr_data = f"ASST:{aid}\nName:{name}"
+                unique_token = issue_unique_qr_token("ASST", "assistant", aid)
+                qr_data = f"ASST:{aid}\nName:{name}\nUID:{unique_token}"
                 qr_blob = qr_generator.generate_qr_bytes(qr_data)
                 assistant_manager.set_assistant_qr_code(aid, qr_blob)
                 generated.append(f"assistant_{aid}.png")
@@ -178,7 +181,8 @@ def register_qr_routes(app):
         if existing_qr:
             return jsonify({'message': 'exists', 'file': f'assistant_{aid}.png'})
         
-        qr_data = f"ASST:{aid}\nName:{assistant[1]}"
+        unique_token = issue_unique_qr_token("ASST", "assistant", aid)
+        qr_data = f"ASST:{aid}\nName:{assistant[1]}\nUID:{unique_token}"
         qr_blob = qr_generator.generate_qr_bytes(qr_data)
         assistant_manager.set_assistant_qr_code(aid, qr_blob)
         return jsonify({'message': 'generated', 'file': f'assistant_{aid}.png'})
@@ -258,7 +262,8 @@ def register_qr_routes(app):
         if not qr_blob:
             # Generate and store if missing
             try:
-                qr_data = f"ID:{sid}\nName:{student[1]}"
+                unique_token = issue_unique_qr_token("STU", "student", sid)
+                qr_data = f"ID:{sid}\nName:{student[1]}\nUID:{unique_token}"
                 qr_blob = qr_generator.generate_qr_bytes(qr_data)
                 student_manager.set_student_qr_code(sid, qr_blob)
             except Exception:
@@ -284,7 +289,8 @@ def register_qr_routes(app):
             if not qr_blob:
                 # Generate and store if missing
                 try:
-                    qr_data = f"ID:{sid}\nName:{s[1]}"
+                    unique_token = issue_unique_qr_token("STU", "student", sid)
+                    qr_data = f"ID:{sid}\nName:{s[1]}\nUID:{unique_token}"
                     qr_blob = qr_generator.generate_qr_bytes(qr_data)
                     student_manager.set_student_qr_code(sid, qr_blob)
                 except Exception:
@@ -342,7 +348,8 @@ def register_qr_routes(app):
             qr_blob = student_manager.get_student_qr_code(sid)
             if not qr_blob:
                 try:
-                    qr_data = f"ID:{sid}\nName:{s[1]}"
+                    unique_token = issue_unique_qr_token("STU", "student", sid)
+                    qr_data = f"ID:{sid}\nName:{s[1]}\nUID:{unique_token}"
                     qr_blob = qr_generator.generate_qr_bytes(qr_data)
                     student_manager.set_student_qr_code(sid, qr_blob)
                 except Exception:
@@ -389,7 +396,8 @@ def register_qr_routes(app):
         if not qr_blob:
             # Generate and store if missing
             try:
-                qr_data = f"ASST:{aid}\nName:{assistant[1]}"
+                unique_token = issue_unique_qr_token("ASST", "assistant", aid)
+                qr_data = f"ASST:{aid}\nName:{assistant[1]}\nUID:{unique_token}"
                 qr_blob = qr_generator.generate_qr_bytes(qr_data)
                 assistant_manager.set_assistant_qr_code(aid, qr_blob)
             except Exception:

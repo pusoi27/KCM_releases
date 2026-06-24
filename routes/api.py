@@ -6,7 +6,7 @@ from modules.email_manager import get_email_manager, render_branded_email_shell,
 from modules import instructor_profile_manager
 from modules.database import DB_PATH, GDRIVE_SYNC_PATH, sync_to_gdrive, is_station_mailbox_mode_enabled
 from modules.utils import duration_seconds, time_now
-from datetime import datetime
+from datetime import datetime, timedelta, time
 import base64
 import binascii
 from email.message import EmailMessage
@@ -21,6 +21,7 @@ from routes.auth import require_login, require_admin, require_feature
 
 
 CHECKOUT_COOLDOWN_SECONDS = 60
+STAFF_DUTY_MAX_DAILY_SECONDS = 6 * 60 * 60
 
 # Global helper cache for performance (UI helpers)
 
@@ -41,6 +42,135 @@ def _trace_staff_duty(event: str, **fields) -> None:
         print(f"[staff-duty-trace] {event} {details}")
     else:
         print(f"[staff-duty-trace] {event}")
+
+
+def _safe_fromisoformat(raw_value: str):
+    token = str(raw_value or '').strip()
+    if not token:
+        return None
+    try:
+        return datetime.fromisoformat(token)
+    except Exception:
+        return None
+
+
+def _assistant_closed_seconds_today(cur: sqlite3.Cursor, assistant_id: int, day_iso: str) -> int:
+    row = cur.execute(
+        """
+        SELECT COALESCE(SUM(COALESCE(duration, 0)), 0)
+        FROM assistant_sessions
+        WHERE assistant_id = ?
+          AND DATE(start_time) = ?
+          AND end_time IS NOT NULL
+        """,
+        (assistant_id, day_iso),
+    ).fetchone()
+    return int((row[0] if row else 0) or 0)
+
+
+def _auto_close_stale_assistant_sessions(conn: sqlite3.Connection) -> int:
+    """Close stale/open assistant sessions to enforce daily 6-hour duty limit."""
+    cur = conn.cursor()
+    rows = cur.execute(
+        """
+        SELECT id, assistant_id, start_time
+        FROM assistant_sessions
+        WHERE end_time IS NULL
+        ORDER BY id ASC
+        """,
+        (),
+    ).fetchall()
+    if not rows:
+        return 0
+
+    closed_count = 0
+    for session_id, assistant_id, start_time in rows:
+        start_dt = _safe_fromisoformat(start_time)
+        if not start_dt:
+            end_dt = datetime.now()
+            cur.execute(
+                "UPDATE assistant_sessions SET end_time=?, duration=?, sync_synced = 0 WHERE id=?",
+                (end_dt.isoformat(), 0, session_id),
+            )
+            closed_count += int(cur.rowcount or 0)
+            continue
+
+        now_dt = datetime.now(start_dt.tzinfo) if start_dt.tzinfo else datetime.now()
+        raw_elapsed = max(0, int((now_dt - start_dt).total_seconds()))
+
+        start_day_iso = start_dt.date().isoformat()
+        today_iso = now_dt.date().isoformat()
+        closed_today = _assistant_closed_seconds_today(cur, int(assistant_id), start_day_iso)
+        remaining_for_start_day = max(0, STAFF_DUTY_MAX_DAILY_SECONDS - closed_today)
+
+        end_of_start_day = datetime.combine(start_dt.date(), time(23, 59, 59), tzinfo=start_dt.tzinfo)
+        day_boundary_elapsed = max(0, int((end_of_start_day - start_dt).total_seconds()))
+        elapsed_cap = min(STAFF_DUTY_MAX_DAILY_SECONDS, remaining_for_start_day, day_boundary_elapsed)
+        allowed_elapsed = min(raw_elapsed, elapsed_cap)
+        should_close = (
+            start_day_iso != today_iso
+            or raw_elapsed >= STAFF_DUTY_MAX_DAILY_SECONDS
+            or remaining_for_start_day <= 0
+            or allowed_elapsed < raw_elapsed
+        )
+
+        if not should_close:
+            continue
+
+        end_dt = start_dt + timedelta(seconds=allowed_elapsed)
+        if end_dt > now_dt:
+            end_dt = now_dt
+        final_duration = max(0, int((end_dt - start_dt).total_seconds()))
+
+        cur.execute(
+            "UPDATE assistant_sessions SET end_time=?, duration=?, sync_synced = 0 WHERE id=?",
+            (end_dt.isoformat(), final_duration, session_id),
+        )
+        closed_count += int(cur.rowcount or 0)
+
+    if closed_count:
+        conn.commit()
+    return closed_count
+
+
+def _force_reset_all_open_assistant_sessions(conn: sqlite3.Connection) -> int:
+    """Force-close all open assistant sessions (used for manual duty reset)."""
+    cur = conn.cursor()
+    rows = cur.execute(
+        """
+        SELECT id, start_time
+        FROM assistant_sessions
+        WHERE end_time IS NULL
+        ORDER BY id ASC
+        """,
+        (),
+    ).fetchall()
+
+    if not rows:
+        return 0
+
+    now_dt = datetime.now()
+    closed_count = 0
+    for session_id, start_time in rows:
+        start_dt = _safe_fromisoformat(start_time)
+        if not start_dt:
+            duration = 0
+            end_dt = now_dt
+        else:
+            end_dt = datetime.now(start_dt.tzinfo) if start_dt.tzinfo else now_dt
+            duration = max(0, int((end_dt - start_dt).total_seconds()))
+            duration = min(duration, STAFF_DUTY_MAX_DAILY_SECONDS)
+            end_dt = start_dt + timedelta(seconds=duration)
+
+        cur.execute(
+            "UPDATE assistant_sessions SET end_time=?, duration=?, sync_synced = 0 WHERE id=?",
+            (end_dt.isoformat(), duration, session_id),
+        )
+        closed_count += int(cur.rowcount or 0)
+
+    if closed_count:
+        conn.commit()
+    return closed_count
 
 
 def _push_cloud_backup_after_staff_change(aid: int, action: str) -> None:
@@ -1159,6 +1289,9 @@ def register_api_routes(app):
             assistants = assistant_manager.get_all_assistants()
             with sqlite3.connect(DB_PATH) as conn:
                 c = conn.cursor()
+                auto_closed = _auto_close_stale_assistant_sessions(conn)
+                if auto_closed:
+                    _trace_staff_duty("list_auto_closed_stale", count=auto_closed)
                 try:
                     open_rows = c.execute(
                         "SELECT assistant_id, start_time FROM assistant_sessions WHERE end_time IS NULL",
@@ -1210,11 +1343,8 @@ def register_api_routes(app):
             return result
 
         try:
-            payload = server_cache.get_or_set(
-                _assistants_duty_cache_key(),
-                _build_duty_payload,
-                policy="assistant_duty",
-            )
+            # Duty state changes frequently (including mailbox imports); return live DB view.
+            payload = _build_duty_payload()
             _trace_staff_duty("list_response_ok", payload_type=type(payload).__name__, payload_count=(len(payload) if isinstance(payload, list) else -1))
             return jsonify(payload)
         except Exception as e:
@@ -1239,6 +1369,7 @@ def register_api_routes(app):
             now = datetime.now()
             with sqlite3.connect(DB_PATH) as conn:
                 cur = conn.cursor()
+                _auto_close_stale_assistant_sessions(conn)
                 open_row = cur.execute(
                     "SELECT id, start_time FROM assistant_sessions WHERE assistant_id=? AND end_time IS NULL ORDER BY id DESC LIMIT 1",
                     (aid,),
@@ -1252,10 +1383,16 @@ def register_api_routes(app):
                         start_dt = datetime.fromisoformat(start_iso) if start_iso else None
                     except Exception:
                         start_dt = None
-                    duration = int((now - start_dt).total_seconds()) if start_dt else 0
+
+                    day_iso = now.date().isoformat()
+                    closed_today = _assistant_closed_seconds_today(cur, int(aid), day_iso)
+                    remaining = max(0, STAFF_DUTY_MAX_DAILY_SECONDS - closed_today)
+                    raw_duration = int((now - start_dt).total_seconds()) if start_dt else 0
+                    duration = min(max(0, raw_duration), remaining)
+                    end_dt = (start_dt + timedelta(seconds=duration)) if start_dt else now
                     cur.execute(
                         "UPDATE assistant_sessions SET end_time=?, duration=?, sync_synced = 0 WHERE id=?",
-                        (now.isoformat(), duration, sess_id),
+                        (end_dt.isoformat(), duration, sess_id),
                     )
                     conn.commit()
                     _push_cloud_backup_after_staff_change(aid, "checkout")
@@ -1263,6 +1400,18 @@ def register_api_routes(app):
                     _trace_staff_duty("select_checkout_ok", aid=aid, sess_id=sess_id, duration=duration)
                     return jsonify({"success": True, "on_duty": False, "duration": duration})
                 else:
+                    day_iso = now.date().isoformat()
+                    used_today = _assistant_closed_seconds_today(cur, int(aid), day_iso)
+                    if used_today >= STAFF_DUTY_MAX_DAILY_SECONDS:
+                        _trace_staff_duty("select_checkin_blocked_daily_limit", aid=aid, used_today=used_today)
+                        return jsonify({
+                            "success": False,
+                            "error": "Daily on-duty limit reached (6 hours).",
+                            "on_duty": False,
+                            "daily_limit_seconds": STAFF_DUTY_MAX_DAILY_SECONDS,
+                            "used_today_seconds": used_today,
+                        }), 409
+
                     # Start new open session
                     cur.execute(
                         "INSERT INTO assistant_sessions (assistant_id, start_time, end_time, duration) VALUES (?, ?, NULL, NULL)",
@@ -1277,3 +1426,19 @@ def register_api_routes(app):
             _trace_staff_duty("select_error", aid=aid, error=str(e))
             print(traceback.format_exc())
             return jsonify({"error": f"Staff toggle failed: {e}"}), 500
+
+    @app.route("/api/assistants/reset-duty", methods=["POST"])
+    @require_admin
+    @require_feature(auth_manager.FEATURE_ASSISTANTS)
+    def api_assistants_reset_duty():
+        """Force-clear all open staff duty rows (reset stale on-duty flags)."""
+        try:
+            with sqlite3.connect(DB_PATH) as conn:
+                closed = _force_reset_all_open_assistant_sessions(conn)
+            _push_cloud_backup_after_staff_change(-1, "reset_all")
+            server_cache.invalidate(_assistants_duty_cache_key())
+            _trace_staff_duty("reset_duty_done", closed=closed)
+            return jsonify({"success": True, "closed": closed}), 200
+        except Exception as exc:
+            _trace_staff_duty("reset_duty_error", error=str(exc))
+            return jsonify({"success": False, "error": str(exc)}), 500

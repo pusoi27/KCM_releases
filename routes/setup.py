@@ -2,6 +2,7 @@ from flask import render_template, request, redirect, url_for, flash, jsonify, s
 
 from modules.database import get_db_config_status, save_db_config_paths
 from modules.database import sync_to_gdrive_now, sync_from_gdrive_now, get_last_sync_error
+from modules.database import get_database_health_report, backup_database_now, restore_database_now
 from modules import instructor_profile_manager
 from routes.auth import require_login
 
@@ -97,6 +98,65 @@ def register_setup_routes(app):
                 flash(f'Backup push failed: {detail}', 'warning')
             else:
                 flash('Backup push skipped or failed. Verify DB Backup path is configured and available.', 'warning')
+        return redirect(url_for('setup_storage'))
+
+    @app.route('/setup/storage/health-check', methods=['POST'])
+    @require_login
+    def setup_storage_health_check():
+        report = get_database_health_report(mode='quick_check')
+        if report.get('overall_ok'):
+            flash('Database health check passed for available database files.', 'success')
+        else:
+            flash('Database health check found issues. Review local/cloud/peer status.', 'warning')
+        return redirect(url_for('setup_storage'))
+
+    @app.route('/api/db/health', methods=['GET'])
+    @require_login
+    def api_db_health():
+        mode = (request.args.get('mode') or 'quick_check').strip().lower()
+        if mode not in {'quick_check', 'integrity_check'}:
+            mode = 'quick_check'
+        report = get_database_health_report(mode=mode)
+        return jsonify(report), 200
+
+    @app.route('/setup/storage/backup-local', methods=['POST'])
+    @require_login
+    def setup_storage_backup_local():
+        result = backup_database_now(source='local', label='setup_manual')
+        if result.get('ok'):
+            flash(f"Local DB snapshot created: {result.get('path')}", 'success')
+        else:
+            flash(f"Local DB snapshot failed: {result.get('error') or 'unknown error'}", 'warning')
+        return redirect(url_for('setup_storage'))
+
+    @app.route('/setup/storage/backup-cloud', methods=['POST'])
+    @require_login
+    def setup_storage_backup_cloud():
+        result = backup_database_now(source='cloud', label='setup_manual')
+        if result.get('ok'):
+            flash(f"Cloud DB snapshot created: {result.get('path')}", 'success')
+        else:
+            flash(f"Cloud DB snapshot failed: {result.get('error') or 'unknown error'}", 'warning')
+        return redirect(url_for('setup_storage'))
+
+    @app.route('/setup/storage/restore-local-from-cloud', methods=['POST'])
+    @require_login
+    def setup_storage_restore_local_from_cloud():
+        result = restore_database_now(target='local', source='cloud')
+        if result.get('ok'):
+            flash('Restore completed: cloud backup copied to local DB.', 'success')
+        else:
+            flash(f"Restore failed: {result.get('error') or 'unknown error'}", 'warning')
+        return redirect(url_for('setup_storage'))
+
+    @app.route('/setup/storage/restore-cloud-from-local', methods=['POST'])
+    @require_login
+    def setup_storage_restore_cloud_from_local():
+        result = restore_database_now(target='cloud', source='local')
+        if result.get('ok'):
+            flash('Restore completed: local DB copied to cloud backup.', 'success')
+        else:
+            flash(f"Restore failed: {result.get('error') or 'unknown error'}", 'warning')
         return redirect(url_for('setup_storage'))
 
     @app.route('/api/cloud/push-backup', methods=['POST'])

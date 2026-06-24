@@ -7,7 +7,7 @@ CRUD operations for staff assistants in Stdytime.
 """
 
 import sqlite3
-from modules.database import DB_PATH
+from modules.database import DB_PATH, issue_unique_qr_token
 
 
 def _normalize_loading(value, default=1):
@@ -124,7 +124,8 @@ def add_assistant(name, role="", email="", phone="", loading=1):
         existing_qr = get_assistant_qr_code(assistant_id)
         if not existing_qr:
             from modules import qr_generator
-            qr_data = f"ASST:{assistant_id}\nName:{name}"
+            unique_token = issue_unique_qr_token("ASST", "assistant", assistant_id)
+            qr_data = f"ASST:{assistant_id}\nName:{name}\nUID:{unique_token}"
             qr_blob = qr_generator.generate_qr_bytes(qr_data)
             set_assistant_qr_code(assistant_id, qr_blob)
     except Exception as e:

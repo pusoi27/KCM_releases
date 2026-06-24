@@ -3,7 +3,7 @@ import sqlite3
 import uuid
 from datetime import datetime
 
-from modules.database import DB_PATH
+from modules.database import DB_PATH, issue_unique_qr_token, qr_token_exists, register_qr_token
 from modules import qr_generator
 
 
@@ -55,8 +55,8 @@ def ensure_material_loans_table():
 
 
 def _build_material_qr_code(material_id: int) -> str:
-    suffix = uuid.uuid4().hex[:6].upper()
-    return f"MAT-{material_id:06d}-{suffix}"
+    # Global non-reusable token allocation.
+    return issue_unique_qr_token("MAT", "material", material_id)
 
 
 def _coerce_blob(raw_value):
@@ -135,6 +135,9 @@ def get_material(material_id: int):
 
 def add_material(title, author, publisher, qr_code=None, available=1, reading_level=None, copies=1):
     copies = _safe_non_negative_int(copies, default=1)
+    qr_code = (qr_code or '').strip() or None
+    if qr_code and qr_token_exists(qr_code):
+        raise ValueError("QR code already issued and cannot be reused.")
     if copies == 0:
         qr_code = None
     available = 1 if (copies > 0 and _has_qr_code(qr_code)) else 0
@@ -157,6 +160,8 @@ def add_material(title, author, publisher, qr_code=None, available=1, reading_le
                 qr_code = _build_material_qr_code(material_id)
                 c.execute("UPDATE materials SET qr_code = ? WHERE id = ?", (qr_code, material_id))
             _ensure_material_qr_image(material_id, title, qr_code, cursor=c)
+            if qr_code:
+                register_qr_token(qr_code, "material", material_id, retired=0)
         _sync_material_availability(c, material_id)
         conn.commit()
         return material_id
@@ -176,8 +181,16 @@ def update_material(material_id, title=None, author=None, publisher=None, qr_cod
         updates.append("publisher = ?")
         params.append(publisher)
     if qr_code is not None:
+        qr_candidate = str(qr_code or '').strip()
+        if qr_candidate:
+            with sqlite3.connect(DB_PATH) as _conn:
+                _cur = _conn.cursor()
+                existing_row = _cur.execute("SELECT qr_code FROM materials WHERE id = ?", (material_id,)).fetchone()
+                existing_qr_value = str((existing_row[0] if existing_row else '') or '').strip()
+            if qr_candidate != existing_qr_value and qr_token_exists(qr_candidate):
+                raise ValueError("QR code already issued and cannot be reused.")
         updates.append("qr_code = ?")
-        params.append(qr_code)
+        params.append(qr_candidate)
     if available is not None:
         updates.append("available = ?")
         params.append(available)
@@ -208,6 +221,8 @@ def update_material(material_id, title=None, author=None, publisher=None, qr_cod
                 qr_code_value = _build_material_qr_code(material_id)
                 c.execute("UPDATE materials SET qr_code = ? WHERE id = ?", (qr_code_value, material_id))
             _ensure_material_qr_image(material_id, title_value or '', qr_code_value, cursor=c)
+            if qr_code_value:
+                register_qr_token(str(qr_code_value).strip(), "material", material_id, retired=0)
             _sync_material_availability(c, material_id)
 
         conn.commit()
