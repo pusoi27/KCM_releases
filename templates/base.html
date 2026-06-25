@@ -39,7 +39,7 @@
   {% if messages %}
     <div class="container mt-2">
       {% for cat,msg in messages %}
-        <div class="alert alert-{{ cat }} alert-dismissible fade show{% if cat != 'danger' %} auto-dismiss{% endif %}" data-alert-category="{{ cat }}" role="alert">
+        <div class="alert alert-{{ cat }} alert-dismissible fade show auto-dismiss" data-alert-category="{{ cat }}" role="alert">
           {{ msg }}
           <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
         </div>
@@ -69,8 +69,7 @@
       if (el.classList.contains('d-none')) return false;
       if (el.closest('#version-compat-banner')) return false;
       if (el.getAttribute('data-no-autodismiss') === 'true') return false;
-      var category = getAlertCategory(el);
-      return category !== 'danger';
+      return true;
     }
 
     function dismissAlert(el) {
@@ -102,6 +101,7 @@
       if (category === 'success') return 3500;
       if (category === 'info' || category === 'primary' || category === 'secondary' || category === 'light') return 4500;
       if (category === 'warning') return 6000;
+      if (category === 'danger') return 7000;
       return 4500;
     }
 

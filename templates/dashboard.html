@@ -81,7 +81,10 @@
       <li class="list-group-item offcanvas-section-header">Books/Devices</li>
       <li class="list-group-item"><a href="{% if subscription_access.can_add_book %}{{ url_for('books_add') }}{% else %}#{% endif %}" class="offcanvas-link{% if not subscription_access.can_add_book %} disabled text-muted menu-item-disabled{% endif %}" {% if not subscription_access.can_add_book %}aria-disabled="true" tabindex="-1"{% endif %}><i class="bi bi-plus-square me-2"></i>Add Book</a></li>
       <li class="list-group-item"><a href="{% if subscription_access.can_manage_books %}{{ url_for('books_list') }}{% else %}#{% endif %}" class="offcanvas-link{% if not subscription_access.can_manage_books %} disabled text-muted menu-item-disabled{% endif %}" {% if not subscription_access.can_manage_books %}aria-disabled="true" tabindex="-1"{% endif %}><i class="bi bi-journal-bookmark me-2"></i>Books View / Edit / Delete</a></li>
-      <li class="list-group-item"><a href="{{ url_for('books_loan_page') }}" class="offcanvas-link"><i class="bi bi-arrow-left-right me-2"></i>Book Loan</a></li>
+      <li class="list-group-item"><a href="{% if subscription_access.can_access_book_loan %}{{ url_for('books_loan_page') }}{% else %}#{% endif %}" class="offcanvas-link{% if not subscription_access.can_access_book_loan %} disabled text-muted menu-item-disabled{% endif %}" {% if not subscription_access.can_access_book_loan %}aria-disabled="true" tabindex="-1"{% endif %}><i class="bi bi-arrow-left-right me-2"></i>Book Loan</a></li>
+      <li class="list-group-item"><a href="{% if subscription_access.can_add_device %}{{ url_for('materials_add') }}{% else %}#{% endif %}" class="offcanvas-link{% if not subscription_access.can_add_device %} disabled text-muted menu-item-disabled{% endif %}" {% if not subscription_access.can_add_device %}aria-disabled="true" tabindex="-1"{% endif %}><i class="bi bi-plus-square-dotted me-2"></i>Add Device</a></li>
+      <li class="list-group-item"><a href="{% if subscription_access.can_manage_devices %}{{ url_for('materials_list') }}{% else %}#{% endif %}" class="offcanvas-link{% if not subscription_access.can_manage_devices %} disabled text-muted menu-item-disabled{% endif %}" {% if not subscription_access.can_manage_devices %}aria-disabled="true" tabindex="-1"{% endif %}><i class="bi bi-tablet-landscape me-2"></i>Devices View / Edit / Delete</a></li>
+      <li class="list-group-item"><a href="{% if subscription_access.can_access_device_loan %}{{ url_for('materials_loan_page') }}{% else %}#{% endif %}" class="offcanvas-link{% if not subscription_access.can_access_device_loan %} disabled text-muted menu-item-disabled{% endif %}" {% if not subscription_access.can_access_device_loan %}aria-disabled="true" tabindex="-1"{% endif %}><i class="bi bi-arrow-repeat me-2"></i>Device Loan</a></li>
       {% endif %}
       {% if subscription_access.can_access_instructor_reports %}
       <li class="list-group-item offcanvas-section-header">Reports</li>
@@ -117,7 +120,7 @@
 
   <!-- Left: icon sidebar menu bar -->
   <nav class="dash-sidebar">
-    {% if subscription_access.can_access_students and not subscription_access.is_checkin_station %}
+    {% if subscription_access.can_access_students %}
     <a href="{{ url_for('students_list') }}" class="dash-sidebar-item" title="Students">
       <i class="bi bi-people-fill"></i>
     </a>
