@@ -676,7 +676,15 @@ def before_request_enforce_first_run_setup():
     storage_ready = bool(get_db_config_status().get('is_ready'))
     profile_ready = _has_configured_instructor_hours()
 
-    if storage_ready and profile_ready:
+    # In a two-station setup, a scanner station does not need the instructor profile
+    # configured locally — that is assumed to be done on the instructor station.
+    _ls = g.get('license_status') or {}
+    _is_scanner_two_station = (
+        int(_ls.get('activation_limit') or 0) >= 2
+        and str(_ls.get('station_role') or '').strip().lower() == 'checkin'
+    )
+
+    if storage_ready and (profile_ready or _is_scanner_two_station):
         return None
 
     if request.path.startswith('/api/'):

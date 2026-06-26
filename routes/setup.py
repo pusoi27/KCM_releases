@@ -38,10 +38,18 @@ def register_setup_routes(app):
     @app.route('/setup', methods=['GET'])
     @require_login
     def setup_requirements():
+        from flask import g
         storage = get_db_config_status()
         profile_hours = _instructor_hours_status()
 
-        ready = storage.get('is_ready') and profile_hours.get('is_ready')
+        _ls = g.get('license_status') or {}
+        is_scanner_station = (
+            int(_ls.get('activation_limit') or 0) >= 2
+            and str(_ls.get('station_role') or '').strip().lower() == 'checkin'
+        )
+
+        # Scanner stations in a two-machine setup skip the instructor profile requirement.
+        ready = storage.get('is_ready') and (profile_hours.get('is_ready') or is_scanner_station)
         show_complete_banner = bool(session.get('setup_complete_once', False))
         auto_redirect_enabled = request.args.get('auto', '1').strip() != '0'
 
@@ -58,6 +66,7 @@ def register_setup_routes(app):
             show_complete_banner=show_complete_banner,
             auto_redirect_enabled=auto_redirect_enabled,
             auto_redirect_seconds=3,
+            is_scanner_station=is_scanner_station,
         )
 
     @app.route('/setup/storage', methods=['GET', 'POST'])

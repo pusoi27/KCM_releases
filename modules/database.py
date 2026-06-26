@@ -3657,6 +3657,26 @@ def _initialize_cloud_sync_runtime() -> None:
 
     startup_pull_from_gdrive = bool(_cfg.get("startup_pull_from_gdrive", False))
     if is_station_mailbox_mode_enabled():
+        # Scanner stations that have an empty local database (first setup) should seed
+        # themselves from the OneDrive backup before starting the mailbox sync.
+        # This avoids a long wait for the first Admin_Outbox export cycle to deliver data.
+        _, _role = _read_station_sync_state()
+        if _role == "checkin":
+            try:
+                with sqlite3.connect(DB_PATH) as _seed_conn:
+                    _student_count = _seed_conn.execute("SELECT COUNT(*) FROM students").fetchone()[0]
+            except Exception:
+                _student_count = 0
+            if _student_count == 0:
+                print("[mailbox-sync] Scanner station local DB is empty; pulling OneDrive backup to seed data.")
+                pulled = sync_from_gdrive(DB_PATH, GDRIVE_SYNC_PATH, force=True)
+                if pulled:
+                    print("[mailbox-sync] Scanner station successfully seeded from OneDrive backup.")
+                else:
+                    print(
+                        f"[mailbox-sync] Scanner station seed pull skipped: "
+                        f"{_LAST_SYNC_ERROR or 'OneDrive backup not available yet.'}"
+                    )
         _start_station_mailbox_sync(DB_PATH, GDRIVE_SYNC_PATH, _MAILBOX_SYNC_INTERVAL_MINUTES)
         _CLOUD_SYNC_RUNTIME_READY = True
         print("[mailbox-sync] Multi-station Inbox/Outbox mode enabled.")
