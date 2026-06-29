@@ -196,6 +196,23 @@ def _instance_name() -> str:
     return (platform.node() or "stdytime-machine")[:64]
 
 
+def _current_machine_fingerprint() -> str:
+    """Return deterministic local machine fingerprint used by local licensing."""
+    from modules import license_manager as _local_license
+    return _local_license.get_machine_fingerprint()
+
+
+def _is_same_machine(row: dict[str, Any] | None) -> bool:
+    """Return True when stored fingerprint matches the current machine."""
+    if not row:
+        return False
+    stored = str(row.get("machine_fingerprint") or "").strip()
+    if not stored:
+        # Backward compatibility for rows created before fingerprint persistence.
+        return True
+    return stored == _current_machine_fingerprint()
+
+
 # ---------------------------------------------------------------------------
 # Persistence helpers  (reuse the existing app_license row, id=1)
 # ---------------------------------------------------------------------------
@@ -217,17 +234,19 @@ def _save_ls_fields(
     with sqlite3.connect(DB_PATH) as conn:
         # Ensure columns exist (added by database.py migration, but guard here too)
         _ensure_ls_columns(conn)
+        machine_fingerprint = _current_machine_fingerprint()
         conn.execute(
             """
             INSERT INTO app_license (
                 id, license_key, licensee, email,
-                expires_at, ls_instance_id, ls_status, ls_last_verified_at,
+                expires_at, machine_fingerprint, ls_instance_id, ls_status, ls_last_verified_at,
                 activation_limit, activation_usage, updated_at
-            ) VALUES (1, '', ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (1, '', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(id) DO UPDATE SET
                 licensee        = excluded.licensee,
                 email           = excluded.email,
                 expires_at      = excluded.expires_at,
+                machine_fingerprint = excluded.machine_fingerprint,
                 ls_instance_id  = excluded.ls_instance_id,
                 ls_status       = excluded.ls_status,
                 ls_last_verified_at = CASE
@@ -238,7 +257,18 @@ def _save_ls_fields(
                 activation_usage = excluded.activation_usage,
                 updated_at      = excluded.updated_at
             """,
-            (licensee, email, ls_expires_at, ls_instance_id, ls_status, verified_at, activation_limit, activation_usage, now),
+            (
+                licensee,
+                email,
+                ls_expires_at,
+                machine_fingerprint,
+                ls_instance_id,
+                ls_status,
+                verified_at,
+                activation_limit,
+                activation_usage,
+                now,
+            ),
         )
         conn.commit()
 
@@ -246,6 +276,7 @@ def _save_ls_fields(
 def _ensure_ls_columns(conn: sqlite3.Connection) -> None:
     existing = {r[1] for r in conn.execute("PRAGMA table_info(app_license)").fetchall()}
     for col, definition in [
+        ("machine_fingerprint", "TEXT DEFAULT ''"),
         ("ls_instance_id", "TEXT DEFAULT ''"),
         ("ls_status",      "TEXT DEFAULT ''"),
         ("ls_last_verified_at", "TEXT DEFAULT ''"),
@@ -321,6 +352,13 @@ def _ls_headers() -> dict[str, str]:
     }
 
 
+def _is_activation_limit_error(message: str) -> bool:
+    text = (message or "").strip().lower()
+    if not text:
+        return False
+    return "activation limit" in text or "reached the activation limit" in text
+
+
 def activate_ls_license(license_key: str) -> tuple[bool, str, dict[str, Any]]:
     """
     Call the LS Licenses API to activate *license_key* on this machine.
@@ -329,6 +367,20 @@ def activate_ls_license(license_key: str) -> tuple[bool, str, dict[str, Any]]:
     license_key = license_key.strip()
     if not license_key:
         return False, "License key cannot be empty.", {}
+
+    # Fast-path for reinstall/re-entry on the same machine:
+    # if this key is already bound to a local LS instance on this fingerprint,
+    # reuse it and proceed instead of attempting a fresh activation.
+    existing = _get_ls_row() or {}
+    existing_key = str(existing.get("license_key") or "").strip()
+    existing_instance = str(existing.get("ls_instance_id") or "").strip()
+    if _is_same_machine(existing) and existing_key == license_key and existing_instance:
+        valid, verify_msg = verify_ls_license(force=True)
+        if valid:
+            return True, "License is already active on this machine.", get_ls_license_context()
+        if str(existing.get("ls_status") or "").strip().lower() == "active":
+            return True, "License is active on this machine.", get_ls_license_context()
+        logger.warning("[ls_license] same-machine precheck did not validate: %s", verify_msg)
 
     if not _api_key():
         return False, (
@@ -357,6 +409,33 @@ def activate_ls_license(license_key: str) -> tuple[bool, str, dict[str, Any]]:
     if resp.status_code not in (200, 201):
         error_msg = _extract_ls_error(body) or f"Activation failed (HTTP {resp.status_code})."
         logger.warning("[ls_license] activate failed: %s", body)
+
+        # Recovery path: if LS says activation limit reached but this machine
+        # already has a stored instance for the same key, verify and reuse it.
+        if _is_activation_limit_error(error_msg):
+            existing = _get_ls_row() or {}
+            existing_key = str(existing.get("license_key") or "").strip()
+            existing_instance = str(existing.get("ls_instance_id") or "").strip()
+            same_machine = _is_same_machine(existing)
+            if same_machine and existing_key == license_key and existing_instance:
+                valid, verify_msg = verify_ls_license(force=True)
+                if valid:
+                    context = get_ls_license_context()
+                    return True, "License is already active on this machine.", context
+                # If LS is temporarily unreachable, still allow same-machine reuse
+                # when local status is active.
+                if str(existing.get("ls_status") or "").strip().lower() == "active":
+                    context = get_ls_license_context()
+                    return True, "License is active on this machine.", context
+                logger.warning("[ls_license] local instance reuse failed validation: %s", verify_msg)
+
+            return (
+                False,
+                "This license is active, but all allowed machine activations are currently in use. "
+                "Remove/deactivate it on an old machine, then activate here again.",
+                {},
+            )
+
         return False, error_msg, {}
 
     # Parse successful response
@@ -593,6 +672,14 @@ def get_ls_license_context() -> dict[str, Any]:
 
     ls_status = row.get("ls_status", "")
     is_valid = ls_status == "active"
+    stored_fingerprint = str(row.get("machine_fingerprint") or "").strip()
+    current_fingerprint = _current_machine_fingerprint()
+    fingerprint_matches = (not stored_fingerprint) or (stored_fingerprint == current_fingerprint)
+
+    if is_valid and not fingerprint_matches:
+        is_valid = False
+        ls_status = "machine_mismatch"
+
     expires_at = str(row.get("expires_at") or "")
     days_remaining: int | None = None
     if expires_at:
@@ -612,8 +699,12 @@ def get_ls_license_context() -> dict[str, Any]:
         "is_valid": is_valid,
         "status": ls_status,
         "message": (
-            f"License active — expires {expires_at[:10]}." if is_valid
+            "This license is active on another machine. Activate this device separately."
+            if ls_status == "machine_mismatch"
+            else (
+                f"License active — expires {expires_at[:10]}." if is_valid
             else f"License {ls_status}. Please renew or re-activate."
+            )
         ),
         "licensee": row.get("licensee", ""),
         "email": row.get("email", ""),
@@ -629,6 +720,9 @@ def get_ls_license_context() -> dict[str, Any]:
         "activation_usage": row.get("activation_usage", 0),
         "station_role": get_station_role(),
         "requires_station_role": requires_station_role_selection(),
+        "machine_fingerprint": current_fingerprint,
+        "license_machine_fingerprint": stored_fingerprint,
+        "fingerprint_matches": bool(fingerprint_matches),
         "default_home_endpoint": "dashboard",
     }
 
