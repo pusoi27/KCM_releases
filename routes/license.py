@@ -11,6 +11,12 @@ from modules.rate_limiter import limiter
 logger = logging.getLogger(__name__)
 
 
+def _looks_like_local_hmac_key(license_key: str) -> bool:
+    """Return True for legacy local keys encoded as payload.signature."""
+    key = (license_key or '').strip()
+    return bool(key and '.' in key)
+
+
 def register_license_routes(app):
     """Register license activation and status routes."""
 
@@ -31,7 +37,7 @@ def register_license_routes(app):
 
         # Try LemonSqueezy activation first
         success, message, context = ls_license.activate_ls_license(license_key)
-        if not success:
+        if not success and _looks_like_local_hmac_key(license_key):
             # Fall back to local HMAC key for offline / dev use
             success, message, context = license_manager.activate_license(license_key)
 
