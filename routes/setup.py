@@ -3,6 +3,7 @@ from flask import render_template, request, redirect, url_for, flash, jsonify, s
 from modules.database import get_db_config_status, save_db_config_paths
 from modules.database import sync_to_gdrive_now, sync_from_gdrive_now, get_last_sync_error
 from modules.database import get_database_health_report, backup_database_now, restore_database_now
+from modules.database import run_manual_wal_checkpoint
 from modules import instructor_profile_manager
 from routes.auth import require_login
 
@@ -195,6 +196,31 @@ def register_setup_routes(app):
                 flash(f'Backup read failed: {detail}', 'warning')
             else:
                 flash('Backup read skipped or failed. Verify cloud backup file exists and is reachable.', 'warning')
+        return redirect(url_for('setup_storage'))
+
+    @app.route('/setup/storage/force-sync-to-cloud', methods=['POST'])
+    @require_login
+    def setup_storage_force_sync_to_cloud():
+        """Force WAL checkpoint (merge to main DB) then sync to OneDrive.
+        
+        This ensures the main .db file on OneDrive gets updated with current timestamp.
+        """
+        # Step 1: Checkpoint WAL with TRUNCATE to merge pending writes into main DB and shrink WAL file
+        checkpoint_ok = run_manual_wal_checkpoint("TRUNCATE")
+        if not checkpoint_ok:
+            flash('Force sync failed: could not checkpoint WAL.', 'warning')
+            return redirect(url_for('setup_storage'))
+        
+        # Step 2: Push the updated main DB to OneDrive
+        pushed = sync_to_gdrive_now()
+        if pushed:
+            flash('Force sync completed: WAL merged and main DB synced to OneDrive with current timestamp.', 'success')
+        else:
+            detail = get_last_sync_error()
+            if detail:
+                flash(f'Force sync failed: {detail}', 'warning')
+            else:
+                flash('Force sync failed. Verify cloud backup path is configured and accessible.', 'warning')
         return redirect(url_for('setup_storage'))
 
     @app.route('/api/setup/status', methods=['GET'])

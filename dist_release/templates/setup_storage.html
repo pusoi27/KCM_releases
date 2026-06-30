@@ -78,6 +78,12 @@
                                         Restore cloud from local
                                     </button>
                                 </form>
+                                <form method="POST" action="{{ url_for('setup_storage_force_sync_to_cloud') }}" class="m-0">
+                                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                    <button class="btn btn-outline-info btn-sm" type="submit" title="Checkpoint WAL and update main DB timestamp on OneDrive">
+                                        Force sync to OneDrive
+                                    </button>
+                                </form>
                             </div>
                         </div>
                     </div>
