@@ -322,3 +322,9 @@ This file is automatically appended by `scripts/version_bump.py` on every versio
 ## v01.02.039 - 2026-06-29
 - TODO: summarize changes for this release.
 
+## v01.02.040 - 2026-06-30
+- TODO: summarize changes for this release.
+
+## v01.02.041 - 2026-06-30
+- TODO: summarize changes for this release.
+

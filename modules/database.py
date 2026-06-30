@@ -642,6 +642,12 @@ def save_db_config_paths(
 
     _write_db_config(cfg)
 
+    # Refresh the module-level cloud path so restore/backup calls in this
+    # process see the newly-saved value without requiring a restart.
+    global GDRIVE_SYNC_PATH
+    _, _refreshed_cloud_path = _resolve_cloud_provider_and_path(cfg)
+    GDRIVE_SYNC_PATH = _refreshed_cloud_path or None
+
     return get_db_config_status()
 
 
@@ -2813,7 +2819,8 @@ def backup_database_now(*, source: str = "local", label: str = "manual") -> dict
     if normalized_source not in {"local", "cloud"}:
         normalized_source = "local"
 
-    target_path = DB_PATH if normalized_source == "local" else _resolve_gdrive_sync_target(GDRIVE_SYNC_PATH or "")
+    live_cloud_path = _resolve_cloud_provider_and_path(_read_db_config())[1]
+    target_path = DB_PATH if normalized_source == "local" else _resolve_gdrive_sync_target(live_cloud_path or "")
     result = _create_health_snapshot(
         target_path,
         source_label=f"{normalized_source}_{label}",
@@ -2846,7 +2853,17 @@ def restore_database_now(*, target: str = "local", source: str = "cloud") -> dic
         }
 
     path_local = DB_PATH
-    path_cloud = _resolve_gdrive_sync_target(GDRIVE_SYNC_PATH or "")
+    live_cloud_path = _resolve_cloud_provider_and_path(_read_db_config())[1]
+    path_cloud = _resolve_gdrive_sync_target(live_cloud_path or "")
+
+    if not path_cloud and src in ("cloud", "local") and dst in ("cloud", "local") and src != dst:
+        return {
+            "ok": False,
+            "source": src,
+            "target": dst,
+            "error": "Cloud path is not configured. Please set the cloud backup path in Storage Settings.",
+            "reason": "manual_restore",
+        }
 
     if src == "cloud" and dst == "local":
         return _restore_db_from_path(
