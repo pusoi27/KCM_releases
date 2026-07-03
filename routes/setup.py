@@ -1,6 +1,9 @@
 from flask import render_template, request, redirect, url_for, flash, jsonify, session
 import secrets
 import requests
+import socket
+import threading
+import time
 
 from modules.database import get_db_config_status, save_db_config_paths, get_station_runtime_config
 from modules.database import sync_to_gdrive_now, sync_from_gdrive_now, get_last_sync_error
@@ -8,6 +11,14 @@ from modules.database import get_database_health_report, backup_database_now, re
 from modules.database import run_manual_wal_checkpoint
 from modules import instructor_profile_manager
 from routes.auth import require_login
+
+
+_PAIR_CODE_TTL_SECONDS = 180
+_PAIR_CODE_LOCK = threading.Lock()
+_PAIR_CODE_STATE = {
+    'code': '',
+    'expires_at': 0.0,
+}
 
 
 def _normalize_base_url(raw_url: str) -> str:
@@ -21,6 +32,75 @@ def _normalize_base_url(raw_url: str) -> str:
     # Common typo recovery: 192.168.1.5.:5000 -> 192.168.1.5:5000
     value = value.replace('.:', ':')
     return value
+
+
+def _detect_lan_ip() -> str:
+    """Best-effort local LAN IP detection (no external traffic sent)."""
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+            s.connect(("8.8.8.8", 80))
+            ip = s.getsockname()[0]
+            return str(ip or '').strip()
+    except Exception:
+        return ''
+
+
+def _resolve_advertised_instructor_base_url(runtime: dict, host_url: str) -> str:
+    """Resolve the URL scanner should use to reach Instructor API.
+
+    Priority:
+    1) explicit configured instructor_api_base_url (editable by user)
+    2) detected LAN IP + request port
+    3) request host URL fallback
+    """
+    configured = _normalize_base_url((runtime or {}).get('instructor_api_base_url') or '')
+    if configured:
+        return configured
+
+    lan_ip = _detect_lan_ip()
+    if lan_ip:
+        base = str(host_url or '').strip().rstrip('/')
+        # host_url is usually like http://127.0.0.1:5000/
+        try:
+            host_port = base.split('://', 1)[1]
+            if ':' in host_port:
+                port = host_port.split(':', 1)[1]
+                return f"http://{lan_ip}:{port}"
+        except Exception:
+            pass
+        return f"http://{lan_ip}:5000"
+
+    return str(host_url or '').rstrip('/')
+
+
+def _issue_pair_code() -> tuple[str, int]:
+    code = f"{secrets.randbelow(10000):04d}"
+    now = time.time()
+    expires = now + _PAIR_CODE_TTL_SECONDS
+    with _PAIR_CODE_LOCK:
+        _PAIR_CODE_STATE['code'] = code
+        _PAIR_CODE_STATE['expires_at'] = expires
+    return code, int(_PAIR_CODE_TTL_SECONDS)
+
+
+def _pair_code_is_valid(code: str) -> bool:
+    token = str(code or '').strip()
+    now = time.time()
+    with _PAIR_CODE_LOCK:
+        expected = str(_PAIR_CODE_STATE.get('code') or '').strip()
+        expires_at = float(_PAIR_CODE_STATE.get('expires_at') or 0.0)
+    return bool(token and expected and token == expected and now <= expires_at)
+
+
+def _current_pair_code_display() -> tuple[str, int]:
+    """Return currently valid pair code and remaining seconds."""
+    now = time.time()
+    with _PAIR_CODE_LOCK:
+        code = str(_PAIR_CODE_STATE.get('code') or '').strip()
+        expires_at = float(_PAIR_CODE_STATE.get('expires_at') or 0.0)
+    if not code or expires_at <= now:
+        return '', 0
+    return code, int(max(0, expires_at - now))
 
 
 def _save_runtime_from_cfg(cfg: dict, *, station_mode: str, instructor_api_base_url: str = '', station_pairing_token: str = '') -> dict:
@@ -160,6 +240,13 @@ def register_setup_routes(app):
                 station_pairing_token = secrets.token_urlsafe(24)
                 flash('Instructor token auto-generated for scanner pairing.', 'success')
 
+            # For instructor mode, auto-fill a practical LAN URL when empty.
+            if station_mode == 'instructor_server' and not instructor_api_base_url:
+                instructor_api_base_url = _resolve_advertised_instructor_base_url(
+                    {'instructor_api_base_url': ''},
+                    request.host_url,
+                )
+
             status = save_db_config_paths(
                 db_path=None,
                 gdrive_sync_path=gdrive_sync_path,
@@ -179,6 +266,7 @@ def register_setup_routes(app):
 
             flash('Please fix the path issues below before continuing.', 'danger')
             runtime = get_station_runtime_config()
+            display_pair_code, display_pair_code_ttl = _current_pair_code_display()
             pairing_endpoint = '/api/station/pairing/ping'
             suggested_pairing_url = (
                 f"{request.host_url.rstrip('/')}{pairing_endpoint}"
@@ -190,10 +278,16 @@ def register_setup_routes(app):
                 status=status,
                 runtime=runtime,
                 suggested_pairing_url=suggested_pairing_url,
+                display_pair_code=display_pair_code,
+                display_pair_code_ttl=display_pair_code_ttl,
             )
 
         status = get_db_config_status()
         runtime = get_station_runtime_config()
+        if str(runtime.get('station_mode') or '').strip().lower() == 'instructor_server' and not str(runtime.get('instructor_api_base_url') or '').strip():
+            runtime['instructor_api_base_url'] = _resolve_advertised_instructor_base_url(runtime, request.host_url)
+
+        display_pair_code, display_pair_code_ttl = _current_pair_code_display()
         pairing_endpoint = '/api/station/pairing/ping'
         suggested_pairing_url = (
             f"{request.host_url.rstrip('/')}{pairing_endpoint}"
@@ -205,7 +299,93 @@ def register_setup_routes(app):
             status=status,
             runtime=runtime,
             suggested_pairing_url=suggested_pairing_url,
+            display_pair_code=display_pair_code,
+            display_pair_code_ttl=display_pair_code_ttl,
         )
+
+    @app.route('/setup/storage/show-pair-code', methods=['POST'])
+    @require_login
+    def setup_storage_show_pair_code():
+        runtime = get_station_runtime_config()
+        if str(runtime.get('station_mode') or '').strip().lower() != 'instructor_server':
+            flash('4-digit pairing code can only be generated on Instructor Station mode.', 'warning')
+            return redirect(url_for('setup_storage'))
+
+        # Ensure token exists for eventual scanner API auth.
+        status = get_db_config_status()
+        cfg = (status or {}).get('config', {}) if isinstance(status, dict) else {}
+        token = str(runtime.get('station_pairing_token') or '').strip()
+        if not token:
+            token = secrets.token_urlsafe(24)
+
+        advertised = _resolve_advertised_instructor_base_url(runtime, request.host_url)
+        _save_runtime_from_cfg(
+            cfg,
+            station_mode='instructor_server',
+            instructor_api_base_url=advertised,
+            station_pairing_token=token,
+        )
+
+        code, ttl = _issue_pair_code()
+        session['display_pair_code'] = code
+        session['display_pair_code_ttl'] = ttl
+        flash(f'Pairing code ready: {code} (expires in {ttl} seconds).', 'success')
+        return redirect(url_for('setup_storage'))
+
+    @app.route('/setup/storage/pair-by-code', methods=['POST'])
+    @require_login
+    def setup_storage_pair_by_code():
+        status = get_db_config_status()
+        cfg = (status or {}).get('config', {}) if isinstance(status, dict) else {}
+
+        base_url = _normalize_base_url(request.form.get('instructor_api_base_url') or cfg.get('instructor_api_base_url') or '')
+        code = str(request.form.get('pair_code') or '').strip()
+
+        if not base_url:
+            flash('Pair by code failed: Instructor API URL is required.', 'warning')
+            return redirect(url_for('setup_storage'))
+        if not code or len(code) != 4 or not code.isdigit():
+            flash('Pair by code failed: enter the 4-digit code shown on Instructor.', 'warning')
+            return redirect(url_for('setup_storage'))
+
+        exchange_url = f"{base_url}/api/station/pairing/code/exchange"
+        try:
+            resp = requests.post(
+                exchange_url,
+                headers={"Accept": "application/json", "Content-Type": "application/json"},
+                json={"pair_code": code},
+                timeout=8,
+            )
+            payload = resp.json() if resp.headers.get('content-type', '').lower().startswith('application/json') else {}
+        except requests.RequestException as exc:
+            flash(f'Pair by code failed: cannot reach instructor ({exc}).', 'warning')
+            return redirect(url_for('setup_storage'))
+
+        if not resp.ok or not payload.get('ok'):
+            reason = payload.get('error') or f'HTTP {resp.status_code}'
+            flash(f'Pair by code failed: {reason}', 'warning')
+            return redirect(url_for('setup_storage'))
+
+        token = str(payload.get('station_pairing_token') or '').strip()
+        resolved_base = _normalize_base_url(payload.get('instructor_api_base_url') or base_url)
+        if not token:
+            flash('Pair by code failed: instructor did not return pairing token.', 'warning')
+            return redirect(url_for('setup_storage'))
+
+        save_db_config_paths(
+            db_path=None,
+            gdrive_sync_path='',
+            onedrive_sync_path=(cfg.get('onedrive_sync_path') or ''),
+            cloud_provider=(cfg.get('cloud_provider') or 'onedrive'),
+            station_mode='scanner_api_client',
+            backup_mode='instructor_snapshots_only',
+            instructor_api_base_url=resolved_base,
+            station_pairing_token=token,
+            snapshot_interval_minutes=int(cfg.get('snapshot_interval_minutes') or 15),
+        )
+
+        flash('Pairing successful: Scanner linked to Instructor using 4-digit code.', 'success')
+        return redirect(url_for('setup_storage'))
 
     @app.route('/setup/storage/auto-connect', methods=['POST'])
     @require_login
@@ -293,13 +473,55 @@ def register_setup_routes(app):
                 station_pairing_token=token,
             )
 
+        advertised = _resolve_advertised_instructor_base_url(runtime, request.host_url)
+
         return jsonify({
             'ok': True,
             'station_mode': 'instructor_server',
             'backup_mode': 'instructor_snapshots_only',
-            'instructor_api_base_url': request.host_url.rstrip('/'),
+            'instructor_api_base_url': advertised,
             'station_pairing_token': token,
         }), 200
+
+    @app.route('/api/station/pairing/code/exchange', methods=['POST'])
+    def api_station_pairing_code_exchange():
+        runtime = get_station_runtime_config()
+        if str(runtime.get('station_mode') or '').strip().lower() != 'instructor_server':
+            return jsonify({'ok': False, 'error': 'This machine is not configured as Instructor API Server.'}), 409
+
+        payload = request.get_json(silent=True) or {}
+        incoming_code = str(payload.get('pair_code') or '').strip()
+        if not _pair_code_is_valid(incoming_code):
+            return jsonify({'ok': False, 'error': 'Invalid or expired pairing code.'}), 401
+
+        status = get_db_config_status()
+        cfg = (status or {}).get('config', {}) if isinstance(status, dict) else {}
+
+        token = str(runtime.get('station_pairing_token') or '').strip()
+        if not token:
+            token = secrets.token_urlsafe(24)
+            _save_runtime_from_cfg(
+                cfg,
+                station_mode='instructor_server',
+                instructor_api_base_url=_resolve_advertised_instructor_base_url(runtime, request.host_url),
+                station_pairing_token=token,
+            )
+
+        advertised = _resolve_advertised_instructor_base_url(runtime, request.host_url)
+
+        return jsonify({
+            'ok': True,
+            'station_mode': 'instructor_server',
+            'backup_mode': 'instructor_snapshots_only',
+            'instructor_api_base_url': advertised,
+            'station_pairing_token': token,
+        }), 200
+
+    try:
+        from app import csrf
+        csrf.exempt(api_station_pairing_code_exchange)
+    except Exception:
+        pass
 
     @app.route('/setup/storage/test-pairing', methods=['POST'])
     @require_login

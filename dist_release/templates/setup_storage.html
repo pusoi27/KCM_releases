@@ -20,8 +20,8 @@
                         <div class="mb-2">Use a single source of truth DB on Instructor Station. Scanner Station talks to Instructor via local network API.</div>
                         <ol class="mb-2 ps-3">
                             <li><strong>Instructor Station:</strong> set mode to <em>Instructor API Server</em>.</li>
-                            <li><strong>Scanner Station:</strong> set mode to <em>Scanner API Client</em>, enter Instructor URL, then use <em>Auto-Connect Scanner</em>.</li>
-                            <li><strong>Pairing token is managed automatically</strong> and reused between stations.</li>
+                            <li><strong>Scanner Station:</strong> set mode to <em>Scanner API Client</em>, enter Instructor URL, then pair by 4-digit code.</li>
+                            <li><strong>Basic pairing:</strong> same 4-digit code appears on Instructor and is entered on Scanner.</li>
                             <li>Backup mode is fixed to <strong>Instructor snapshots-only</strong>.</li>
                         </ol>
                     </div>
@@ -106,16 +106,19 @@
 
                         <div class="row g-3">
                             <div class="col-md-8">
-                                <label class="form-label" for="instructor_api_base_url">Instructor API URL (Scanner mode)</label>
-                                <input
-                                    class="form-control"
-                                    type="text"
-                                    id="instructor_api_base_url"
-                                    name="instructor_api_base_url"
-                                    value="{{ runtime.instructor_api_base_url if runtime else '' }}"
-                                    placeholder="http://192.168.1.50:5000"
-                                >
-                                <div class="form-text">Required on Scanner API Client mode.</div>
+                                <label class="form-label" for="instructor_api_base_url">Instructor Station LAN URL/IP</label>
+                                <div class="input-group">
+                                    <input
+                                        class="form-control"
+                                        type="text"
+                                        id="instructor_api_base_url"
+                                        name="instructor_api_base_url"
+                                        value="{{ runtime.instructor_api_base_url if runtime else '' }}"
+                                        placeholder="http://192.168.1.50:5000"
+                                    >
+                                    <button class="btn btn-outline-secondary" type="button" id="copy_instructor_url_btn">Copy</button>
+                                </div>
+                                <div class="form-text">Default is auto-detected for Instructor mode. You can change it any time.</div>
                             </div>
                             <div class="col-md-4">
                                 <label class="form-label" for="snapshot_interval_minutes">Snapshot interval (minutes)</label>
@@ -148,10 +151,36 @@
                                 </button>
                                 {% endif %}
                             </div>
-                            {% if not (subscription_access and subscription_access.is_checkin_station) %}
-                            <div class="form-text">Token is auto-generated for Instructor. You can regenerate it here if needed.</div>
+                            <div class="form-text">Advanced only. Recommended pairing is the 4-digit code flow below.</div>
+                        </div>
+
+                        <div class="alert alert-primary" role="alert">
+                            <div class="fw-semibold mb-1">Bluetooth-style pairing (basic)</div>
+                            {% if runtime and runtime.station_mode == 'instructor_server' %}
+                            <div class="small mb-2">Instructor: generate a 4-digit code and show it on this screen.</div>
+                            <div class="d-flex flex-wrap align-items-center gap-2">
+                                <button class="btn btn-primary btn-sm" type="submit" formaction="{{ url_for('setup_storage_show_pair_code') }}" formmethod="POST">
+                                    Show 4-digit Pair Code
+                                </button>
+                                {% if display_pair_code %}
+                                <span class="badge bg-dark fs-5 px-3 py-2" id="pair_code_badge">{{ display_pair_code }}</span>
+                                <button class="btn btn-outline-secondary btn-sm" type="button" id="copy_pair_code_btn">Copy code</button>
+                                <span class="text-muted small" id="pair_code_ttl" data-remaining="{{ display_pair_code_ttl or 0 }}">expires in {{ display_pair_code_ttl or 0 }}s</span>
+                                {% endif %}
+                            </div>
                             {% else %}
-                            <div class="form-text">Scanner usually does not need manual token entry. Use <strong>Auto-Connect Scanner</strong> to fetch it automatically.</div>
+                            <div class="small mb-2">Scanner: enter the same 4-digit code shown on Instructor screen.</div>
+                            <div class="row g-2 align-items-end">
+                                <div class="col-md-4">
+                                    <label class="form-label" for="pair_code">4-digit code</label>
+                                    <input class="form-control" id="pair_code" name="pair_code" type="text" maxlength="4" placeholder="1234">
+                                </div>
+                                <div class="col-md-4">
+                                    <button class="btn btn-primary" type="submit" formaction="{{ url_for('setup_storage_pair_by_code') }}" formmethod="POST">
+                                        Pair with 4-digit code
+                                    </button>
+                                </div>
+                            </div>
                             {% endif %}
                         </div>
 
@@ -200,4 +229,48 @@
         </div>
     </div>
 </div>
+<script>
+(function () {
+    function copyText(text, okMessage) {
+        const value = String(text || '').trim();
+        if (!value) return;
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+            navigator.clipboard.writeText(value).then(function(){
+                if (window.showQuickToast) window.showQuickToast(okMessage || 'Copied');
+            }).catch(function(){});
+        }
+    }
+
+    const copyUrlBtn = document.getElementById('copy_instructor_url_btn');
+    const urlInput = document.getElementById('instructor_api_base_url');
+    if (copyUrlBtn && urlInput) {
+        copyUrlBtn.addEventListener('click', function(){
+            copyText(urlInput.value, 'Instructor URL copied.');
+        });
+    }
+
+    const copyCodeBtn = document.getElementById('copy_pair_code_btn');
+    const codeBadge = document.getElementById('pair_code_badge');
+    if (copyCodeBtn && codeBadge) {
+        copyCodeBtn.addEventListener('click', function(){
+            copyText(codeBadge.textContent, 'Pair code copied.');
+        });
+    }
+
+    const ttlEl = document.getElementById('pair_code_ttl');
+    if (ttlEl) {
+        let remaining = parseInt(ttlEl.getAttribute('data-remaining') || '0', 10) || 0;
+        const tick = function () {
+            if (remaining <= 0) {
+                ttlEl.textContent = 'expired';
+                return;
+            }
+            ttlEl.textContent = 'expires in ' + remaining + 's';
+            remaining -= 1;
+            setTimeout(tick, 1000);
+        };
+        tick();
+    }
+})();
+</script>
 {% endblock %}
