@@ -22,13 +22,53 @@ import shutil
 import socket
 import ctypes
 from pathlib import Path
+from dotenv import load_dotenv
+
+
+def _load_local_env() -> None:
+    """Load .env from app directory when available."""
+    env_path = Path(__file__).with_name('.env')
+    try:
+        if env_path.exists():
+            load_dotenv(dotenv_path=env_path, override=False)
+        else:
+            load_dotenv(override=False)
+    except Exception:
+        pass
+
+
+def _detect_lan_ip() -> str:
+    """Best-effort local LAN IPv4 address for same-WiFi access."""
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+            s.connect(("8.8.8.8", 80))
+            ip = s.getsockname()[0]
+            if ip and not ip.startswith("127."):
+                return ip
+    except Exception:
+        pass
+    return '127.0.0.1'
+
+
+def _browser_host_for(listen_host: str) -> str:
+    """Translate bind host into a browser-friendly host."""
+    host = str(listen_host or '').strip().lower()
+    if host in {'0.0.0.0', '::', ''}:
+        preferred = str(os.getenv('LAUNCH_HOST', '') or '').strip()
+        if preferred:
+            return preferred
+        return _detect_lan_ip()
+    return listen_host
+
+
+_load_local_env()
 
 # ---------------------------------------------------------------------------
-# Port/Host — CLI arg or env var, default 5000/127.0.0.1
+# Port/Host — CLI arg or env var, default 5000/0.0.0.0
 # ---------------------------------------------------------------------------
 PORT = int(sys.argv[1]) if len(sys.argv) > 1 else int(os.getenv("PORT", "5000"))
-HOST = os.getenv("HOST", "127.0.0.1")
-URL  = f"http://{HOST}:{PORT}"
+HOST = os.getenv("HOST", "0.0.0.0")
+URL  = f"http://{_browser_host_for(HOST)}:{PORT}"
 
 # ---------------------------------------------------------------------------
 # Logging

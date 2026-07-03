@@ -14,10 +14,47 @@ import tempfile
 import socket
 import ctypes
 from pathlib import Path
+from dotenv import load_dotenv
 
 
-_DEFAULT_HOST = '127.0.0.1'
+_DEFAULT_HOST = '0.0.0.0'
 _DEFAULT_PORT = 5000
+
+
+def _load_local_env() -> None:
+    """Load .env from app directory when available."""
+    env_path = Path(__file__).with_name('.env')
+    try:
+        if env_path.exists():
+            load_dotenv(dotenv_path=env_path, override=False)
+        else:
+            load_dotenv(override=False)
+    except Exception:
+        pass
+
+
+def _detect_lan_ip() -> str:
+    """Best-effort local LAN IPv4 address for same-WiFi access."""
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+            s.connect(("8.8.8.8", 80))
+            ip = s.getsockname()[0]
+            if ip and not ip.startswith("127."):
+                return ip
+    except Exception:
+        pass
+    return '127.0.0.1'
+
+
+def _browser_host_for(listen_host: str) -> str:
+    """Translate bind host into a browser-friendly host."""
+    host = str(listen_host or '').strip().lower()
+    if host in {'0.0.0.0', '::', ''}:
+        preferred = str(os.getenv('LAUNCH_HOST', '') or '').strip()
+        if preferred:
+            return preferred
+        return _detect_lan_ip()
+    return listen_host
 
 
 def _find_browser_executable():
@@ -87,18 +124,22 @@ def _show_already_running_notice(url):
         pass
 
 def main():
-    # Set environment for local development
-    os.environ['APP_ENV'] = 'development'
-    os.environ['HOST'] = '127.0.0.1'
-    os.environ['PORT'] = '5000'
-    os.environ['COOKIE_SECURE'] = 'false'
-    
+    _load_local_env()
+
+    # Local-safe defaults only when missing.
+    os.environ.setdefault('APP_ENV', 'development')
+    os.environ.setdefault('HOST', _DEFAULT_HOST)
+    os.environ.setdefault('PORT', str(_DEFAULT_PORT))
+    os.environ.setdefault('COOKIE_SECURE', 'false')
+
     host = os.environ.get('HOST', _DEFAULT_HOST)
     port = int(os.environ.get('PORT', str(_DEFAULT_PORT)))
-    url = f"http://{host}:{port}/"
+    browser_host = _browser_host_for(host)
+    url = f"http://{browser_host}:{port}/"
+    probe_host = '127.0.0.1' if host in {'0.0.0.0', '::'} else host
 
     # If the app is already running, do not spawn another instance.
-    if _is_port_open(host, port):
+    if _is_port_open(probe_host, port):
         print(f"\nInstance already running on {host}:{port}")
         print("Opening the existing instance in your browser...")
         _show_already_running_notice(url)
