@@ -1,6 +1,8 @@
 from flask import render_template, request, redirect, url_for, flash, jsonify, session
+import secrets
+import requests
 
-from modules.database import get_db_config_status, save_db_config_paths
+from modules.database import get_db_config_status, save_db_config_paths, get_station_runtime_config
 from modules.database import sync_to_gdrive_now, sync_from_gdrive_now, get_last_sync_error
 from modules.database import get_database_health_report, backup_database_now, restore_database_now
 from modules.database import run_manual_wal_checkpoint
@@ -77,12 +79,26 @@ def register_setup_routes(app):
             cloud_provider = (request.form.get('cloud_provider') or 'onedrive').strip().lower()
             gdrive_sync_path = (request.form.get('gdrive_sync_path') or '').strip()
             onedrive_sync_path = (request.form.get('onedrive_sync_path') or '').strip()
+            station_mode = (request.form.get('station_mode') or 'instructor_server').strip().lower()
+            backup_mode = (request.form.get('backup_mode') or 'instructor_snapshots_only').strip().lower()
+            instructor_api_base_url = (request.form.get('instructor_api_base_url') or '').strip()
+            station_pairing_token = (request.form.get('station_pairing_token') or '').strip()
+            snapshot_interval_minutes_raw = (request.form.get('snapshot_interval_minutes') or '15').strip()
+            try:
+                snapshot_interval_minutes = max(5, int(snapshot_interval_minutes_raw or '15'))
+            except ValueError:
+                snapshot_interval_minutes = 15
 
             status = save_db_config_paths(
                 db_path=None,
                 gdrive_sync_path=gdrive_sync_path,
                 onedrive_sync_path=onedrive_sync_path,
                 cloud_provider=cloud_provider,
+                station_mode=station_mode,
+                backup_mode=backup_mode,
+                instructor_api_base_url=instructor_api_base_url,
+                station_pairing_token=station_pairing_token,
+                snapshot_interval_minutes=snapshot_interval_minutes,
             )
 
             if status.get('is_ready'):
@@ -91,14 +107,175 @@ def register_setup_routes(app):
                 return redirect(url_for('setup_requirements'))
 
             flash('Please fix the path issues below before continuing.', 'danger')
-            return render_template('setup_storage.html', status=status)
+            runtime = get_station_runtime_config()
+            pairing_endpoint = '/api/station/pairing/ping'
+            suggested_pairing_url = (
+                f"{request.host_url.rstrip('/')}{pairing_endpoint}"
+                if runtime.get('station_mode') == 'instructor_server'
+                else f"{(runtime.get('instructor_api_base_url') or '').rstrip('/')}{pairing_endpoint}"
+            )
+            return render_template(
+                'setup_storage.html',
+                status=status,
+                runtime=runtime,
+                suggested_pairing_url=suggested_pairing_url,
+            )
 
         status = get_db_config_status()
-        return render_template('setup_storage.html', status=status)
+        runtime = get_station_runtime_config()
+        pairing_endpoint = '/api/station/pairing/ping'
+        suggested_pairing_url = (
+            f"{request.host_url.rstrip('/')}{pairing_endpoint}"
+            if runtime.get('station_mode') == 'instructor_server'
+            else f"{(runtime.get('instructor_api_base_url') or '').rstrip('/')}{pairing_endpoint}"
+        )
+        return render_template(
+            'setup_storage.html',
+            status=status,
+            runtime=runtime,
+            suggested_pairing_url=suggested_pairing_url,
+        )
+
+    @app.route('/setup/storage/generate-pairing-token', methods=['POST'])
+    @require_login
+    def setup_storage_generate_pairing_token():
+        status = get_db_config_status()
+        cfg = (status or {}).get('config', {}) if isinstance(status, dict) else {}
+        generated_token = secrets.token_urlsafe(24)
+
+        save_db_config_paths(
+            db_path=None,
+            gdrive_sync_path=(cfg.get('gdrive_sync_path') or ''),
+            onedrive_sync_path=(cfg.get('onedrive_sync_path') or ''),
+            cloud_provider=(cfg.get('cloud_provider') or 'onedrive'),
+            station_mode=(cfg.get('station_mode') or 'instructor_server'),
+            backup_mode=(cfg.get('backup_mode') or 'instructor_snapshots_only'),
+            instructor_api_base_url=(cfg.get('instructor_api_base_url') or ''),
+            station_pairing_token=generated_token,
+            snapshot_interval_minutes=int(cfg.get('snapshot_interval_minutes') or 15),
+        )
+
+        flash('New pairing token generated and saved.', 'success')
+        return redirect(url_for('setup_storage'))
+
+    @app.route('/setup/storage/test-pairing', methods=['POST'])
+    @require_login
+    def setup_storage_test_pairing():
+        runtime = get_station_runtime_config()
+        base_url = str(runtime.get('instructor_api_base_url') or '').strip().rstrip('/')
+        token = str(runtime.get('station_pairing_token') or '').strip()
+
+        if not base_url:
+            flash('Pairing test failed: Instructor API URL is empty.', 'warning')
+            return redirect(url_for('setup_storage'))
+        if not token:
+            flash('Pairing test failed: pairing token is empty.', 'warning')
+            return redirect(url_for('setup_storage'))
+
+        ping_url = f"{base_url}/api/station/pairing/ping"
+        try:
+            resp = requests.get(
+                ping_url,
+                headers={"X-Stdytime-Pairing-Token": token, "Accept": "application/json"},
+                timeout=8,
+            )
+            payload = resp.json() if resp.headers.get('content-type', '').lower().startswith('application/json') else {}
+            if resp.ok and payload.get('ok'):
+                flash('Pairing test passed: scanner can reach instructor API.', 'success')
+            else:
+                reason = payload.get('error') or f'HTTP {resp.status_code}'
+                flash(f'Pairing test failed: {reason}', 'warning')
+        except requests.RequestException as exc:
+            flash(f'Pairing test failed: {exc}', 'warning')
+
+        return redirect(url_for('setup_storage'))
+
+    @app.route('/api/station/pairing/ping', methods=['GET'])
+    def api_station_pairing_ping():
+        runtime = get_station_runtime_config()
+        expected = str(runtime.get('station_pairing_token') or '').strip()
+        received = str(request.headers.get('X-Stdytime-Pairing-Token') or '').strip()
+        if not expected:
+            return jsonify({'ok': False, 'error': 'Pairing token is not configured on instructor station.'}), 503
+        if expected != received:
+            return jsonify({'ok': False, 'error': 'Invalid pairing token.'}), 401
+        return jsonify({'ok': True, 'station_mode': runtime.get('station_mode'), 'backup_mode': runtime.get('backup_mode')}), 200
+
+    @app.route('/api/station/connection-status', methods=['GET'])
+    @require_login
+    def api_station_connection_status():
+        runtime = get_station_runtime_config()
+        station_mode = str(runtime.get('station_mode') or '').strip().lower()
+
+        if station_mode != 'scanner_api_client':
+            return jsonify({
+                'visible': False,
+                'connected': True,
+                'tone': 'secondary',
+                'label': 'Station Link: n/a',
+                'tooltip': 'Connection badge is only used on Scanner API Client mode.',
+            }), 200
+
+        base_url = str(runtime.get('instructor_api_base_url') or '').strip().rstrip('/')
+        token = str(runtime.get('station_pairing_token') or '').strip()
+        if not base_url:
+            return jsonify({
+                'visible': True,
+                'connected': False,
+                'tone': 'warning',
+                'label': 'Station Link: setup',
+                'tooltip': 'Instructor API URL is not configured.',
+            }), 200
+        if not token:
+            return jsonify({
+                'visible': True,
+                'connected': False,
+                'tone': 'warning',
+                'label': 'Station Link: token',
+                'tooltip': 'Pairing token is not configured.',
+            }), 200
+
+        ping_url = f"{base_url}/api/station/pairing/ping"
+        try:
+            resp = requests.get(
+                ping_url,
+                headers={"X-Stdytime-Pairing-Token": token, "Accept": "application/json"},
+                timeout=5,
+            )
+            payload = resp.json() if resp.headers.get('content-type', '').lower().startswith('application/json') else {}
+            if resp.ok and payload.get('ok'):
+                return jsonify({
+                    'visible': True,
+                    'connected': True,
+                    'tone': 'success',
+                    'label': 'Station Link: connected',
+                    'tooltip': f'Scanner linked to Instructor API at {base_url}.',
+                }), 200
+
+            reason = payload.get('error') or f'HTTP {resp.status_code}'
+            return jsonify({
+                'visible': True,
+                'connected': False,
+                'tone': 'danger',
+                'label': 'Station Link: disconnected',
+                'tooltip': f'Pairing check failed: {reason}',
+            }), 200
+        except requests.RequestException as exc:
+            return jsonify({
+                'visible': True,
+                'connected': False,
+                'tone': 'danger',
+                'label': 'Station Link: offline',
+                'tooltip': f'Cannot reach Instructor API: {exc}',
+            }), 200
 
     @app.route('/setup/storage/push-backup', methods=['POST'])
     @require_login
     def setup_storage_push_backup():
+        runtime = get_station_runtime_config()
+        if runtime.get('backup_mode') == 'instructor_snapshots_only':
+            flash('Cloud push is disabled in Instructor snapshots-only mode.', 'info')
+            return redirect(url_for('setup_storage'))
         pushed = sync_to_gdrive_now()
         if pushed:
             flash('Backup push completed: local database copied to cloud backup.', 'success')
@@ -142,6 +319,10 @@ def register_setup_routes(app):
     @app.route('/setup/storage/backup-cloud', methods=['POST'])
     @require_login
     def setup_storage_backup_cloud():
+        runtime = get_station_runtime_config()
+        if runtime.get('backup_mode') == 'instructor_snapshots_only':
+            flash('Cloud snapshots are disabled in Instructor snapshots-only mode.', 'info')
+            return redirect(url_for('setup_storage'))
         result = backup_database_now(source='cloud', label='setup_manual')
         if result.get('ok'):
             flash(f"Cloud DB snapshot created: {result.get('path')}", 'success')
@@ -152,6 +333,10 @@ def register_setup_routes(app):
     @app.route('/setup/storage/restore-local-from-cloud', methods=['POST'])
     @require_login
     def setup_storage_restore_local_from_cloud():
+        runtime = get_station_runtime_config()
+        if runtime.get('backup_mode') == 'instructor_snapshots_only':
+            flash('Cloud restore is disabled in Instructor snapshots-only mode.', 'info')
+            return redirect(url_for('setup_storage'))
         result = restore_database_now(target='local', source='cloud')
         if result.get('ok'):
             flash('Restore completed: cloud backup copied to local DB.', 'success')
@@ -162,6 +347,10 @@ def register_setup_routes(app):
     @app.route('/setup/storage/restore-cloud-from-local', methods=['POST'])
     @require_login
     def setup_storage_restore_cloud_from_local():
+        runtime = get_station_runtime_config()
+        if runtime.get('backup_mode') == 'instructor_snapshots_only':
+            flash('Cloud restore is disabled in Instructor snapshots-only mode.', 'info')
+            return redirect(url_for('setup_storage'))
         result = restore_database_now(target='cloud', source='local')
         if result.get('ok'):
             flash('Restore completed: local DB copied to cloud backup.', 'success')
@@ -173,6 +362,14 @@ def register_setup_routes(app):
     @require_login
     def api_cloud_push_backup():
         """Trigger an immediate best-effort cloud backup push from client-side UI flows."""
+        runtime = get_station_runtime_config()
+        if runtime.get('backup_mode') == 'instructor_snapshots_only':
+            return jsonify({
+                "success": False,
+                "pushed": False,
+                "error": "Cloud push disabled in Instructor snapshots-only mode.",
+            }), 200
+
         pushed = sync_to_gdrive_now()
         if pushed:
             return jsonify({"success": True, "pushed": True}), 200
@@ -187,6 +384,10 @@ def register_setup_routes(app):
     @app.route('/setup/storage/pull-backup', methods=['POST'])
     @require_login
     def setup_storage_pull_backup():
+        runtime = get_station_runtime_config()
+        if runtime.get('backup_mode') == 'instructor_snapshots_only':
+            flash('Cloud pull is disabled in Instructor snapshots-only mode.', 'info')
+            return redirect(url_for('setup_storage'))
         pulled = sync_from_gdrive_now(force=True)
         if pulled:
             flash('Backup read completed: cloud backup copied to local database.', 'success')
@@ -205,6 +406,11 @@ def register_setup_routes(app):
         
         This ensures the main .db file on OneDrive gets updated with current timestamp.
         """
+        runtime = get_station_runtime_config()
+        if runtime.get('backup_mode') == 'instructor_snapshots_only':
+            flash('Force cloud sync is disabled in Instructor snapshots-only mode.', 'info')
+            return redirect(url_for('setup_storage'))
+
         # Step 1: Checkpoint WAL with TRUNCATE to merge pending writes into main DB and shrink WAL file
         checkpoint_ok = run_manual_wal_checkpoint("TRUNCATE")
         if not checkpoint_ok:

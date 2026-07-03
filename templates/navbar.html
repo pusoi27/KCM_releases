@@ -188,6 +188,14 @@
             <i class="bi bi-arrow-repeat"></i> {{ station_sync_badge.label }}
           </span>
         {% endif %}
+        <span
+          id="stationConnectionBadge"
+          class="badge rounded-pill me-3 text-bg-secondary"
+          title="Checking station link..."
+          style="display:none;"
+        >
+          <i class="bi bi-hdd-network"></i> Station Link
+        </span>
         
           <div class="me-3">
             <a class="btn btn-sm btn-outline-light" href="{{ url_for('license_page') }}"><i class="bi bi-key"></i> License</a>
@@ -349,6 +357,35 @@ document.querySelectorAll('.dropdown').forEach(dropdown => {
       menu.style.display = 'none';
     });
   });
+});
+
+async function refreshStationConnectionBadge() {
+  const badge = document.getElementById('stationConnectionBadge');
+  if (!badge) return;
+  try {
+    const res = await fetch('/api/station/connection-status', { cache: 'no-store' });
+    const data = await res.json();
+    if (!data || data.visible === false) {
+      badge.style.display = 'none';
+      return;
+    }
+
+    const tone = data.tone || 'secondary';
+    badge.className = `badge rounded-pill me-3 text-bg-${tone}`;
+    badge.innerHTML = `<i class="bi bi-hdd-network"></i> ${data.label || 'Station Link'}`;
+    badge.title = data.tooltip || 'Station link status';
+    badge.style.display = 'inline-flex';
+  } catch (_err) {
+    badge.className = 'badge rounded-pill me-3 text-bg-danger';
+    badge.innerHTML = '<i class="bi bi-hdd-network"></i> Station Link: error';
+    badge.title = 'Unable to check station link status.';
+    badge.style.display = 'inline-flex';
+  }
+}
+
+document.addEventListener('DOMContentLoaded', function() {
+  refreshStationConnectionBadge();
+  window.setInterval(refreshStationConnectionBadge, 30000);
 });
 </script>
 

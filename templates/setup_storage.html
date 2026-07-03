@@ -12,28 +12,24 @@
                 </div>
                 <div class="card-body">
                     <p class="text-muted">
-                        Configure OneDrive backup/sync path for this Windows machine.
+                        Guided setup for two-station architecture: Scanner as API client, Instructor as API server, and snapshots from instructor only.
                     </p>
 
                     <div class="alert alert-info" role="alert">
-                        <div class="fw-semibold mb-1">OneDrive backup folder path is mandatory for setup completion</div>
-                        <div class="mb-2">This installer works in a Windows environment with OneDrive setup.</div>
+                        <div class="fw-semibold mb-1">Recommended architecture (v01.03.00+)</div>
+                        <div class="mb-2">Use a single source of truth DB on Instructor Station. Scanner Station talks to Instructor via local network API.</div>
                         <ol class="mb-2 ps-3">
-                            <li>Install/sign in to Microsoft OneDrive on Windows.</li>
-                            <li>Use a folder such as <code>C:/Users/YourName/OneDrive/StdyTime</code>.</li>
-                            <li>The backup file is created automatically as <code>Stdytime.db</code>.</li>
+                            <li><strong>Instructor Station:</strong> set mode to <em>Instructor API Server</em>.</li>
+                            <li><strong>Scanner Station:</strong> set mode to <em>Scanner API Client</em> and pair using Instructor URL + token.</li>
+                            <li>Use <strong>Instructor snapshots-only</strong> backup mode to avoid OneDrive split-brain conflicts.</li>
                         </ol>
-                        <div class="small">
-                            Download link:
-                            <a href="https://www.microsoft.com/microsoft-365/onedrive/download" target="_blank" rel="noopener noreferrer" class="fw-semibold">OneDrive</a>
-                        </div>
                     </div>
 
                     <div class="card border-0 bg-light mb-3">
                         <div class="card-body">
                             <h6 class="mb-2"><i class="bi bi-arrow-left-right"></i> Manual DB Backup Actions</h6>
                             <p class="text-muted small mb-3">
-                                Use these only when needed. They are available on this DB Backup screen.
+                                Use these only when needed. In snapshots-only mode, cloud push/pull actions are disabled.
                             </p>
                             <div class="d-flex flex-wrap gap-2">
                                 <form method="POST" action="{{ url_for('setup_storage_health_check') }}" class="m-0">
@@ -128,6 +124,79 @@
                         <input type="hidden" name="gdrive_sync_path" value="">
 
                         <div class="mb-3">
+                            <label class="form-label" for="station_mode">Station mode</label>
+                            <select class="form-select" id="station_mode" name="station_mode">
+                                <option value="instructor_server" {% if runtime and runtime.station_mode == 'instructor_server' %}selected{% endif %}>Instructor API Server (source of truth DB)</option>
+                                <option value="scanner_api_client" {% if runtime and runtime.station_mode == 'scanner_api_client' %}selected{% endif %}>Scanner API Client (no direct DB writes)</option>
+                            </select>
+                            <div class="form-text">Choose this machine role in the two-station setup.</div>
+                        </div>
+
+                        <div class="mb-3">
+                            <label class="form-label" for="backup_mode">Backup mode</label>
+                            <select class="form-select" id="backup_mode" name="backup_mode">
+                                <option value="instructor_snapshots_only" {% if runtime and runtime.backup_mode == 'instructor_snapshots_only' %}selected{% endif %}>Instructor snapshots-only (recommended)</option>
+                                <option value="legacy_cloud_sync" {% if runtime and runtime.backup_mode == 'legacy_cloud_sync' %}selected{% endif %}>Legacy OneDrive live-sync (not recommended)</option>
+                            </select>
+                            <div class="form-text">Snapshots-only prevents cross-machine DB overwrite races.</div>
+                        </div>
+
+                        <div class="row g-3">
+                            <div class="col-md-8">
+                                <label class="form-label" for="instructor_api_base_url">Instructor API URL (Scanner mode)</label>
+                                <input
+                                    class="form-control"
+                                    type="text"
+                                    id="instructor_api_base_url"
+                                    name="instructor_api_base_url"
+                                    value="{{ runtime.instructor_api_base_url if runtime else '' }}"
+                                    placeholder="http://192.168.1.50:5000"
+                                >
+                                <div class="form-text">Required on Scanner API Client mode.</div>
+                            </div>
+                            <div class="col-md-4">
+                                <label class="form-label" for="snapshot_interval_minutes">Snapshot interval (minutes)</label>
+                                <input
+                                    class="form-control"
+                                    type="number"
+                                    min="5"
+                                    step="1"
+                                    id="snapshot_interval_minutes"
+                                    name="snapshot_interval_minutes"
+                                    value="{{ runtime.snapshot_interval_minutes if runtime else 15 }}"
+                                >
+                            </div>
+                        </div>
+
+                        <div class="mt-3 mb-3">
+                            <label class="form-label" for="station_pairing_token">Pairing token</label>
+                            <div class="input-group">
+                                <input
+                                    class="form-control"
+                                    type="text"
+                                    id="station_pairing_token"
+                                    name="station_pairing_token"
+                                    value="{{ runtime.station_pairing_token if runtime else '' }}"
+                                    placeholder="Paste token from Instructor Station"
+                                >
+                                <button class="btn btn-outline-secondary" type="submit" formaction="{{ url_for('setup_storage_generate_pairing_token') }}" formmethod="POST">
+                                    Generate token
+                                </button>
+                            </div>
+                            <div class="form-text">Use same token on both Instructor and Scanner stations.</div>
+                        </div>
+
+                        <div class="alert alert-secondary" role="alert">
+                            <div class="fw-semibold mb-1">Pairing endpoint</div>
+                            <div class="small"><code>{{ suggested_pairing_url or '/api/station/pairing/ping' }}</code></div>
+                            <div class="small text-muted">Scanner tests pairing against this endpoint using <code>X-Stdytime-Pairing-Token</code>.</div>
+                            <form method="POST" action="{{ url_for('setup_storage_test_pairing') }}" class="mt-2">
+                                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                <button class="btn btn-outline-primary btn-sm" type="submit">Test pairing now</button>
+                            </form>
+                        </div>
+
+                        <div class="mb-3">
                             <label class="form-label" for="onedrive_sync_path">OneDrive folder path</label>
                             <input
                                 class="form-control"
@@ -137,11 +206,11 @@
                                 value="{{ status.config.onedrive_sync_path if status and status.config else '' }}"
                                 placeholder="C:/Users/YourName/OneDrive/StdyTime"
                             >
-                            <div class="form-text">Required only when provider is OneDrive. Example: {{ status.example.onedrive_sync_path if status and status.example else 'C:/Users/YourName/OneDrive/StdyTime' }}.</div>
+                            <div class="form-text">Required only for Legacy OneDrive live-sync mode.</div>
                         </div>
 
                         <div class="alert alert-secondary" role="alert">
-                            Background backup sync runs automatically every <strong>9 minutes</strong>.
+                            Instructor snapshots-only mode creates periodic local snapshots; legacy mode syncs OneDrive every <strong>9 minutes</strong>.
                         </div>
 
                         {% if status and status.issues %}

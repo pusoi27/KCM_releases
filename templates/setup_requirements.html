@@ -19,7 +19,7 @@
                         <div class="d-flex justify-content-between align-items-start gap-3">
                             <div>
                                 <h5 class="mb-1">1) Database storage path</h5>
-                                <p class="mb-1 text-muted">Confirm local DB path + required cloud sync path (Google Drive <code>My Drive/StdyTime</code> or OneDrive <code>OneDrive/StdyTime</code>).</p>
+                                <p class="mb-1 text-muted">Run guided station setup (Instructor API Server or Scanner API Client) and configure backup mode.</p>
                                 {% if storage_status.is_ready %}
                                     <span class="badge bg-success">Ready</span>
                                 {% else %}
@@ -95,7 +95,7 @@
                     </div>
                     {% else %}
                     <div class="alert alert-info mt-3 mb-0" role="alert">
-                        You will remain on setup until both items are complete, including cloud backup path configuration (Google Drive or OneDrive).
+                        You will remain on setup until required station and backup configuration is complete.
                     </div>
                     {% endif %}
                 </div>

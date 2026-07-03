@@ -22,11 +22,11 @@
       </p>
 
       <div class="alert alert-secondary mb-4">
-        <div class="fw-semibold mb-2">Recommended OneDrive deployment pattern</div>
+        <div class="fw-semibold mb-2">Recommended two-station deployment pattern</div>
         <ul class="mb-0">
-          <li><strong>Scanner Station</strong>: use for high-frequency student session toggles and staff duty changes.</li>
-          <li><strong>Instructor Station</strong>: use for slower administrative updates like adding students, books, devices, loans, and reports.</li>
-          <li>Try to avoid making the same record changes on both machines at the same time so OneDrive sync stays calm.</li>
+          <li><strong>Scanner Station</strong>: API client only — send scan/toggle actions to Instructor over LAN.</li>
+          <li><strong>Instructor Station</strong>: API server + single source of truth database.</li>
+          <li><strong>Backups</strong>: snapshots from Instructor only (avoid multi-writer cloud DB sync).</li>
         </ul>
       </div>
 

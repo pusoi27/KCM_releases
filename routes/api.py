@@ -4,7 +4,13 @@ from modules import student_manager, assistant_manager, timer_manager, auth_mana
 from modules import server_cache
 from modules.email_manager import get_email_manager, render_branded_email_shell, resolve_center_name
 from modules import instructor_profile_manager
-from modules.database import DB_PATH, GDRIVE_SYNC_PATH, sync_to_gdrive, is_station_mailbox_mode_enabled
+from modules.database import (
+    DB_PATH,
+    GDRIVE_SYNC_PATH,
+    sync_to_gdrive,
+    is_station_mailbox_mode_enabled,
+    get_station_runtime_config,
+)
 from modules.utils import duration_seconds, time_now
 from datetime import datetime, timedelta, time
 import base64
@@ -17,11 +23,101 @@ import smtplib
 import sqlite3
 import json
 import traceback
+import requests
 from routes.auth import require_login, require_admin, require_feature
 
 
 CHECKOUT_COOLDOWN_SECONDS = 60
 STAFF_DUTY_MAX_DAILY_SECONDS = 6 * 60 * 60
+
+
+def _runtime_station_mode() -> str:
+    return str(get_station_runtime_config().get("station_mode") or "").strip().lower() or "instructor_server"
+
+
+def _runtime_backup_mode() -> str:
+    return str(get_station_runtime_config().get("backup_mode") or "").strip().lower() or "instructor_snapshots_only"
+
+
+def _runtime_instructor_api_base() -> str:
+    return str(get_station_runtime_config().get("instructor_api_base_url") or "").strip().rstrip("/")
+
+
+def _runtime_pairing_token() -> str:
+    return str(get_station_runtime_config().get("station_pairing_token") or "").strip()
+
+
+def _scanner_api_client_enabled() -> bool:
+    return _runtime_station_mode() == "scanner_api_client"
+
+
+def _build_bridge_headers() -> dict:
+    token = _runtime_pairing_token()
+    headers = {
+        "Accept": "application/json",
+        "Content-Type": "application/json",
+    }
+    if token:
+        headers["X-Stdytime-Pairing-Token"] = token
+    return headers
+
+
+def _bridge_url(path: str) -> str:
+    base = _runtime_instructor_api_base()
+    route = str(path or "").strip()
+    if not route.startswith("/"):
+        route = "/" + route
+    return f"{base}{route}"
+
+
+def _bridge_json_response(response):
+    try:
+        body = response.json()
+    except Exception:
+        body = {"error": f"Bridge returned non-JSON response (HTTP {response.status_code})."}
+    return body, int(response.status_code)
+
+
+def _bridge_forward_get(path: str):
+    if not _scanner_api_client_enabled():
+        return None
+
+    url = _bridge_url(path)
+    if not url.startswith("http"):
+        return jsonify({"error": "Instructor API URL is not configured."}), 503
+    try:
+        response = requests.get(url, headers=_build_bridge_headers(), timeout=12)
+    except requests.RequestException as exc:
+        return jsonify({"error": f"Cannot reach instructor station API: {exc}"}), 503
+    body, code = _bridge_json_response(response)
+    return jsonify(body), code
+
+
+def _bridge_forward_post(path: str, payload: dict | None = None):
+    if not _scanner_api_client_enabled():
+        return None
+
+    url = _bridge_url(path)
+    if not url.startswith("http"):
+        return jsonify({"error": "Instructor API URL is not configured."}), 503
+    try:
+        response = requests.post(url, headers=_build_bridge_headers(), json=(payload or {}), timeout=15)
+    except requests.RequestException as exc:
+        return jsonify({"error": f"Cannot reach instructor station API: {exc}"}), 503
+    body, code = _bridge_json_response(response)
+    return jsonify(body), code
+
+
+def _bridge_request_is_pairing_authorized() -> bool:
+    expected = _runtime_pairing_token()
+    if not expected:
+        return False
+    received = str(request.headers.get("X-Stdytime-Pairing-Token") or "").strip()
+    return bool(received and received == expected)
+
+
+def _bridge_pairing_auth_error(message: str = "Invalid or missing pairing token."):
+    return jsonify({"error": message}), 401
 
 # Global helper cache for performance (UI helpers)
 
@@ -180,6 +276,10 @@ def _push_cloud_backup_after_staff_change(aid: int, action: str) -> None:
     before the 9-minute background sync cycle runs.
     """
     try:
+        if _runtime_backup_mode() == "instructor_snapshots_only":
+            _trace_staff_duty("snapshot_mode_skip_direct_cloud_push", aid=aid, action=action)
+            return
+
         if is_station_mailbox_mode_enabled():
             _trace_staff_duty("mailbox_mode_enabled_skip_direct_cloud_push", aid=aid, action=action)
             return
@@ -203,6 +303,10 @@ def _push_cloud_backup_after_staff_change(aid: int, action: str) -> None:
 def _push_cloud_backup_after_student_change(student_id: int, action: str, source: str) -> None:
     """Best-effort immediate cloud push after main-class checkin/checkout writes."""
     try:
+        if _runtime_backup_mode() == "instructor_snapshots_only":
+            _trace_column3("snapshot_mode_skip_direct_cloud_push", sid=student_id, action=action, source=source)
+            return
+
         if is_station_mailbox_mode_enabled():
             _trace_column3("mailbox_mode_enabled_skip_direct_cloud_push", sid=student_id, action=action, source=source)
             return
@@ -724,6 +828,222 @@ def _send_checkout_email(student_row, start_time: str, end_time: str):
 def register_api_routes(app):
     """Register API/AJAX routes."""
 
+    @app.route("/api/bridge/students/list", methods=["GET"])
+    def api_bridge_students_list():
+        if not _bridge_request_is_pairing_authorized():
+            return _bridge_pairing_auth_error()
+        students = student_manager.get_all_students()
+
+        with sqlite3.connect(DB_PATH) as conn:
+            c = conn.cursor()
+            active_rows = c.execute(
+                """
+                SELECT student_id, start_time
+                FROM sessions
+                WHERE end_time IS NULL
+                """,
+                (),
+            ).fetchall()
+            active_map = {sid: start for sid, start in active_rows}
+
+            today = datetime.now().date().isoformat()
+            today_rows = c.execute(
+                """
+                SELECT student_id, SUM(duration)
+                FROM sessions
+                WHERE DATE(start_time)=?
+                  AND end_time IS NOT NULL
+                GROUP BY student_id
+                """,
+                (today,),
+            ).fetchall()
+
+            today_sum = {sid: secs for sid, secs in today_rows}
+
+            latest_rows = c.execute(
+                """
+                SELECT student_id, duration
+                FROM sessions
+                WHERE end_time IS NOT NULL
+                ORDER BY id DESC
+                """,
+                (),
+            ).fetchall()
+            latest_duration = {}
+            for sid, dur in latest_rows:
+                if sid not in latest_duration:
+                    latest_duration[sid] = dur
+
+        result = []
+        for s in students:
+            sid = s[0]
+            status = "registered"
+            start_time = None
+            total_seconds = None
+            dur = latest_duration.get(sid)
+            schedule_entries = _schedule_entries_from_student_row(s)
+
+            if sid in active_map:
+                status = "active"
+                start_time = active_map[sid]
+            elif sid in today_sum:
+                status = "checked"
+                total_seconds = today_sum.get(sid, 0)
+
+            result.append({
+                "id": sid,
+                "name": s[1],
+                "subject": s[2],
+                "email": s[3],
+                "phone": s[4],
+                "guardian": s[5] if len(s) > 5 else '',
+                "active": s[7] if len(s) > 7 else 0,
+                "book_loaned": s[8] if len(s) > 8 else 0,
+                "device_loaned": s[9] if len(s) > 9 else 0,
+                "day1": schedule_entries[0]["day"] if len(schedule_entries) > 0 else None,
+                "day1_time": schedule_entries[0]["time"] if len(schedule_entries) > 0 else None,
+                "day2": schedule_entries[1]["day"] if len(schedule_entries) > 1 else None,
+                "day2_time": schedule_entries[1]["time"] if len(schedule_entries) > 1 else None,
+                "day3": schedule_entries[2]["day"] if len(schedule_entries) > 2 else None,
+                "day3_time": schedule_entries[2]["time"] if len(schedule_entries) > 2 else None,
+                "day4": schedule_entries[3]["day"] if len(schedule_entries) > 3 else None,
+                "day4_time": schedule_entries[3]["time"] if len(schedule_entries) > 3 else None,
+                "day5": schedule_entries[4]["day"] if len(schedule_entries) > 4 else None,
+                "day5_time": schedule_entries[4]["time"] if len(schedule_entries) > 4 else None,
+                "day6": schedule_entries[5]["day"] if len(schedule_entries) > 5 else None,
+                "day6_time": schedule_entries[5]["time"] if len(schedule_entries) > 5 else None,
+                "schedule": schedule_entries,
+                "subjects": _subjects_from_student_row(s),
+                "status": status,
+                "start_time": start_time,
+                "total_seconds": total_seconds,
+                "duration": dur,
+                "photo_url": f"/students/photo/{sid}" if _has_photo_blob(s) else "",
+            })
+
+        return jsonify(result), 200
+
+    @app.route("/api/bridge/assistants/list", methods=["GET"])
+    def api_bridge_assistants_list():
+        if not _bridge_request_is_pairing_authorized():
+            return _bridge_pairing_auth_error()
+
+        assistants = assistant_manager.get_all_assistants()
+        with sqlite3.connect(DB_PATH) as conn:
+            c = conn.cursor()
+            _auto_close_stale_assistant_sessions(conn)
+            open_rows = c.execute(
+                "SELECT assistant_id, start_time FROM assistant_sessions WHERE end_time IS NULL",
+                (),
+            ).fetchall()
+
+        open_map = {aid: start for (aid, start) in open_rows}
+        payload = [
+            dict(
+                id=a[0],
+                name=a[1],
+                role=a[2] if len(a) > 2 else "",
+                email=a[3] if len(a) > 3 else "",
+                phone=a[4] if len(a) > 4 else "",
+                loading=a[5] if len(a) > 5 else 1,
+                on_duty=a[0] in open_map,
+                start_time=open_map.get(a[0]),
+            )
+            for a in assistants
+        ]
+        return jsonify(payload), 200
+
+    @app.route("/api/bridge/sessions/toggle", methods=["POST"])
+    def api_bridge_sessions_toggle():
+        if not _bridge_request_is_pairing_authorized():
+            return _bridge_pairing_auth_error()
+
+        data = request.get_json(silent=True) or {}
+        student_id = data.get("student_id")
+        if not student_id:
+            return jsonify({"error": "Missing student_id"}), 400
+
+        student = student_manager.get_student(student_id)
+        if not student:
+            return jsonify({"error": "Student not found"}), 404
+
+        student_name = student[1]
+        with sqlite3.connect(DB_PATH) as conn:
+            c = conn.cursor()
+            open_session = c.execute(
+                "SELECT id, start_time FROM sessions WHERE student_id=? AND end_time IS NULL ORDER BY id DESC LIMIT 1",
+                (student_id,),
+            ).fetchone()
+
+        if open_session:
+            open_session_id, open_start_time = open_session
+            elapsed_seconds = _elapsed_seconds_since(open_start_time)
+            if elapsed_seconds < CHECKOUT_COOLDOWN_SECONDS:
+                wait_seconds = CHECKOUT_COOLDOWN_SECONDS - elapsed_seconds
+                return jsonify({
+                    "error": f"Please wait {wait_seconds} seconds before checkout.",
+                    "action": "checkout_blocked",
+                    "student_id": student_id,
+                    "name": student_name,
+                    "wait_seconds": wait_seconds,
+                }), 429
+
+            checkout_email_status = None
+            checkout_email_message = None
+            with sqlite3.connect(DB_PATH) as conn:
+                c = conn.cursor()
+                open_row = c.execute(
+                    """
+                    SELECT id, start_time
+                    FROM sessions
+                    WHERE student_id = ?
+                      AND end_time IS NULL
+                    ORDER BY id DESC
+                    LIMIT 1
+                    """,
+                    (student_id,),
+                ).fetchone()
+                if open_row:
+                    sess_id, start = open_row
+                    end = time_now()
+                    try:
+                        duration = duration_seconds(start, end)
+                    except Exception:
+                        duration = 0
+                    c.execute(
+                        "UPDATE sessions SET end_time = ?, duration = ?, sync_synced = 0 WHERE id = ?",
+                        (end, duration, sess_id),
+                    )
+                    conn.commit()
+                    _push_cloud_backup_after_student_change(student_id, "checkout", "api_bridge_sessions_toggle")
+                    email_result = _send_checkout_email(student, start, end) or {}
+                    checkout_email_status = email_result.get("status")
+                    checkout_email_message = email_result.get("message")
+
+            server_cache.invalidate(_students_list_cache_key())
+            return jsonify({
+                "action": "checked_out",
+                "student_id": student_id,
+                "name": student_name,
+                "checkout_email_status": checkout_email_status,
+                "checkout_email_message": checkout_email_message,
+            }), 200
+
+        timer_manager.start_session(student_id)
+        _push_cloud_backup_after_student_change(student_id, "checkin", "api_bridge_sessions_toggle")
+        server_cache.invalidate(_students_list_cache_key())
+        return jsonify({
+            "action": "started",
+            "student_id": student_id,
+            "name": student_name,
+        }), 200
+
+    try:
+        from app import csrf
+        csrf.exempt(api_bridge_sessions_toggle)
+    except Exception:
+        pass
+
     @app.route("/api/students/export")
     def api_students_export():
         if not _bridge_request_is_local():
@@ -781,6 +1101,10 @@ def register_api_routes(app):
     @require_feature(auth_manager.FEATURE_STDYTIMECLASS)
     def api_students_list():
         """Return students with computed status: registered | active | checked."""
+        forwarded = _bridge_forward_get('/api/bridge/students/list')
+        if forwarded is not None:
+            return forwarded
+
         cache_key = _students_list_cache_key()
 
         def _build_students_list_payload():
@@ -1109,6 +1433,10 @@ def register_api_routes(app):
         Request JSON: {"student_id": <id>}
         Returns: {"action": "started"|"checked_out", "student_id": <id>, "name": <name>}
         """
+        forwarded = _bridge_forward_post('/api/bridge/sessions/toggle', request.get_json(silent=True) or {})
+        if forwarded is not None:
+            return forwarded
+
         try:
             data = request.get_json() or {}
             student_id = data.get("student_id")
@@ -1282,6 +1610,10 @@ def register_api_routes(app):
         """Return all assistants with on-duty status and start time.
         DB is the source of truth: an "open" assistant_sessions row (end_time NULL) => on duty.
         """
+        forwarded = _bridge_forward_get('/api/bridge/assistants/list')
+        if forwarded is not None:
+            return forwarded
+
         _trace_staff_duty("list_request", method=request.method, path=request.path)
 
         def _build_duty_payload():

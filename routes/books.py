@@ -22,7 +22,7 @@ from modules import server_cache, db_backup_recovery, auth_manager
 from routes.auth import require_login, require_admin, require_feature
 from routes.operation_utils import invalidate_scoped_cache, json_scoped_failure
 import sqlite3
-from modules.database import DB_PATH, sync_to_gdrive_now
+from modules.database import DB_PATH, sync_to_gdrive_now, get_station_runtime_config
 import requests
 import re
 import time
@@ -34,6 +34,84 @@ ISBN_LOOKUP_CACHE_TTL_SECONDS = 12 * 60 * 60
 ISBN_LOOKUP_RATE_LIMIT_COOLDOWN_KEY = "books:isbn_lookup:rate_limited:v1"
 _isbn_lookup_locks = {}
 _isbn_lookup_locks_guard = Lock()
+
+
+def _runtime_station_mode() -> str:
+    return str(get_station_runtime_config().get("station_mode") or "").strip().lower() or "instructor_server"
+
+
+def _runtime_instructor_api_base() -> str:
+    return str(get_station_runtime_config().get("instructor_api_base_url") or "").strip().rstrip("/")
+
+
+def _runtime_pairing_token() -> str:
+    return str(get_station_runtime_config().get("station_pairing_token") or "").strip()
+
+
+def _scanner_api_client_enabled() -> bool:
+    return _runtime_station_mode() == "scanner_api_client"
+
+
+def _bridge_headers() -> dict:
+    headers = {"Accept": "application/json", "Content-Type": "application/json"}
+    token = _runtime_pairing_token()
+    if token:
+        headers["X-Stdytime-Pairing-Token"] = token
+    return headers
+
+
+def _bridge_url(path: str) -> str:
+    base = _runtime_instructor_api_base()
+    route = str(path or "").strip()
+    if not route.startswith("/"):
+        route = "/" + route
+    return f"{base}{route}"
+
+
+def _bridge_forward_get(path: str, params: dict | None = None):
+    if not _scanner_api_client_enabled():
+        return None
+
+    url = _bridge_url(path)
+    if not url.startswith("http"):
+        return jsonify({"error": "Instructor API URL is not configured."}), 503
+    try:
+        response = requests.get(url, headers=_bridge_headers(), params=(params or {}), timeout=12)
+        payload = response.json()
+    except requests.RequestException as exc:
+        return jsonify({"error": f"Cannot reach instructor station API: {exc}"}), 503
+    except Exception:
+        payload = {"error": f"Bridge returned non-JSON response (HTTP {response.status_code})."}
+    return jsonify(payload), int(response.status_code)
+
+
+def _bridge_forward_post(path: str, payload: dict | None = None):
+    if not _scanner_api_client_enabled():
+        return None
+
+    url = _bridge_url(path)
+    if not url.startswith("http"):
+        return jsonify({"error": "Instructor API URL is not configured."}), 503
+    try:
+        response = requests.post(url, headers=_bridge_headers(), json=(payload or {}), timeout=15)
+        body = response.json()
+    except requests.RequestException as exc:
+        return jsonify({"error": f"Cannot reach instructor station API: {exc}"}), 503
+    except Exception:
+        body = {"error": f"Bridge returned non-JSON response (HTTP {response.status_code})."}
+    return jsonify(body), int(response.status_code)
+
+
+def _bridge_request_is_pairing_authorized() -> bool:
+    expected = _runtime_pairing_token()
+    if not expected:
+        return False
+    received = str(request.headers.get("X-Stdytime-Pairing-Token") or "").strip()
+    return bool(received and received == expected)
+
+
+def _bridge_pairing_auth_error(message: str = "Invalid or missing pairing token."):
+    return jsonify({"error": message}), 401
 
 
 class IsbnLookupError(RuntimeError):
@@ -134,6 +212,460 @@ def _invalidate_book_sync_caches():
 
 def register_book_routes(app):
     """Register book management routes."""
+
+    @app.route('/api/bridge/books/catalog')
+    def api_bridge_books_catalog():
+        if not _bridge_request_is_pairing_authorized():
+            return _bridge_pairing_auth_error()
+
+        try:
+            enforce_isbn_availability_rule()
+            rows = get_books()
+            books_payload = [_book_row_to_dict(row) for row in rows]
+            return jsonify({'books': books_payload, 'count': len(books_payload)})
+        except Exception as e:
+            return jsonify({'error': str(e)}), 500
+
+    @app.route('/api/bridge/books/levels')
+    def api_bridge_books_levels():
+        if not _bridge_request_is_pairing_authorized():
+            return _bridge_pairing_auth_error()
+
+        try:
+            conn = sqlite3.connect(DB_PATH)
+            c = conn.cursor()
+            c.execute("SELECT DISTINCT reading_level FROM books WHERE reading_level IS NOT NULL")
+            raw_levels = [str(row[0]).strip() for row in c.fetchall() if str(row[0] or '').strip()]
+            conn.close()
+
+            level_rank = {level: idx for idx, level in enumerate(BOOK_LEVEL_ORDER)}
+            normalized = []
+            seen = set()
+            for level in raw_levels:
+                if level in seen:
+                    continue
+                seen.add(level)
+                normalized.append(level)
+
+            levels = sorted(
+                normalized,
+                key=lambda lv: (level_rank.get(lv, len(BOOK_LEVEL_ORDER)), lv)
+            )
+            return jsonify({'levels': levels})
+        except Exception as e:
+            return jsonify({'error': str(e)}), 500
+
+    @app.route('/api/bridge/books/isbn_lookup')
+    def api_bridge_books_isbn_lookup():
+        if not _bridge_request_is_pairing_authorized():
+            return _bridge_pairing_auth_error()
+
+        isbn_raw = (request.args.get('isbn') or '').strip()
+        isbn = _sanitize_isbn(isbn_raw)
+
+        if not isbn or len(isbn) not in (10, 13):
+            return jsonify({'error': 'Please scan or enter a valid ISBN-10 or ISBN-13.'}), 400
+
+        cooldown = server_cache.get_cache(ISBN_LOOKUP_RATE_LIMIT_COOLDOWN_KEY)
+        if cooldown:
+            retry_after = int(cooldown.get('retry_after_seconds', 5)) if isinstance(cooldown, dict) else 5
+            return jsonify({
+                'error': 'Google Books is rate-limiting requests. Please retry shortly.',
+                'retry_after_seconds': retry_after,
+            }), 429
+
+        try:
+            data = _lookup_isbn_online_cached(isbn)
+        except IsbnLookupError as e:
+            if e.status_code == 429:
+                retry_after = max(1, e.retry_after_seconds or 5)
+                server_cache.set_cache(
+                    ISBN_LOOKUP_RATE_LIMIT_COOLDOWN_KEY,
+                    {'retry_after_seconds': retry_after},
+                    ttl_seconds=retry_after,
+                )
+                return jsonify({
+                    'error': 'Google Books is rate-limiting requests. Please retry shortly.',
+                    'retry_after_seconds': retry_after,
+                }), 429
+            return jsonify({'error': f"Lookup failed: {e}"}), 502
+        except Exception as e:
+            return jsonify({'error': f"Lookup failed: {e}"}), 502
+
+        existing_by_isbn = find_book_by_isbn(isbn)
+        isbn_existing_id = existing_by_isbn[0] if existing_by_isbn else None
+        isbn_existing_book = None
+        if isbn_existing_id:
+            isbn_existing_book = get_book(isbn_existing_id)
+
+        existing = find_book_by_title(data.get('title')) if data.get('title') else None
+        existing_id = existing[0] if existing else None
+        existing_book = None
+        if existing_id:
+            existing_book = get_book(existing_id)
+
+        return jsonify({
+            'book': data,
+            'existing_id': existing_id,
+            'existing_book': _book_row_to_dict(existing_book) if existing_book else None,
+            'isbn_existing_id': isbn_existing_id,
+            'isbn_existing_book': _book_row_to_dict(isbn_existing_book) if isbn_existing_book else None,
+            'message': "Book found" if data else "No data found",
+        })
+
+    @app.route('/api/bridge/books/search')
+    def api_bridge_books_search():
+        if not _bridge_request_is_pairing_authorized():
+            return _bridge_pairing_auth_error()
+
+        query_raw = request.args.get('q', '').strip()
+        query = query_raw.lower()
+        level = request.args.get('level', '').strip()
+        isbn_candidates = _expand_isbn_candidates(query_raw)
+
+        try:
+            enforce_isbn_availability_rule()
+            conn = sqlite3.connect(DB_PATH)
+            c = conn.cursor()
+
+            sql = "SELECT id, title, author, available, reading_level, isbn, isbn13, publisher, copies, borrower_id FROM books WHERE 1=1"
+            params = []
+
+            if isbn_candidates:
+                placeholders = ",".join(["?" for _ in isbn_candidates])
+                sql += (
+                    f" AND (UPPER(TRIM(COALESCE(isbn, ''))) IN ({placeholders}) "
+                    f"OR UPPER(TRIM(COALESCE(isbn13, ''))) IN ({placeholders}))"
+                )
+                params.extend(isbn_candidates)
+                params.extend(isbn_candidates)
+            elif query:
+                sql += " AND (title LIKE ? OR author LIKE ? OR publisher LIKE ? OR isbn LIKE ? OR isbn13 LIKE ?)"
+                search_term = f"%{query}%"
+                params.extend([search_term, search_term, search_term, search_term, search_term])
+
+            if level:
+                sql += " AND reading_level = ?"
+                params.append(level)
+
+            sql += " ORDER BY title"
+            c.execute(sql, params)
+            books = c.fetchall()
+            conn.close()
+
+            books_list = [_book_row_to_dict(book) for book in books]
+            return jsonify({'books': books_list, 'count': len(books_list)})
+        except Exception as e:
+            return jsonify({'error': str(e)}), 500
+
+    @app.route('/api/bridge/books/loan', methods=['POST'])
+    def api_bridge_books_loan():
+        if not _bridge_request_is_pairing_authorized():
+            return _bridge_pairing_auth_error()
+
+        payload = request.get_json(silent=True) or {}
+        book_id = payload.get('book_id')
+        student_input = (payload.get('student_input') or '').strip()
+        student_id = payload.get('student_id')
+
+        if not book_id:
+            return jsonify({'error': 'Book ID is required.'}), 400
+        if not (student_input or student_id):
+            return jsonify({'error': 'Student name or ID is required.'}), 400
+
+        try:
+            book = get_book(book_id)
+            if not book:
+                return jsonify({'error': 'Book not found.'}), 404
+            if not (book[5] or book[6]):
+                return jsonify({'error': 'Book cannot be loaned without an ISBN.'}), 400
+            if (book[8] or 0) <= 0:
+                return jsonify({'error': 'Book has zero copies and cannot be loaned.'}), 400
+            if not book[3]:
+                return jsonify({'error': 'Book is already loaned.'}), 400
+
+            student_row = None
+            if student_id:
+                student_row = get_student(int(student_id))
+            if not student_row and student_input:
+                if student_input.isdigit():
+                    student_row = get_student(int(student_input))
+                if not student_row:
+                    with sqlite3.connect(DB_PATH) as conn:
+                        c = conn.cursor()
+                        row = c.execute(
+                            "SELECT id, name FROM students WHERE lower(name)=lower(?) LIMIT 1",
+                            (student_input,)
+                        ).fetchone()
+                        if row:
+                            student_row = (row[0], row[1])
+            if not student_row:
+                return jsonify({'error': 'Student not found.'}), 404
+
+            resolved_student_id = student_row[0]
+            checkout_date = loan_book(book_id, resolved_student_id)
+            if not checkout_date:
+                return jsonify({'error': 'Book or student not found for current user.'}), 404
+
+            _invalidate_books_cache()
+            return jsonify({
+                'status': 'loaned',
+                'book_id': book_id,
+                'student_id': resolved_student_id,
+                'student_name': student_row[1] if len(student_row) > 1 else None,
+                'checkout_date': checkout_date,
+            })
+        except Exception as e:
+            return jsonify({'error': str(e)}), 500
+
+    @app.route('/api/bridge/books/save', methods=['POST'])
+    def api_bridge_books_save():
+        if not _bridge_request_is_pairing_authorized():
+            return _bridge_pairing_auth_error()
+
+        payload = request.get_json(silent=True) or {}
+
+        title = (payload.get('title') or '').strip()
+        author = (payload.get('author') or '').strip()
+        publisher = (payload.get('publisher') or '').strip()
+        isbn = _sanitize_isbn(payload.get('isbn')) if payload.get('isbn') else None
+        isbn13 = _sanitize_isbn(payload.get('isbn13')) if payload.get('isbn13') else None
+        level = (payload.get('reading_level') or '').strip()
+        copies = _parse_non_negative_int(payload.get('copies'), default=1)
+        existing_id = payload.get('id')
+
+        if existing_id:
+            try:
+                update_book(
+                    existing_id,
+                    title=title or None,
+                    author=author or None,
+                    publisher=publisher or None,
+                    isbn=isbn,
+                    isbn13=isbn13,
+                    reading_level=level or None,
+                    copies=copies,
+                    available=1 if (copies > 0 and (isbn or isbn13)) else 0,
+                    borrower_id=payload.get('borrower_id') if payload.get('borrower_id') is not None else None
+                )
+                _invalidate_books_cache(existing_id)
+                return jsonify({'status': 'updated', 'id': existing_id})
+            except Exception as e:
+                return jsonify({'error': str(e)}), 500
+
+        incoming_title_key = _normalize_title_key(title)
+        incoming_isbn_tokens = _isbn_tokens(isbn, isbn13)
+        if incoming_title_key and incoming_isbn_tokens:
+            isbn_match_row = None
+            for token in incoming_isbn_tokens:
+                isbn_match_row = find_book_by_isbn(token)
+                if isbn_match_row:
+                    break
+
+            if isbn_match_row:
+                existing_title_key = _normalize_title_key(isbn_match_row[1] if len(isbn_match_row) > 1 else '')
+                existing_isbn_tokens = _isbn_tokens(
+                    isbn_match_row[5] if len(isbn_match_row) > 5 else None,
+                    isbn_match_row[6] if len(isbn_match_row) > 6 else None,
+                )
+                has_same_isbn = bool(existing_isbn_tokens.intersection(incoming_isbn_tokens))
+
+                if existing_title_key == incoming_title_key and has_same_isbn:
+                    existing_book_id = isbn_match_row[0]
+                    existing_copies = _parse_non_negative_int(
+                        isbn_match_row[8] if len(isbn_match_row) > 8 else 0,
+                        default=0,
+                    )
+                    new_copies = existing_copies + max(1, copies)
+                    update_book(existing_book_id, copies=new_copies)
+                    _invalidate_books_cache(existing_book_id)
+                    return jsonify({'status': 'updated', 'id': existing_book_id, 'new_copies': new_copies})
+
+        if not title:
+            return jsonify({'error': 'Title is required.'}), 400
+        if not level:
+            return jsonify({'error': 'Reading level is required for new books.'}), 400
+
+        try:
+            new_id = add_book(
+                title=title,
+                author=author,
+                publisher=publisher,
+                isbn=isbn,
+                isbn13=isbn13,
+                available=1 if (copies > 0 and (isbn or isbn13)) else 0,
+                reading_level=level,
+                copies=copies
+            )
+            _invalidate_books_cache(new_id)
+            return jsonify({'status': 'created', 'id': new_id})
+        except Exception as e:
+            return jsonify({'error': str(e)}), 500
+
+    @app.route('/api/bridge/books/increase_copies', methods=['POST'])
+    def api_bridge_books_increase_copies():
+        if not _bridge_request_is_pairing_authorized():
+            return _bridge_pairing_auth_error()
+
+        payload = request.get_json(silent=True) or {}
+        book_id = payload.get('id')
+        additional_copies = _parse_non_negative_int(payload.get('additional_copies'), default=1)
+
+        if not book_id:
+            return jsonify({'error': 'Book ID is required.'}), 400
+
+        try:
+            book = get_book(book_id)
+            if not book:
+                return jsonify({'error': 'Book not found.'}), 404
+
+            current_copies = book[8] if len(book) > 8 else 1
+            new_copies = current_copies + additional_copies
+            update_book(book_id, copies=new_copies)
+            _invalidate_books_cache()
+            return jsonify({'status': 'updated', 'id': book_id, 'new_copies': new_copies})
+        except Exception as e:
+            return jsonify({'error': str(e)}), 500
+
+    @app.route('/api/bridge/books/clear-loan', methods=['POST'])
+    def api_bridge_books_clear_loan():
+        if not _bridge_request_is_pairing_authorized():
+            return _bridge_pairing_auth_error()
+
+        payload = request.get_json(silent=True) or {}
+        book_id = payload.get('book_id')
+        student_id = payload.get('student_id')
+
+        if not book_id or not student_id:
+            return jsonify({'error': 'Book ID and Student ID are required.'}), 400
+
+        try:
+            book_id = int(book_id)
+            student_id = int(student_id)
+        except (TypeError, ValueError):
+            return jsonify({'error': 'Invalid book or student ID.'}), 400
+
+        try:
+            cleared_at = clear_active_loan(book_id, student_id)
+            if not cleared_at:
+                return jsonify({'error': 'No active loan found for this student and book.'}), 404
+            _invalidate_books_cache()
+            return jsonify({'status': 'cleared', 'book_id': book_id, 'student_id': student_id, 'cleared_at': cleared_at})
+        except Exception as e:
+            return jsonify({'error': str(e)}), 500
+
+    @app.route('/api/bridge/books/return', methods=['POST'])
+    def api_bridge_books_return():
+        if not _bridge_request_is_pairing_authorized():
+            return _bridge_pairing_auth_error()
+
+        payload = request.get_json(silent=True) or {}
+        book_id = payload.get('book_id')
+        if not book_id:
+            return jsonify({'error': 'Book ID is required.'}), 400
+        try:
+            book = get_book(book_id)
+            if not book:
+                return jsonify({'error': 'Book not found.'}), 404
+            if book[3]:
+                return jsonify({'error': 'Book is already available.'}), 400
+            return_date = return_book(book_id)
+            _invalidate_books_cache()
+            return jsonify({'status': 'returned', 'book_id': book_id, 'return_date': return_date})
+        except Exception as e:
+            return jsonify({'error': str(e)}), 500
+
+    @app.route('/api/bridge/books/<int:book_id>')
+    def api_bridge_books_get(book_id: int):
+        if not _bridge_request_is_pairing_authorized():
+            return _bridge_pairing_auth_error()
+
+        try:
+            book = get_book(book_id)
+            if not book:
+                return jsonify({'error': 'Book not found'}), 404
+            data = _book_row_to_dict(book)
+            if data.get('borrower_id'):
+                student = get_student(data['borrower_id'])
+                if student:
+                    data['borrower_name'] = student[1]
+            return jsonify({'book': data})
+        except Exception as e:
+            return jsonify({'error': str(e)}), 500
+
+    @app.route('/api/bridge/books/delete/<int:book_id>', methods=['POST'])
+    def api_bridge_books_delete(book_id: int):
+        if not _bridge_request_is_pairing_authorized():
+            return _bridge_pairing_auth_error()
+
+        try:
+            success = delete_book(book_id)
+            if success:
+                _invalidate_books_cache()
+                return jsonify({'success': True, 'deleted': True})
+            return jsonify({'success': False, 'deleted': False, 'error': 'Book not found'}), 404
+        except Exception as e:
+            return jsonify({'success': False, 'error': str(e)}), 500
+
+    @app.route('/api/bridge/students/suggest')
+    def api_bridge_students_suggest():
+        if not _bridge_request_is_pairing_authorized():
+            return _bridge_pairing_auth_error()
+        q = (request.args.get('q') or '').strip()
+        if not q or len(q) < 3:
+            return jsonify({'suggestions': []})
+
+        with sqlite3.connect(DB_PATH) as conn:
+            c = conn.cursor()
+            rows = c.execute(
+                "SELECT id, name FROM students WHERE lower(name) LIKE lower(?) ORDER BY name LIMIT 10",
+                (f"{q}%",)
+            ).fetchall()
+            suggestions = [{'id': row[0], 'name': row[1]} for row in rows]
+            return jsonify({'suggestions': suggestions})
+
+    @app.route('/api/bridge/students/active')
+    def api_bridge_students_active():
+        if not _bridge_request_is_pairing_authorized():
+            return _bridge_pairing_auth_error()
+        with sqlite3.connect(DB_PATH) as conn:
+            c = conn.cursor()
+            rows = c.execute(
+                "SELECT id, name FROM students WHERE active = 1 ORDER BY name",
+                (),
+            ).fetchall()
+            students = [{'id': row[0], 'name': row[1]} for row in rows]
+            return jsonify({'students': students})
+
+    @app.route('/api/bridge/students/lookup')
+    def api_bridge_students_lookup():
+        if not _bridge_request_is_pairing_authorized():
+            return _bridge_pairing_auth_error()
+        q = (request.args.get('q') or '').strip()
+        if not q:
+            return jsonify({'error': 'Student query is required.'}), 400
+        student = None
+
+        qr_match = re.match(r'^ID:(\d+)', q)
+        if qr_match:
+            student_id = int(qr_match.group(1))
+            student = get_student(student_id)
+            if student:
+                return jsonify({'student': {'id': student[0], 'name': student[1]}})
+
+        if q.isdigit():
+            student = get_student(int(q))
+            if student:
+                return jsonify({'student': {'id': student[0], 'name': student[1]}})
+        with sqlite3.connect(DB_PATH) as conn:
+            c = conn.cursor()
+            row = c.execute(
+                "SELECT id, name FROM students WHERE lower(name) = lower(?) LIMIT 1",
+                (q,)
+            ).fetchone()
+            if row:
+                return jsonify({'student': {'id': row[0], 'name': row[1]}})
+        return jsonify({'error': 'Student not found.'}), 404
     
     # ----------------------------------------
     # Add Book page
@@ -207,6 +739,10 @@ def register_book_routes(app):
     @require_feature(auth_manager.FEATURE_BOOKS)
     def api_books_catalog():
         """Return full book catalog details with slower cache lane."""
+        forwarded = _bridge_forward_get('/api/bridge/books/catalog')
+        if forwarded is not None:
+            return forwarded
+
         def _build_catalog_payload():
             enforce_isbn_availability_rule()
             rows = get_books()
@@ -225,6 +761,10 @@ def register_book_routes(app):
     @require_feature(auth_manager.FEATURE_BOOKS)
     def api_books_search():
         """API endpoint to search/filter books."""
+        forwarded = _bridge_forward_get('/api/bridge/books/search', request.args.to_dict(flat=True))
+        if forwarded is not None:
+            return forwarded
+
         query_raw = request.args.get('q', '').strip()
         query = query_raw.lower()
         level = request.args.get('level', '').strip()
@@ -280,6 +820,10 @@ def register_book_routes(app):
     @require_feature(auth_manager.FEATURE_BOOKS)
     def api_books_levels():
         """Get all unique reading levels."""
+        forwarded = _bridge_forward_get('/api/bridge/books/levels')
+        if forwarded is not None:
+            return forwarded
+
         try:
             conn = sqlite3.connect(DB_PATH)
             c = conn.cursor()
@@ -350,6 +894,10 @@ def register_book_routes(app):
     @require_login
     def api_students_suggest():
         """Return student name suggestions for autocomplete."""
+        forwarded = _bridge_forward_get('/api/bridge/students/suggest', request.args.to_dict(flat=True))
+        if forwarded is not None:
+            return forwarded
+
         q = (request.args.get('q') or '').strip()
         if not q or len(q) < 3:
             return jsonify({'suggestions': []})
@@ -367,6 +915,10 @@ def register_book_routes(app):
     @require_login
     def api_students_active():
         """Return all active students ordered by name for dropdown selection."""
+        forwarded = _bridge_forward_get('/api/bridge/students/active', request.args.to_dict(flat=True))
+        if forwarded is not None:
+            return forwarded
+
         with sqlite3.connect(DB_PATH) as conn:
             c = conn.cursor()
             rows = c.execute(
@@ -380,6 +932,10 @@ def register_book_routes(app):
     @require_login
     def api_students_lookup():
         """Lookup a student by id (numeric) or exact name (case-insensitive)."""
+        forwarded = _bridge_forward_get('/api/bridge/students/lookup', request.args.to_dict(flat=True))
+        if forwarded is not None:
+            return forwarded
+
         q = (request.args.get('q') or '').strip()
         if not q:
             return jsonify({'error': 'Student query is required.'}), 400
@@ -416,6 +972,10 @@ def register_book_routes(app):
     @require_login
     @require_feature(auth_manager.FEATURE_BOOKS)
     def api_books_isbn_lookup():
+        forwarded = _bridge_forward_get('/api/bridge/books/isbn_lookup', request.args.to_dict(flat=True))
+        if forwarded is not None:
+            return forwarded
+
         isbn_raw = (request.args.get('isbn') or '').strip()
         isbn = _sanitize_isbn(isbn_raw)
 
@@ -478,6 +1038,10 @@ def register_book_routes(app):
     @require_login
     @require_feature(auth_manager.FEATURE_BOOKS)
     def api_books_save():
+        forwarded = _bridge_forward_post('/api/bridge/books/save', request.get_json(silent=True) or {})
+        if forwarded is not None:
+            return forwarded
+
         payload = request.get_json(silent=True) or {}
 
         title = (payload.get('title') or '').strip()
@@ -570,6 +1134,10 @@ def register_book_routes(app):
     @require_feature(auth_manager.FEATURE_BOOKS)
     def api_books_increase_copies():
         """Increase the number of copies for an existing book."""
+        forwarded = _bridge_forward_post('/api/bridge/books/increase_copies', request.get_json(silent=True) or {})
+        if forwarded is not None:
+            return forwarded
+
         payload = request.get_json(silent=True) or {}
         book_id = payload.get('id')
         additional_copies = _parse_non_negative_int(payload.get('additional_copies'), default=1)
@@ -600,6 +1168,10 @@ def register_book_routes(app):
     @require_login
     @require_feature(auth_manager.FEATURE_BOOKS)
     def api_books_loan():
+        forwarded = _bridge_forward_post('/api/bridge/books/loan', request.get_json(silent=True) or {})
+        if forwarded is not None:
+            return forwarded
+
         payload = request.get_json(silent=True) or {}
         book_id = payload.get('book_id')
         student_input = (payload.get('student_input') or '').strip()
@@ -669,6 +1241,10 @@ def register_book_routes(app):
     @require_feature(auth_manager.FEATURE_BOOKS)
     def api_books_clear_loan():
         """Clear an active loan directly from the loaned books table."""
+        forwarded = _bridge_forward_post('/api/bridge/books/clear-loan', request.get_json(silent=True) or {})
+        if forwarded is not None:
+            return forwarded
+
         payload = request.get_json(silent=True) or {}
         book_id = payload.get('book_id')
         student_id = payload.get('student_id')
@@ -695,6 +1271,10 @@ def register_book_routes(app):
     @require_login
     @require_feature(auth_manager.FEATURE_BOOKS)
     def api_books_return():
+        forwarded = _bridge_forward_post('/api/bridge/books/return', request.get_json(silent=True) or {})
+        if forwarded is not None:
+            return forwarded
+
         payload = request.get_json(silent=True) or {}
         book_id = payload.get('book_id')
         if not book_id:
@@ -742,6 +1322,10 @@ def register_book_routes(app):
     @require_login
     @require_feature(auth_manager.FEATURE_BOOKS)
     def api_books_get(book_id: int):
+        forwarded = _bridge_forward_get(f'/api/bridge/books/{book_id}')
+        if forwarded is not None:
+            return forwarded
+
         try:
             cache_key = _book_detail_cache_key(book_id)
             def _build_book_detail_payload():
@@ -773,6 +1357,17 @@ def register_book_routes(app):
     @require_admin
     @require_feature(auth_manager.FEATURE_BOOKS)
     def books_delete(book_id: int):
+        if _scanner_api_client_enabled():
+            forwarded = _bridge_forward_post(f'/api/bridge/books/delete/{book_id}', {})
+            if forwarded is not None:
+                response, status_code = forwarded
+                payload = response.get_json(silent=True) or {}
+                if 200 <= int(status_code) < 300 and payload.get('deleted'):
+                    flash("Book deleted", "success")
+                else:
+                    flash(payload.get('error') or 'Delete failed on Instructor Station.', 'danger')
+                return redirect(url_for("books_list"))
+
         try:
             success = delete_book(book_id)
             if success:

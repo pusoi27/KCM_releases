@@ -31,6 +31,7 @@ from modules.database import (
     init_db,
     DB_PATH,
     get_db_config_status,
+    get_station_runtime_config,
     get_station_dataset_sync_status,
     record_app_version,
     get_version_compatibility_warning,
@@ -684,7 +685,10 @@ def before_request_enforce_first_run_setup():
         and str(_ls.get('station_role') or '').strip().lower() == 'checkin'
     )
 
-    if storage_ready and (profile_ready or _is_scanner_two_station):
+    runtime_cfg = get_station_runtime_config()
+    _is_scanner_api_client = str(runtime_cfg.get('station_mode') or '').strip().lower() == 'scanner_api_client'
+
+    if storage_ready and (profile_ready or _is_scanner_two_station or _is_scanner_api_client):
         return None
 
     if request.path.startswith('/api/'):

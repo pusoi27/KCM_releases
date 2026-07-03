@@ -72,6 +72,9 @@ _STATION_MAILBOX_THREAD: threading.Thread | None = None
 _MAILBOX_LAST_STAFF_EXPORT_HASH = ""
 _MAILBOX_LAST_REFERENCE_EXPORT_HASH = ""
 _DB_HEALTH_STALE_AFTER_MINUTES = 25
+_SNAPSHOT_TIMER_STOP_EVENT = threading.Event()
+_SNAPSHOT_TIMER_THREAD: threading.Thread | None = None
+_SNAPSHOT_INTERVAL_MINUTES_DEFAULT = 15
 
 # Adaptive retry mechanism for OneDrive sync
 _SYNC_FAILURE_COUNT = 0
@@ -439,6 +442,45 @@ def _resolve_cloud_provider_and_path(cfg: dict) -> tuple[str, str]:
     return "onedrive", ""
 
 
+def _normalize_station_mode(value: str) -> str:
+    mode = str(value or "").strip().lower()
+    if mode in {"scanner_api_client", "instructor_server"}:
+        return mode
+    return "instructor_server"
+
+
+def _normalize_backup_mode(value: str) -> str:
+    mode = str(value or "").strip().lower()
+    if mode in {"instructor_snapshots_only", "legacy_cloud_sync"}:
+        return mode
+    return "instructor_snapshots_only"
+
+
+def _station_runtime_config_from_cfg(cfg: dict) -> dict:
+    station_mode = _normalize_station_mode(cfg.get("station_mode", "instructor_server"))
+    backup_mode = _normalize_backup_mode(cfg.get("backup_mode", "instructor_snapshots_only"))
+    instructor_api_base_url = str(cfg.get("instructor_api_base_url", "") or "").strip()
+    station_pairing_token = str(cfg.get("station_pairing_token", "") or "").strip()
+    snapshot_interval_minutes = _safe_int(
+        cfg.get("snapshot_interval_minutes"),
+        default=_SNAPSHOT_INTERVAL_MINUTES_DEFAULT,
+        minimum=5,
+    )
+    return {
+        "station_mode": station_mode,
+        "backup_mode": backup_mode,
+        "instructor_api_base_url": instructor_api_base_url,
+        "station_pairing_token": station_pairing_token,
+        "snapshot_interval_minutes": snapshot_interval_minutes,
+    }
+
+
+def get_station_runtime_config() -> dict:
+    """Return station runtime topology config from db_config.json."""
+    cfg = _read_db_config()
+    return _station_runtime_config_from_cfg(cfg)
+
+
 def _cloud_label(sync_path: str) -> str:
     return "OneDrive" if _is_onedrive_location(sync_path) else "Google Drive"
 
@@ -564,6 +606,12 @@ def get_db_config_status() -> dict:
     gdrive_sync_path = ""
     onedrive_sync_path = _normalize_path(str(cfg.get("onedrive_sync_path", "") or ""))
     cloud_provider, cloud_sync_path = _resolve_cloud_provider_and_path(cfg)
+    runtime = _station_runtime_config_from_cfg(cfg)
+    station_mode = runtime["station_mode"]
+    backup_mode = runtime["backup_mode"]
+    instructor_api_base_url = runtime["instructor_api_base_url"]
+    station_pairing_token = runtime["station_pairing_token"]
+    snapshot_interval_minutes = runtime["snapshot_interval_minutes"]
 
     issues: list[str] = []
     warnings: list[str] = []
@@ -572,19 +620,26 @@ def get_db_config_status() -> dict:
     if not usable:
         issues.append(f"Local database path is not writable: {reason}")
 
-    if not cloud_sync_path:
-        issues.append(
-            "OneDrive backup folder path is required. Example: C:/Users/YourName/OneDrive/StdyTime."
-        )
+    if backup_mode == "legacy_cloud_sync":
+        if not cloud_sync_path:
+            issues.append(
+                "OneDrive backup folder path is required. Example: C:/Users/YourName/OneDrive/StdyTime."
+            )
+        else:
+            if not _is_supported_cloud_location(cloud_sync_path, cloud_provider):
+                issues.append(
+                    "OneDrive folder path must point to your OneDrive folder, for example: C:/Users/YourName/OneDrive/StdyTime."
+                )
+            elif not _cloud_path_exists(cloud_sync_path):
+                issues.append(
+                    "Configured cloud backup path does not exist yet. Create the folder first, then save again."
+                )
     else:
-        if not _is_supported_cloud_location(cloud_sync_path, cloud_provider):
-            issues.append(
-                "OneDrive folder path must point to your OneDrive folder, for example: C:/Users/YourName/OneDrive/StdyTime."
-            )
-        elif not _cloud_path_exists(cloud_sync_path):
-            issues.append(
-                "Configured cloud backup path does not exist yet. Create the folder first, then save again."
-            )
+        if station_mode == "scanner_api_client":
+            if not instructor_api_base_url:
+                issues.append("Scanner API Client mode requires Instructor API URL.")
+            if not station_pairing_token:
+                issues.append("Scanner API Client mode requires a pairing token.")
 
     health = get_database_health_report(mode="quick_check")
 
@@ -601,10 +656,16 @@ def get_db_config_status() -> dict:
             "onedrive_sync_path": onedrive_sync_path,
             "sync_interval_minutes": _FIXED_SYNC_INTERVAL_MINUTES,
             "startup_pull_from_gdrive": bool(cfg.get("startup_pull_from_gdrive", False)),
+            "station_mode": station_mode,
+            "backup_mode": backup_mode,
+            "instructor_api_base_url": instructor_api_base_url,
+            "station_pairing_token": station_pairing_token,
+            "snapshot_interval_minutes": snapshot_interval_minutes,
         },
         "example": {
             "db_path": "C:/Users/YourName/AppData/Local/StdyTime/Stdytime.db",
             "onedrive_sync_path": "C:/Users/YourName/OneDrive/StdyTime",
+            "instructor_api_base_url": "http://192.168.1.50:5000",
         },
     }
 
@@ -615,12 +676,26 @@ def save_db_config_paths(
     gdrive_sync_path: str,
     onedrive_sync_path: str = "",
     cloud_provider: str = "onedrive",
+    station_mode: str = "instructor_server",
+    backup_mode: str = "instructor_snapshots_only",
+    instructor_api_base_url: str = "",
+    station_pairing_token: str = "",
+    snapshot_interval_minutes: int = _SNAPSHOT_INTERVAL_MINUTES_DEFAULT,
 ) -> dict:
     """Persist db_path and cloud sync path settings to db_config.json and return updated status."""
     db_path = _normalize_path(db_path or "")
     gdrive_sync_path = ""
     onedrive_sync_path = _normalize_path(onedrive_sync_path or "")
     cloud_provider = "onedrive"
+    station_mode = _normalize_station_mode(station_mode)
+    backup_mode = _normalize_backup_mode(backup_mode)
+    instructor_api_base_url = str(instructor_api_base_url or "").strip()
+    station_pairing_token = str(station_pairing_token or "").strip()
+    snapshot_interval_minutes = _safe_int(
+        snapshot_interval_minutes,
+        default=_SNAPSHOT_INTERVAL_MINUTES_DEFAULT,
+        minimum=5,
+    )
 
     cfg = _read_db_config()
     existing_db_path = str(cfg.get("db_path", "") or "").strip().replace("\\", "/")
@@ -639,6 +714,11 @@ def save_db_config_paths(
     cfg["onedrive_sync_path"] = onedrive_sync_path
     cfg["cloud_provider"] = "onedrive"
     cfg["sync_interval_minutes"] = _FIXED_SYNC_INTERVAL_MINUTES
+    cfg["station_mode"] = station_mode
+    cfg["backup_mode"] = backup_mode
+    cfg["instructor_api_base_url"] = instructor_api_base_url
+    cfg["station_pairing_token"] = station_pairing_token
+    cfg["snapshot_interval_minutes"] = snapshot_interval_minutes
 
     _write_db_config(cfg)
 
@@ -3524,6 +3604,43 @@ def _start_background_sync(local_path: str, gdrive_path: str, interval_minutes: 
     print(f"[sync] Adaptive retry delays: {_SYNC_RETRY_DELAYS} seconds")
 
 
+def _start_snapshot_backup_timer(interval_minutes: int = _SNAPSHOT_INTERVAL_MINUTES_DEFAULT) -> None:
+    """Run periodic local snapshot backups on Instructor server mode."""
+    global _SNAPSHOT_TIMER_THREAD
+
+    if _SNAPSHOT_TIMER_THREAD and _SNAPSHOT_TIMER_THREAD.is_alive():
+        return
+
+    wait_seconds = max(300, int(interval_minutes) * 60)
+    _SNAPSHOT_TIMER_STOP_EVENT.clear()
+
+    def _loop() -> None:
+        while not _SNAPSHOT_TIMER_STOP_EVENT.wait(wait_seconds):
+            try:
+                result = backup_database_now(source="local", label="auto")
+                if result.get("ok"):
+                    print(f"[backup] Auto snapshot created: {result.get('path')}")
+                else:
+                    print(
+                        f"[backup] WARNING: auto snapshot failed: {result.get('error') or 'unknown error'}",
+                        file=sys.stderr,
+                    )
+            except Exception as exc:
+                print(f"[backup] WARNING: auto snapshot loop error: {exc}", file=sys.stderr)
+
+    _SNAPSHOT_TIMER_THREAD = threading.Thread(
+        target=_loop,
+        daemon=True,
+        name="instructor-snapshot-backup",
+    )
+    _SNAPSHOT_TIMER_THREAD.start()
+    print(f"[backup] Instructor snapshot timer started (every {wait_seconds // 60} min)")
+
+
+def stop_snapshot_backup_timer() -> None:
+    _SNAPSHOT_TIMER_STOP_EVENT.set()
+
+
 def flush_cloud_backup_on_shutdown(
     *,
     status_after_seconds: int = 8,
@@ -3536,6 +3653,9 @@ def flush_cloud_backup_on_shutdown(
     - Displays a temporary user-facing wait message when sync takes longer than
       ``status_after_seconds``.
     """
+    if _BACKUP_MODE == "instructor_snapshots_only":
+        return True
+
     if is_station_mailbox_mode_enabled():
         return True
 
@@ -3658,6 +3778,10 @@ _cfg = _read_db_config()
 _CLOUD_PROVIDER, _CLOUD_SYNC_PATH = _resolve_cloud_provider_and_path(_cfg)
 GDRIVE_SYNC_PATH: str | None = _CLOUD_SYNC_PATH or None
 _SYNC_INTERVAL = _FIXED_SYNC_INTERVAL_MINUTES
+_RUNTIME_CFG = _station_runtime_config_from_cfg(_cfg)
+_STATION_MODE = _RUNTIME_CFG["station_mode"]
+_BACKUP_MODE = _RUNTIME_CFG["backup_mode"]
+_SNAPSHOT_INTERVAL_MINUTES = _RUNTIME_CFG["snapshot_interval_minutes"]
 
 DB_PATH = _resolve_db_path()
 
@@ -3665,6 +3789,13 @@ def _initialize_cloud_sync_runtime() -> None:
     """Start cloud sync runtime without holding the cloud lease open."""
     global _CLOUD_SYNC_RUNTIME_READY
     if _CLOUD_SYNC_RUNTIME_READY:
+        return
+
+    if _BACKUP_MODE == "instructor_snapshots_only":
+        if _STATION_MODE == "instructor_server":
+            _start_snapshot_backup_timer(_SNAPSHOT_INTERVAL_MINUTES)
+        _CLOUD_SYNC_RUNTIME_READY = True
+        print("[backup] Instructor snapshots-only mode enabled (cloud live-sync disabled).")
         return
 
     if not GDRIVE_SYNC_PATH:
@@ -3723,6 +3854,7 @@ def _sync_on_exit():
     stop_station_mailbox_sync()
     stop_onedrive_folder_monitor()
     stop_manual_checkpoint_timer()
+    stop_snapshot_backup_timer()
     restore_onedrive_quarantined_files()
 
 
