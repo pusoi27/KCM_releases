@@ -1,7 +1,7 @@
 ﻿# routes/books.py
 """Books management routes."""
 
-from flask import render_template, request, jsonify, redirect, url_for, flash
+from flask import render_template, request, jsonify, redirect, url_for, flash, g
 from modules.book_manager import (
     get_books,
     find_book_by_title,
@@ -19,6 +19,7 @@ from modules.book_manager import (
 )
 from modules.student_manager import get_student
 from modules import server_cache, db_backup_recovery, auth_manager
+from modules import scanner_sync
 from routes.auth import require_login, require_admin, require_feature
 from routes.operation_utils import invalidate_scoped_cache, json_scoped_failure
 import sqlite3
@@ -74,12 +75,16 @@ def _bridge_forward_get(path: str, params: dict | None = None):
 
     url = _bridge_url(path)
     if not url.startswith("http"):
-        return jsonify({"error": "Instructor API URL is not configured."}), 503
+        g.scanner_bridge_fallback = True
+        g.scanner_bridge_fallback_reason = "missing_instructor_api_url"
+        return None
     try:
         response = requests.get(url, headers=_bridge_headers(), params=(params or {}), timeout=12)
         payload = response.json()
     except requests.RequestException as exc:
-        return jsonify({"error": f"Cannot reach instructor station API: {exc}"}), 503
+        g.scanner_bridge_fallback = True
+        g.scanner_bridge_fallback_reason = f"request_error:{exc}"
+        return None
     except Exception:
         payload = {"error": f"Bridge returned non-JSON response (HTTP {response.status_code})."}
     return jsonify(payload), int(response.status_code)
@@ -91,12 +96,16 @@ def _bridge_forward_post(path: str, payload: dict | None = None):
 
     url = _bridge_url(path)
     if not url.startswith("http"):
-        return jsonify({"error": "Instructor API URL is not configured."}), 503
+        g.scanner_bridge_fallback = True
+        g.scanner_bridge_fallback_reason = "missing_instructor_api_url"
+        return None
     try:
         response = requests.post(url, headers=_bridge_headers(), json=(payload or {}), timeout=15)
         body = response.json()
     except requests.RequestException as exc:
-        return jsonify({"error": f"Cannot reach instructor station API: {exc}"}), 503
+        g.scanner_bridge_fallback = True
+        g.scanner_bridge_fallback_reason = f"request_error:{exc}"
+        return None
     except Exception:
         body = {"error": f"Bridge returned non-JSON response (HTTP {response.status_code})."}
     return jsonify(body), int(response.status_code)
@@ -1226,6 +1235,14 @@ def register_book_routes(app):
                 print(f"[sync] WARNING: immediate cloud push after book loan error: {push_exc}")
 
             _invalidate_books_cache()
+            if _scanner_api_client_enabled() and bool(getattr(g, 'scanner_bridge_fallback', False)):
+                scanner_sync.enqueue_mutation(
+                    'book_loan',
+                    {
+                        'book_id': int(book_id),
+                        'student_id': int(student_id),
+                    },
+                )
             return jsonify({
                 'status': 'loaned',
                 'book_id': book_id,
@@ -1263,6 +1280,14 @@ def register_book_routes(app):
             if not cleared_at:
                 return jsonify({'error': 'No active loan found for this student and book.'}), 404
             _invalidate_books_cache()
+            if _scanner_api_client_enabled() and bool(getattr(g, 'scanner_bridge_fallback', False)):
+                scanner_sync.enqueue_mutation(
+                    'book_clear_loan',
+                    {
+                        'book_id': int(book_id),
+                        'student_id': int(student_id),
+                    },
+                )
             return jsonify({'status': 'cleared', 'book_id': book_id, 'student_id': student_id, 'cleared_at': cleared_at})
         except Exception as e:
             return jsonify({'error': str(e)}), 500
@@ -1287,6 +1312,13 @@ def register_book_routes(app):
                 return jsonify({'error': 'Book is already available.'}), 400
             return_date = return_book(book_id)
             _invalidate_books_cache()
+            if _scanner_api_client_enabled() and bool(getattr(g, 'scanner_bridge_fallback', False)):
+                scanner_sync.enqueue_mutation(
+                    'book_return',
+                    {
+                        'book_id': int(book_id),
+                    },
+                )
             return jsonify({'status': 'returned', 'book_id': book_id, 'return_date': return_date})
         except Exception as e:
             return jsonify({'error': str(e)}), 500

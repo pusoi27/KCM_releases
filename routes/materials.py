@@ -4,9 +4,10 @@ import re
 import sqlite3
 import requests
 
-from flask import flash, jsonify, redirect, render_template, request, url_for
+from flask import flash, jsonify, redirect, render_template, request, url_for, g
 
 from modules import auth_manager, db_backup_recovery, server_cache
+from modules import scanner_sync
 from modules.database import DB_PATH, sync_to_gdrive_now, get_station_runtime_config
 from modules.database import qr_token_exists
 from modules.materials_manager import (
@@ -101,12 +102,16 @@ def _bridge_forward_get(path: str, params: dict | None = None):
 
     url = _bridge_url(path)
     if not url.startswith("http"):
-        return jsonify({"error": "Instructor API URL is not configured."}), 503
+        g.scanner_bridge_fallback = True
+        g.scanner_bridge_fallback_reason = "missing_instructor_api_url"
+        return None
     try:
         response = requests.get(url, headers=_bridge_headers(), params=(params or {}), timeout=12)
         payload = response.json()
     except requests.RequestException as exc:
-        return jsonify({"error": f"Cannot reach instructor station API: {exc}"}), 503
+        g.scanner_bridge_fallback = True
+        g.scanner_bridge_fallback_reason = f"request_error:{exc}"
+        return None
     except Exception:
         payload = {"error": f"Bridge returned non-JSON response (HTTP {response.status_code})."}
     return jsonify(payload), int(response.status_code)
@@ -118,12 +123,16 @@ def _bridge_forward_post(path: str, payload: dict | None = None):
 
     url = _bridge_url(path)
     if not url.startswith("http"):
-        return jsonify({"error": "Instructor API URL is not configured."}), 503
+        g.scanner_bridge_fallback = True
+        g.scanner_bridge_fallback_reason = "missing_instructor_api_url"
+        return None
     try:
         response = requests.post(url, headers=_bridge_headers(), json=(payload or {}), timeout=15)
         body = response.json()
     except requests.RequestException as exc:
-        return jsonify({"error": f"Cannot reach instructor station API: {exc}"}), 503
+        g.scanner_bridge_fallback = True
+        g.scanner_bridge_fallback_reason = f"request_error:{exc}"
+        return None
     except Exception:
         body = {"error": f"Bridge returned non-JSON response (HTTP {response.status_code})."}
     return jsonify(body), int(response.status_code)
@@ -767,6 +776,14 @@ def register_material_routes(app):
                 print(f'[sync] WARNING: immediate cloud push after device loan error: {push_exc}')
 
             _invalidate_materials_cache()
+            if _scanner_api_client_enabled() and bool(getattr(g, 'scanner_bridge_fallback', False)):
+                scanner_sync.enqueue_mutation(
+                    'material_loan',
+                    {
+                        'material_id': int(material_id),
+                        'student_id': int(resolved_student_id),
+                    },
+                )
             return jsonify(
                 {
                     'status': 'loaned',
@@ -799,6 +816,14 @@ def register_material_routes(app):
             if not cleared_at:
                 return jsonify({'error': 'No active loan found for this student and material.'}), 404
             _invalidate_materials_cache()
+            if _scanner_api_client_enabled() and bool(getattr(g, 'scanner_bridge_fallback', False)):
+                scanner_sync.enqueue_mutation(
+                    'material_clear_loan',
+                    {
+                        'material_id': int(material_id),
+                        'student_id': int(student_id),
+                    },
+                )
             return jsonify({'status': 'cleared', 'material_id': material_id, 'student_id': student_id, 'cleared_at': cleared_at})
         except Exception as e:
             return jsonify({'error': str(e)}), 500
@@ -823,6 +848,13 @@ def register_material_routes(app):
                 return jsonify({'error': 'Material is already available.'}), 400
             return_date = return_material(int(material_id))
             _invalidate_materials_cache()
+            if _scanner_api_client_enabled() and bool(getattr(g, 'scanner_bridge_fallback', False)):
+                scanner_sync.enqueue_mutation(
+                    'material_return',
+                    {
+                        'material_id': int(material_id),
+                    },
+                )
             return jsonify({'status': 'returned', 'material_id': material_id, 'return_date': return_date})
         except Exception as e:
             return jsonify({'error': str(e)}), 500

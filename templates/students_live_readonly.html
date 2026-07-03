@@ -1,0 +1,90 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="container-fluid mt-3 px-2 px-md-3">
+  <h4 class="mb-2 text-primary">Live Students (Instructor API)</h4>
+  <div class="alert alert-info py-2" role="alert">
+    <strong>Read-only view.</strong>
+    Scanner Station is showing live student data from Instructor API.
+    {% if instructor_api_base_url %}
+      <div class="small mt-1">Source: <code>{{ instructor_api_base_url }}</code></div>
+    {% endif %}
+  </div>
+
+  <div class="table-responsive border rounded">
+    <table class="table table-sm table-striped align-middle mb-0" id="liveStudentsTable">
+      <thead class="table-light">
+        <tr>
+          <th>ID</th>
+          <th>Name</th>
+          <th>Subjects</th>
+          <th>Status</th>
+          <th>Email</th>
+          <th>Phone</th>
+          <th>Guardian</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td colspan="7" class="text-muted">Loading live students...</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<script>
+(function () {
+  const tableBody = document.querySelector('#liveStudentsTable tbody');
+
+  function statusBadge(status) {
+    const token = String(status || '').toLowerCase();
+    if (token === 'active') return '<span class="badge text-bg-success">Active</span>';
+    if (token === 'checked') return '<span class="badge text-bg-secondary">Checked Out</span>';
+    return '<span class="badge text-bg-light">Registered</span>';
+  }
+
+  function renderRows(students) {
+    if (!Array.isArray(students) || students.length === 0) {
+      tableBody.innerHTML = '<tr><td colspan="7" class="text-muted">No students received from Instructor API.</td></tr>';
+      return;
+    }
+
+    const rows = students.map((s) => {
+      const subjects = Array.isArray(s.subjects) ? s.subjects.filter(Boolean).join(', ') : '';
+      return `
+        <tr>
+          <td>${s.id ?? ''}</td>
+          <td>${(s.name || '').replace(/</g, '&lt;')}</td>
+          <td>${(subjects || '').replace(/</g, '&lt;')}</td>
+          <td>${statusBadge(s.status)}</td>
+          <td>${(s.email || '').replace(/</g, '&lt;')}</td>
+          <td>${(s.phone || '').replace(/</g, '&lt;')}</td>
+          <td>${(s.guardian || '').replace(/</g, '&lt;')}</td>
+        </tr>
+      `;
+    }).join('');
+
+    tableBody.innerHTML = rows;
+  }
+
+  async function loadLiveStudents() {
+    try {
+      const res = await fetch('/api/students/list', { cache: 'no-store' });
+      const payload = await res.json();
+      if (!res.ok) {
+        const message = (payload && payload.error) ? payload.error : `HTTP ${res.status}`;
+        tableBody.innerHTML = `<tr><td colspan="7" class="text-danger">Failed to load Instructor data: ${message}</td></tr>`;
+        return;
+      }
+      renderRows(payload);
+    } catch (err) {
+      tableBody.innerHTML = `<tr><td colspan="7" class="text-danger">Failed to load Instructor data: ${String(err.message || err)}</td></tr>`;
+    }
+  }
+
+  loadLiveStudents();
+  window.setInterval(loadLiveStudents, 15000);
+})();
+</script>
+{% endblock %}

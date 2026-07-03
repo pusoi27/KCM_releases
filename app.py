@@ -41,6 +41,7 @@ from modules import student_manager, timer_manager, qr_generator, assistant_mana
 from modules import instructor_profile_manager
 from modules import user_identity_manager
 from modules import server_cache
+from modules.scanner_sync import start_scanner_reconciler, stop_scanner_reconciler
 from modules.utils import format_hhmm
 from modules.rate_limiter import limiter
 from modules.single_instance import ensure_single_instance, release_single_instance_lock
@@ -344,6 +345,7 @@ app.config['MAX_PHOTO_BYTES'] = _parse_env_int('MAX_PHOTO_MB', 5) * 1024 * 1024
 try:
     init_db()
     print(f"[startup] Database initialized at: {DB_PATH}")
+    start_scanner_reconciler(interval_seconds=12)
 except Exception as db_init_error:
     print(
         f"[startup] FATAL: Database initialization failed for DB_PATH='{DB_PATH}': {db_init_error}",
@@ -1432,6 +1434,7 @@ def print_profiler_summary():
     profiler.print_summary()
 
 atexit.register(print_profiler_summary)
+atexit.register(stop_scanner_reconciler)
 
 
 # ================================================================

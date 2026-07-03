@@ -563,8 +563,10 @@ def register_student_routes(app, upload_folder):
     def students_list():
         runtime = get_station_runtime_config()
         if str(runtime.get('station_mode') or '').strip().lower() == 'scanner_api_client':
-            flash('Scanner Station uses Instructor as source-of-truth. View live class roster on Dashboard.', 'info')
-            return redirect(url_for('dashboard'))
+            return render_template(
+                "students_live_readonly.html",
+                instructor_api_base_url=str(runtime.get('instructor_api_base_url') or '').strip().rstrip('/'),
+            )
 
         duplicate_count = student_manager.get_duplicate_name_count()
         

@@ -125,6 +125,15 @@
 {% endblock %}
 
 {% block content %}
+{% if subscription_access and subscription_access.is_instructor_station %}
+<div class="container-fluid mt-2 px-2 px-md-3">
+  <div class="alert alert-info py-2 mb-2" role="status">
+    <i class="bi bi-eye"></i>
+    <strong>Read-only Class Dashboard:</strong>
+    Instructor Station can monitor class status here, but student check-in/check-out is Scanner-only.
+  </div>
+</div>
+{% endif %}
 <div class="dash-layout">
 
   <!-- Left: icon sidebar menu bar -->

@@ -1,7 +1,8 @@
 ﻿# routes/api.py
-from flask import jsonify, request
+from flask import jsonify, request, g
 from modules import student_manager, assistant_manager, timer_manager, auth_manager, license_manager
 from modules import server_cache
+from modules import scanner_sync
 from modules.email_manager import get_email_manager, render_branded_email_shell, resolve_center_name
 from modules import instructor_profile_manager
 from modules.database import (
@@ -78,17 +79,27 @@ def _bridge_json_response(response):
     return body, int(response.status_code)
 
 
+def _mark_scanner_bridge_offline(reason: str) -> None:
+    try:
+        g.scanner_bridge_fallback = True
+        g.scanner_bridge_fallback_reason = str(reason or "bridge_unreachable")
+    except Exception:
+        pass
+
+
 def _bridge_forward_get(path: str):
     if not _scanner_api_client_enabled():
         return None
 
     url = _bridge_url(path)
     if not url.startswith("http"):
-        return jsonify({"error": "Instructor API URL is not configured."}), 503
+        _mark_scanner_bridge_offline("missing_instructor_api_url")
+        return None
     try:
         response = requests.get(url, headers=_build_bridge_headers(), timeout=12)
     except requests.RequestException as exc:
-        return jsonify({"error": f"Cannot reach instructor station API: {exc}"}), 503
+        _mark_scanner_bridge_offline(f"request_error:{exc}")
+        return None
     body, code = _bridge_json_response(response)
     return jsonify(body), code
 
@@ -99,11 +110,13 @@ def _bridge_forward_post(path: str, payload: dict | None = None):
 
     url = _bridge_url(path)
     if not url.startswith("http"):
-        return jsonify({"error": "Instructor API URL is not configured."}), 503
+        _mark_scanner_bridge_offline("missing_instructor_api_url")
+        return None
     try:
         response = requests.post(url, headers=_build_bridge_headers(), json=(payload or {}), timeout=15)
     except requests.RequestException as exc:
-        return jsonify({"error": f"Cannot reach instructor station API: {exc}"}), 503
+        _mark_scanner_bridge_offline(f"request_error:{exc}")
+        return None
     body, code = _bridge_json_response(response)
     return jsonify(body), code
 
@@ -1038,6 +1051,26 @@ def register_api_routes(app):
             "name": student_name,
         }), 200
 
+    @app.route("/api/bridge/reconcile/apply", methods=["POST"])
+    def api_bridge_reconcile_apply():
+        if not _bridge_request_is_pairing_authorized():
+            return _bridge_pairing_auth_error()
+
+        body = request.get_json(silent=True) or {}
+        op_id = str(body.get("op_id") or "").strip()
+        op_type = str(body.get("op_type") or "").strip()
+        payload = body.get("payload") if isinstance(body.get("payload"), dict) else {}
+
+        result = scanner_sync.apply_incoming_mutation(op_id=op_id, op_type=op_type, payload=payload)
+        code = int(result.pop("code", 200))
+        return jsonify(result), code
+
+    try:
+        from app import csrf
+        csrf.exempt(api_bridge_reconcile_apply)
+    except Exception:
+        pass
+
     try:
         from app import csrf
         csrf.exempt(api_bridge_sessions_toggle)
@@ -1243,6 +1276,14 @@ def register_api_routes(app):
         timer_manager.start_session(sid)
         _push_cloud_backup_after_student_change(sid, "checkin", "api_students_start")
         server_cache.invalidate(_students_list_cache_key())
+        if _scanner_api_client_enabled():
+            scanner_sync.enqueue_mutation(
+                "session_start",
+                {
+                    "student_id": int(sid),
+                    "started_at": time_now(),
+                },
+            )
         return jsonify({"status": "started"})
 
     @app.route("/api/students/stop/<int:sid>", methods=["POST"])
@@ -1255,6 +1296,8 @@ def register_api_routes(app):
         _trace_column3("checkout_begin", sid=sid, student_name=student[1])
         checkout_email_status = None
         checkout_email_message = None
+        end = None
+        duration = None
         with sqlite3.connect(DB_PATH) as conn:
             c = conn.cursor()
             open_row = c.execute(
@@ -1313,6 +1356,15 @@ def register_api_routes(app):
             checkout_email_status=checkout_email_status,
             checked_total=checked_total,
         )
+        if _scanner_api_client_enabled():
+            scanner_sync.enqueue_mutation(
+                "session_stop",
+                {
+                    "student_id": int(sid),
+                    "end_time": end or time_now(),
+                    "duration": int(duration or 0),
+                },
+            )
         return jsonify({
             "status": "stopped",
             "checkout_email_status": checkout_email_status,
@@ -1475,6 +1527,8 @@ def register_api_routes(app):
                 # Stop the session (check out)
                 checkout_email_status = None
                 checkout_email_message = None
+                end = time_now()
+                duration = 0
                 with sqlite3.connect(DB_PATH) as conn:
                     c = conn.cursor()
                     open_row = c.execute(
@@ -1520,6 +1574,15 @@ def register_api_routes(app):
                     cache_key=cache_key,
                     checkout_email_status=checkout_email_status,
                 )
+                if _scanner_api_client_enabled() and bool(getattr(g, "scanner_bridge_fallback", False)):
+                    scanner_sync.enqueue_mutation(
+                        "session_stop",
+                        {
+                            "student_id": int(student_id),
+                            "end_time": end,
+                            "duration": int(duration or 0),
+                        },
+                    )
                 return jsonify({
                     "action": "checked_out",
                     "student_id": student_id,
@@ -1532,6 +1595,14 @@ def register_api_routes(app):
                 timer_manager.start_session(student_id)
                 _push_cloud_backup_after_student_change(student_id, "checkin", "api_sessions_toggle")
                 server_cache.invalidate(_students_list_cache_key())
+                if _scanner_api_client_enabled() and bool(getattr(g, "scanner_bridge_fallback", False)):
+                    scanner_sync.enqueue_mutation(
+                        "session_start",
+                        {
+                            "student_id": int(student_id),
+                            "started_at": time_now(),
+                        },
+                    )
                 return jsonify({
                     "action": "started",
                     "student_id": student_id,
@@ -1729,6 +1800,15 @@ def register_api_routes(app):
                     conn.commit()
                     _push_cloud_backup_after_staff_change(aid, "checkout")
                     server_cache.invalidate(_assistants_duty_cache_key())
+                    if _scanner_api_client_enabled():
+                        scanner_sync.enqueue_mutation(
+                            "assistant_set_duty",
+                            {
+                                "assistant_id": int(aid),
+                                "on_duty": False,
+                                "changed_at": datetime.now().isoformat(),
+                            },
+                        )
                     _trace_staff_duty("select_checkout_ok", aid=aid, sess_id=sess_id, duration=duration)
                     return jsonify({"success": True, "on_duty": False, "duration": duration})
                 else:
@@ -1752,6 +1832,15 @@ def register_api_routes(app):
                     conn.commit()
                     _push_cloud_backup_after_staff_change(aid, "checkin")
                     server_cache.invalidate(_assistants_duty_cache_key())
+                    if _scanner_api_client_enabled():
+                        scanner_sync.enqueue_mutation(
+                            "assistant_set_duty",
+                            {
+                                "assistant_id": int(aid),
+                                "on_duty": True,
+                                "changed_at": datetime.now().isoformat(),
+                            },
+                        )
                     _trace_staff_duty("select_checkin_ok", aid=aid)
                     return jsonify({"success": True, "on_duty": True})
         except Exception as e:

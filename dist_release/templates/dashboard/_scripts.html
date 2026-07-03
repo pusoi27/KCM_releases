@@ -17,6 +17,7 @@ let dashboardPollTimer = null;
 const DASHBOARD_POLL_MS = 12000;
 const CARD_TIMER_TICK_MS = 15000;
 const IS_INSTRUCTOR_STATION = {{ 'true' if subscription_access and subscription_access.is_instructor_station else 'false' }};
+const IS_READONLY_DASHBOARD = IS_INSTRUCTOR_STATION;
 const CHECKED_EMAIL_STORAGE_KEY = `stdytime.checkedEmailSent.${new Date().toISOString().slice(0,10)}`;
 const checkedEmailSentMap = new Map(); // student_id -> true when checkout confirmation email sent
 let dashboardState = {
@@ -397,11 +398,16 @@ function buildAssistantsList(assistants){
     
     // Add click handler to card
     const cardEl = div.querySelector('.card');
-    cardEl.addEventListener('click', function(e) {
-      e.preventDefault();
-      e.stopPropagation();
-      toggleAssistantDuty(a.id);
-    });
+    if(!IS_READONLY_DASHBOARD){
+      cardEl.addEventListener('click', function(e) {
+        e.preventDefault();
+        e.stopPropagation();
+        toggleAssistantDuty(a.id);
+      });
+    } else {
+      cardEl.style.cursor = 'not-allowed';
+      cardEl.title = 'Read-only on Instructor Station';
+    }
     
     // Add hover effect
     cardEl.addEventListener('mouseenter', function() {
@@ -415,6 +421,12 @@ function buildAssistantsList(assistants){
 
 // Toggle staff on/off duty from dashboard
 function toggleAssistantDuty(assistantId) {
+  if (IS_READONLY_DASHBOARD) {
+    if (typeof window.showQuickToast === 'function') {
+      window.showQuickToast('Staff duty changes are Scanner-only.', true);
+    }
+    return;
+  }
   fetch(`/api/assistants/select/${assistantId}`, { method: 'POST' })
     .then(response => response.json())
     .then(data => {
@@ -612,6 +624,12 @@ function setStaffRowLoading(rowEl, isLoading) {
 
 // Toggle staff and refresh modal
 function toggleStaffAndRefresh(assistantId, rowEl) {
+  if (IS_READONLY_DASHBOARD) {
+    if (typeof showQuickToast === 'function') {
+      showQuickToast('Staff duty changes are Scanner-only.', true);
+    }
+    return;
+  }
   setStaffRowLoading(rowEl, true);
 
   fetch(`/api/assistants/select/${assistantId}`, { method: 'POST' })
@@ -706,36 +724,41 @@ function toggleStaffAndRefresh(assistantId, rowEl) {
       
       info.innerHTML = `${nameDisplay}<br><small>${badgeDisplay}</small>`;
       div.appendChild(info);
-      div.onclick = async () => {
-        if (confirm("Start session for " + s.name + "?")) {
-          try {
-            const res = await fetch(`/api/students/start/${s.id}`, { method: 'POST' });
-            if (!res.ok) {
-              let errorMessage = 'Failed to start session';
-              try {
-                const payload = await res.json();
-                if (payload && payload.error) {
-                  errorMessage = payload.error;
-                }
-              } catch (e) {
-                // keep default message when response isn't JSON
-              }
-              alert(errorMessage);
-              return;
-            }
+      if(!IS_READONLY_DASHBOARD){
+        div.onclick = async () => {
+          if (confirm("Start session for " + s.name + "?")) {
             try {
-              applyLocalCheckin(s.id, s.name);
-              fetchDashboardData({ priority: true });
-            } catch (refreshErr) {
-              console.error('[dashboard] check-in succeeded but UI refresh failed', refreshErr);
-              // Keep success path; this is a render/refresh issue, not a check-in failure.
-              alert('Student checked in, but the class display did not refresh. Please reload the page.');
+              const res = await fetch(`/api/students/start/${s.id}`, { method: 'POST' });
+              if (!res.ok) {
+                let errorMessage = 'Failed to start session';
+                try {
+                  const payload = await res.json();
+                  if (payload && payload.error) {
+                    errorMessage = payload.error;
+                  }
+                } catch (e) {
+                  // keep default message when response isn't JSON
+                }
+                alert(errorMessage);
+                return;
+              }
+              try {
+                applyLocalCheckin(s.id, s.name);
+                fetchDashboardData({ priority: true });
+              } catch (refreshErr) {
+                console.error('[dashboard] check-in succeeded but UI refresh failed', refreshErr);
+                // Keep success path; this is a render/refresh issue, not a check-in failure.
+                alert('Student checked in, but the class display did not refresh. Please reload the page.');
+              }
+            } catch (err) {
+              alert('Failed to start session. Please try again.');
             }
-          } catch (err) {
-            alert('Failed to start session. Please try again.');
           }
-        }
-      };
+        };
+      } else {
+        div.style.cursor = 'not-allowed';
+        div.title = 'Read-only on Instructor Station';
+      }
       return div;
     }
     
@@ -758,37 +781,6 @@ function toggleStaffAndRefresh(assistantId, rowEl) {
 function buildSeatGrid(activeSessions){
   const grid=document.getElementById("seatGrid");
   if(!grid) return;
-
-  if (IS_INSTRUCTOR_STATION) {
-    // Clear running timers and maps to avoid stale updates while cards are hidden.
-    for(const [, handle] of activeSeatCards.entries()){
-      clearInterval(handle.timerId);
-    }
-    activeSeatCards = new Map();
-    for(const [, tid] of overflowTimers.entries()) clearInterval(tid);
-    overflowTimers.clear();
-
-    const activeCountEl = document.getElementById("activeCount");
-    if (activeCountEl) {
-      activeCountEl.innerText = `(${activeSessions.length} active)`;
-    }
-
-    grid.innerHTML = `
-      <div class="alert alert-info mb-0 py-3" role="status">
-        <i class="bi bi-info-circle"></i>
-        Active student cards are hidden on Instructor Station to prevent misleading check-in status display.
-      </div>`;
-
-    const overflowContainer = document.getElementById('overflowStudents');
-    if (overflowContainer) {
-      overflowContainer.style.display = 'none';
-    }
-    const overflowCountEl = document.getElementById('overflowCount');
-    if (overflowCountEl) overflowCountEl.textContent = '';
-    const overflowList = document.getElementById('overflowList');
-    if (overflowList) overflowList.innerHTML = '';
-    return;
-  }
 
   document.getElementById("activeCount").innerText=
     `(${activeSessions.length} active)`;
@@ -858,21 +850,26 @@ function buildSeatGrid(activeSessions){
               <div class="timer fw-bold text-success">--:--</div>
             </div>
           </div>`;
-        card.onclick=async()=>{
-          if(confirm("Stop session for "+s.name+"?")){
-            try {
-              const res = await fetch(`/api/students/stop/${s.id}`,{method:'POST'});
-              const j = await res.json().catch(()=>({}));
-              if(res.ok){
-                applyLocalCheckout(s.id, j && j.checkout_email_status);
+        if(!IS_READONLY_DASHBOARD){
+          card.onclick=async()=>{
+            if(confirm("Stop session for "+s.name+"?")){
+              try {
+                const res = await fetch(`/api/students/stop/${s.id}`,{method:'POST'});
+                const j = await res.json().catch(()=>({}));
+                if(res.ok){
+                  applyLocalCheckout(s.id, j && j.checkout_email_status);
+                }
+              } catch(err){
+                console.debug('[dashboard] student checkout request failed', err);
+              } finally {
+                fetchDashboardData({ priority: true });
               }
-            } catch(err){
-              console.debug('[dashboard] student checkout request failed', err);
-            } finally {
-              fetchDashboardData({ priority: true });
             }
-          }
-        };
+          };
+        } else {
+          card.style.cursor = 'default';
+          card.title = 'Read-only on Instructor Station';
+        }
         fitSeatCardName(card.querySelector('.seat-name'));
         col.appendChild(card); grid.appendChild(col);
         const tEl=card.querySelector(".timer");
@@ -939,21 +936,26 @@ function buildSeatGrid(activeSessions){
       const tid = setInterval(updateOverflowTimer, CARD_TIMER_TICK_MS);
       overflowTimers.set(sid, tid);
 
-      row.onclick = async () => {
-        if(confirm(`Stop session for ${s.name}?`)){
-          try {
-            const res = await fetch(`/api/students/stop/${s.id}`, {method:'POST'});
-            const j = await res.json().catch(()=>({}));
-            if(res.ok){
-              applyLocalCheckout(s.id, j && j.checkout_email_status);
+      if(!IS_READONLY_DASHBOARD){
+        row.onclick = async () => {
+          if(confirm(`Stop session for ${s.name}?`)){
+            try {
+              const res = await fetch(`/api/students/stop/${s.id}`, {method:'POST'});
+              const j = await res.json().catch(()=>({}));
+              if(res.ok){
+                applyLocalCheckout(s.id, j && j.checkout_email_status);
+              }
+            } catch(err){
+              console.debug('[dashboard] overflow checkout failed', err);
+            } finally {
+              fetchDashboardData({ priority: true });
             }
-          } catch(err){
-            console.debug('[dashboard] overflow checkout failed', err);
-          } finally {
-            fetchDashboardData({ priority: true });
           }
-        }
-      };
+        };
+      } else {
+        row.style.cursor = 'default';
+        row.title = 'Read-only on Instructor Station';
+      }
       overflowList.appendChild(row);
     });
   } else {
@@ -1010,6 +1012,7 @@ function resetIdleTimer(){
 }
 
 function checkIdleState(){
+  if (IS_READONLY_DASHBOARD) return;
   const seatGrid = document.getElementById('seatGrid');
   const activeCards = seatGrid.querySelectorAll('.seat-card');
   if(activeCards.length > 0 && !isFullscreenMode){
@@ -1069,6 +1072,9 @@ resetIdleTimer();
 // the payload after a brief idle timeout.
 
 (function(){
+  if(IS_READONLY_DASHBOARD){
+    return;
+  }
   let scanBuffer = '';
   let finalizeTimer = null;
   let forceFinalizeTimer = null;
