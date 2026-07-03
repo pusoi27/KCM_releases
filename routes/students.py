@@ -10,7 +10,7 @@ from routes.operation_utils import flash_scoped_failure, invalidate_scoped_cache
 import os
 import tempfile
 import sqlite3
-from modules.database import DB_PATH
+from modules.database import DB_PATH, get_station_runtime_config
 import json
 import re
 from reportlab.lib.pagesizes import A4, landscape
@@ -561,6 +561,11 @@ def register_student_routes(app, upload_folder):
     @app.route("/students")
     @require_login
     def students_list():
+        runtime = get_station_runtime_config()
+        if str(runtime.get('station_mode') or '').strip().lower() == 'scanner_api_client':
+            flash('Scanner Station uses Instructor as source-of-truth. View live class roster on Dashboard.', 'info')
+            return redirect(url_for('dashboard'))
+
         duplicate_count = student_manager.get_duplicate_name_count()
         
         return render_template(

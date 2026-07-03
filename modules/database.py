@@ -2469,6 +2469,20 @@ def get_station_dataset_sync_status(stale_after_minutes: int = 25) -> dict:
             "tooltip": "",
         }
 
+    runtime = get_station_runtime_config()
+    station_mode = str(runtime.get("station_mode") or "").strip().lower()
+    backup_mode = str(runtime.get("backup_mode") or "").strip().lower()
+
+    # In API topology with snapshots-only backups, mailbox folder heartbeats are not
+    # a reliable signal for station connectivity; use Station Link badge instead.
+    if backup_mode == "instructor_snapshots_only" and station_mode in {"scanner_api_client", "instructor_server"}:
+        return {
+            "visible": False,
+            "tone": "secondary",
+            "label": "",
+            "tooltip": "",
+        }
+
     sync_path = GDRIVE_SYNC_PATH or ""
     paths = _station_mailbox_paths(sync_path)
     status_dir = paths.get("station_status", "")

@@ -55,6 +55,15 @@
       {% endif %}
     </span>
     {% endif %}
+    {% if subscription_access and subscription_access.is_checkin_station and subscription_access.station_mode == 'scanner_api_client' %}
+    <span
+      class="badge rounded-pill text-bg-success"
+      style="margin-right:.5rem;"
+      title="Scanner data is served live from Instructor Station API."
+    >
+      <i class="bi bi-hdd-network me-1"></i>Data Source: Instructor API
+    </span>
+    {% endif %}
     <a class="btn btn-sm btn-outline-light" href="{{ url_for('license_page') }}" style="margin-right:.5rem;">
       <i class="bi bi-key"></i> License
     </a>

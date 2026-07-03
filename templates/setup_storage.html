@@ -142,11 +142,17 @@
                                     value="{{ runtime.station_pairing_token if runtime else '' }}"
                                     placeholder="Paste token from Instructor Station"
                                 >
+                                {% if runtime and runtime.station_mode == 'instructor_server' %}
                                 <button class="btn btn-outline-secondary" type="submit" formaction="{{ url_for('setup_storage_generate_pairing_token') }}" formmethod="POST">
                                     Generate token
                                 </button>
+                                {% endif %}
                             </div>
-                            <div class="form-text">Optional manual override. Token is auto-generated on Instructor and auto-fetched by Scanner Auto-Connect.</div>
+                            {% if runtime and runtime.station_mode == 'instructor_server' %}
+                            <div class="form-text">Token is auto-generated for Instructor. You can regenerate it here if needed.</div>
+                            {% else %}
+                            <div class="form-text">Scanner usually does not need manual token entry. Use <strong>Auto-Connect Scanner</strong> to fetch it automatically.</div>
+                            {% endif %}
                         </div>
 
                         <div class="alert alert-secondary" role="alert">

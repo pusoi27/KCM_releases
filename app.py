@@ -867,6 +867,8 @@ def inject_subscription_access():
     license_status = g.get('license_status', {})
     role = str(license_status.get('station_role') or '').strip().lower()
     activation_limit = int(license_status.get('activation_limit') or 0)
+    runtime_cfg = get_station_runtime_config()
+    station_mode = str(runtime_cfg.get('station_mode') or '').strip().lower() or 'instructor_server'
 
     context = {
         'can_access_students': True,
@@ -899,6 +901,7 @@ def inject_subscription_access():
         'can_access_qr': True,
         'default_home_endpoint': 'dashboard',
         'station_role': role,
+        'station_mode': station_mode,
         'is_checkin_station': False,
         'is_instructor_station': True,
     }
