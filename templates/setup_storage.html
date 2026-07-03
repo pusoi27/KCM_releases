@@ -20,16 +20,17 @@
                         <div class="mb-2">Use a single source of truth DB on Instructor Station. Scanner Station talks to Instructor via local network API.</div>
                         <ol class="mb-2 ps-3">
                             <li><strong>Instructor Station:</strong> set mode to <em>Instructor API Server</em>.</li>
-                            <li><strong>Scanner Station:</strong> set mode to <em>Scanner API Client</em> and pair using Instructor URL + token.</li>
-                            <li>Use <strong>Instructor snapshots-only</strong> backup mode to avoid OneDrive split-brain conflicts.</li>
+                            <li><strong>Scanner Station:</strong> set mode to <em>Scanner API Client</em>, enter Instructor URL, then use <em>Auto-Connect Scanner</em>.</li>
+                            <li><strong>Pairing token is managed automatically</strong> and reused between stations.</li>
+                            <li>Backup mode is fixed to <strong>Instructor snapshots-only</strong>.</li>
                         </ol>
                     </div>
 
                     <div class="card border-0 bg-light mb-3">
                         <div class="card-body">
-                            <h6 class="mb-2"><i class="bi bi-arrow-left-right"></i> Manual DB Backup Actions</h6>
+                            <h6 class="mb-2"><i class="bi bi-heart-pulse"></i> Setup Diagnostics</h6>
                             <p class="text-muted small mb-3">
-                                Use these only when needed. In snapshots-only mode, cloud push/pull actions are disabled.
+                                Minimal actions for station setup verification.
                             </p>
                             <div class="d-flex flex-wrap gap-2">
                                 <form method="POST" action="{{ url_for('setup_storage_health_check') }}" class="m-0">
@@ -38,46 +39,10 @@
                                         Run health check
                                     </button>
                                 </form>
-                                <form method="POST" action="{{ url_for('setup_storage_push_backup') }}" class="m-0">
-                                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                                    <button class="btn btn-outline-primary btn-sm" type="submit">
-                                        Push data to backup
-                                    </button>
-                                </form>
-                                <form method="POST" action="{{ url_for('setup_storage_pull_backup') }}" class="m-0">
-                                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                                    <button class="btn btn-outline-warning btn-sm" type="submit">
-                                        Read data from backup
-                                    </button>
-                                </form>
                                 <form method="POST" action="{{ url_for('setup_storage_backup_local') }}" class="m-0">
                                     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                                     <button class="btn btn-outline-success btn-sm" type="submit">
                                         Snapshot local DB
-                                    </button>
-                                </form>
-                                <form method="POST" action="{{ url_for('setup_storage_backup_cloud') }}" class="m-0">
-                                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                                    <button class="btn btn-outline-success btn-sm" type="submit">
-                                        Snapshot cloud DB
-                                    </button>
-                                </form>
-                                <form method="POST" action="{{ url_for('setup_storage_restore_local_from_cloud') }}" class="m-0">
-                                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                                    <button class="btn btn-outline-danger btn-sm" type="submit">
-                                        Restore local from cloud
-                                    </button>
-                                </form>
-                                <form method="POST" action="{{ url_for('setup_storage_restore_cloud_from_local') }}" class="m-0">
-                                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                                    <button class="btn btn-outline-danger btn-sm" type="submit">
-                                        Restore cloud from local
-                                    </button>
-                                </form>
-                                <form method="POST" action="{{ url_for('setup_storage_force_sync_to_cloud') }}" class="m-0">
-                                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                                    <button class="btn btn-outline-info btn-sm" type="submit" title="Checkpoint WAL and update main DB timestamp on OneDrive">
-                                        Force sync to OneDrive
                                     </button>
                                 </form>
                             </div>
@@ -122,6 +87,8 @@
 
                         <input type="hidden" name="cloud_provider" value="onedrive">
                         <input type="hidden" name="gdrive_sync_path" value="">
+                        <input type="hidden" name="backup_mode" value="instructor_snapshots_only">
+                        <input type="hidden" name="onedrive_sync_path" value="">
 
                         <div class="mb-3">
                             <label class="form-label" for="station_mode">Station mode</label>
@@ -132,13 +99,9 @@
                             <div class="form-text">Choose this machine role in the two-station setup.</div>
                         </div>
 
-                        <div class="mb-3">
-                            <label class="form-label" for="backup_mode">Backup mode</label>
-                            <select class="form-select" id="backup_mode" name="backup_mode">
-                                <option value="instructor_snapshots_only" {% if runtime and runtime.backup_mode == 'instructor_snapshots_only' %}selected{% endif %}>Instructor snapshots-only (recommended)</option>
-                                <option value="legacy_cloud_sync" {% if runtime and runtime.backup_mode == 'legacy_cloud_sync' %}selected{% endif %}>Legacy OneDrive live-sync (not recommended)</option>
-                            </select>
-                            <div class="form-text">Snapshots-only prevents cross-machine DB overwrite races.</div>
+                        <div class="alert alert-secondary" role="alert">
+                            <div class="fw-semibold mb-1">Backup mode</div>
+                            <div class="small">Instructor snapshots-only (fixed). Legacy OneDrive live-sync options are disabled.</div>
                         </div>
 
                         <div class="row g-3">
@@ -183,34 +146,21 @@
                                     Generate token
                                 </button>
                             </div>
-                            <div class="form-text">Use same token on both Instructor and Scanner stations.</div>
+                            <div class="form-text">Optional manual override. Token is auto-generated on Instructor and auto-fetched by Scanner Auto-Connect.</div>
                         </div>
 
                         <div class="alert alert-secondary" role="alert">
                             <div class="fw-semibold mb-1">Pairing endpoint</div>
                             <div class="small"><code>{{ suggested_pairing_url or '/api/station/pairing/ping' }}</code></div>
                             <div class="small text-muted">Scanner tests pairing against this endpoint using <code>X-Stdytime-Pairing-Token</code>.</div>
-                            <form method="POST" action="{{ url_for('setup_storage_test_pairing') }}" class="mt-2">
-                                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                                <button class="btn btn-outline-primary btn-sm" type="submit">Test pairing now</button>
-                            </form>
-                        </div>
-
-                        <div class="mb-3">
-                            <label class="form-label" for="onedrive_sync_path">OneDrive folder path</label>
-                            <input
-                                class="form-control"
-                                type="text"
-                                id="onedrive_sync_path"
-                                name="onedrive_sync_path"
-                                value="{{ status.config.onedrive_sync_path if status and status.config else '' }}"
-                                placeholder="C:/Users/YourName/OneDrive/StdyTime"
-                            >
-                            <div class="form-text">Required only for Legacy OneDrive live-sync mode.</div>
-                        </div>
-
-                        <div class="alert alert-secondary" role="alert">
-                            Instructor snapshots-only mode creates periodic local snapshots; legacy mode syncs OneDrive every <strong>9 minutes</strong>.
+                            <div class="d-flex flex-wrap gap-2 mt-2">
+                                <button class="btn btn-primary btn-sm" type="submit" formaction="{{ url_for('setup_storage_auto_connect') }}" formmethod="POST">
+                                    Auto-Connect Scanner
+                                </button>
+                                <button class="btn btn-outline-primary btn-sm" type="submit" formaction="{{ url_for('setup_storage_test_pairing') }}" formmethod="POST">
+                                    Test Pair Connection
+                                </button>
+                            </div>
                         </div>
 
                         {% if status and status.issues %}

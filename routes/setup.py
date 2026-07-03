@@ -10,6 +10,60 @@ from modules import instructor_profile_manager
 from routes.auth import require_login
 
 
+def _normalize_base_url(raw_url: str) -> str:
+    value = str(raw_url or '').strip()
+    if not value:
+        return ''
+    value = value.replace(' ', '')
+    if '://' not in value:
+        value = f"http://{value}"
+    value = value.rstrip('/')
+    # Common typo recovery: 192.168.1.5.:5000 -> 192.168.1.5:5000
+    value = value.replace('.:', ':')
+    return value
+
+
+def _save_runtime_from_cfg(cfg: dict, *, station_mode: str, instructor_api_base_url: str = '', station_pairing_token: str = '') -> dict:
+    return save_db_config_paths(
+        db_path=None,
+        gdrive_sync_path='',
+        onedrive_sync_path=(cfg.get('onedrive_sync_path') or ''),
+        cloud_provider=(cfg.get('cloud_provider') or 'onedrive'),
+        station_mode=station_mode,
+        backup_mode='instructor_snapshots_only',
+        instructor_api_base_url=instructor_api_base_url,
+        station_pairing_token=station_pairing_token,
+        snapshot_interval_minutes=int(cfg.get('snapshot_interval_minutes') or 15),
+    )
+
+
+def _attempt_pairing_bootstrap(instructor_base_url: str, timeout_seconds: int = 8) -> tuple[bool, str, dict]:
+    base_url = _normalize_base_url(instructor_base_url)
+    if not base_url:
+        return False, 'Instructor API URL is empty.', {}
+
+    bootstrap_url = f"{base_url}/api/station/pairing/bootstrap"
+    try:
+        resp = requests.get(bootstrap_url, headers={"Accept": "application/json"}, timeout=timeout_seconds)
+    except requests.RequestException as exc:
+        return False, f"Cannot reach instructor bootstrap endpoint: {exc}", {}
+
+    payload = resp.json() if resp.headers.get('content-type', '').lower().startswith('application/json') else {}
+    if not resp.ok or not payload.get('ok'):
+        reason = payload.get('error') or f'HTTP {resp.status_code}'
+        return False, f'Instructor bootstrap failed: {reason}', payload if isinstance(payload, dict) else {}
+
+    token = str(payload.get('station_pairing_token') or '').strip()
+    resolved_base = _normalize_base_url(payload.get('instructor_api_base_url') or base_url)
+    if not token:
+        return False, 'Instructor bootstrap response did not include pairing token.', payload if isinstance(payload, dict) else {}
+
+    return True, 'ok', {
+        'station_pairing_token': token,
+        'instructor_api_base_url': resolved_base,
+    }
+
+
 def _instructor_hours_status() -> dict:
     profile = instructor_profile_manager.get_instructor_profile()
     if not profile:
@@ -80,14 +134,31 @@ def register_setup_routes(app):
             gdrive_sync_path = (request.form.get('gdrive_sync_path') or '').strip()
             onedrive_sync_path = (request.form.get('onedrive_sync_path') or '').strip()
             station_mode = (request.form.get('station_mode') or 'instructor_server').strip().lower()
-            backup_mode = (request.form.get('backup_mode') or 'instructor_snapshots_only').strip().lower()
-            instructor_api_base_url = (request.form.get('instructor_api_base_url') or '').strip()
+            backup_mode = 'instructor_snapshots_only'
+            instructor_api_base_url = _normalize_base_url(request.form.get('instructor_api_base_url') or '')
             station_pairing_token = (request.form.get('station_pairing_token') or '').strip()
             snapshot_interval_minutes_raw = (request.form.get('snapshot_interval_minutes') or '15').strip()
             try:
                 snapshot_interval_minutes = max(5, int(snapshot_interval_minutes_raw or '15'))
             except ValueError:
                 snapshot_interval_minutes = 15
+
+            # Minimize scanner setup friction: auto-fetch token from instructor when URL is provided.
+            if station_mode == 'scanner_api_client' and instructor_api_base_url and not station_pairing_token:
+                ok, msg, bootstrap = _attempt_pairing_bootstrap(instructor_api_base_url)
+                if ok:
+                    station_pairing_token = str(bootstrap.get('station_pairing_token') or '').strip()
+                    instructor_api_base_url = _normalize_base_url(
+                        bootstrap.get('instructor_api_base_url') or instructor_api_base_url
+                    )
+                    flash('Auto-connect: pairing token fetched from Instructor Station.', 'success')
+                else:
+                    flash(f'Auto-connect did not complete: {msg}', 'warning')
+
+            # Minimize instructor setup friction: always ensure a token exists.
+            if station_mode == 'instructor_server' and not station_pairing_token:
+                station_pairing_token = secrets.token_urlsafe(24)
+                flash('Instructor token auto-generated for scanner pairing.', 'success')
 
             status = save_db_config_paths(
                 db_path=None,
@@ -136,6 +207,55 @@ def register_setup_routes(app):
             suggested_pairing_url=suggested_pairing_url,
         )
 
+    @app.route('/setup/storage/auto-connect', methods=['POST'])
+    @require_login
+    def setup_storage_auto_connect():
+        status = get_db_config_status()
+        cfg = (status or {}).get('config', {}) if isinstance(status, dict) else {}
+
+        base_url = _normalize_base_url(request.form.get('instructor_api_base_url') or cfg.get('instructor_api_base_url') or '')
+        if not base_url:
+            flash('Auto-connect failed: Instructor API URL is required.', 'warning')
+            return redirect(url_for('setup_storage'))
+
+        ok, msg, bootstrap = _attempt_pairing_bootstrap(base_url)
+        if not ok:
+            flash(f'Auto-connect failed: {msg}', 'warning')
+            return redirect(url_for('setup_storage'))
+
+        token = str(bootstrap.get('station_pairing_token') or '').strip()
+        resolved_base = _normalize_base_url(bootstrap.get('instructor_api_base_url') or base_url)
+
+        save_db_config_paths(
+            db_path=None,
+            gdrive_sync_path='',
+            onedrive_sync_path=(cfg.get('onedrive_sync_path') or ''),
+            cloud_provider=(cfg.get('cloud_provider') or 'onedrive'),
+            station_mode='scanner_api_client',
+            backup_mode='instructor_snapshots_only',
+            instructor_api_base_url=resolved_base,
+            station_pairing_token=token,
+            snapshot_interval_minutes=int(cfg.get('snapshot_interval_minutes') or 15),
+        )
+
+        ping_url = f"{resolved_base}/api/station/pairing/ping"
+        try:
+            resp = requests.get(
+                ping_url,
+                headers={"X-Stdytime-Pairing-Token": token, "Accept": "application/json"},
+                timeout=8,
+            )
+            payload = resp.json() if resp.headers.get('content-type', '').lower().startswith('application/json') else {}
+            if resp.ok and payload.get('ok'):
+                flash('Auto-connect successful: Scanner linked to Instructor Station.', 'success')
+            else:
+                reason = payload.get('error') or f'HTTP {resp.status_code}'
+                flash(f'Auto-connect saved settings, but pair test failed: {reason}', 'warning')
+        except requests.RequestException as exc:
+            flash(f'Auto-connect saved settings, but pair test failed: {exc}', 'warning')
+
+        return redirect(url_for('setup_storage'))
+
     @app.route('/setup/storage/generate-pairing-token', methods=['POST'])
     @require_login
     def setup_storage_generate_pairing_token():
@@ -143,26 +263,49 @@ def register_setup_routes(app):
         cfg = (status or {}).get('config', {}) if isinstance(status, dict) else {}
         generated_token = secrets.token_urlsafe(24)
 
-        save_db_config_paths(
-            db_path=None,
-            gdrive_sync_path=(cfg.get('gdrive_sync_path') or ''),
-            onedrive_sync_path=(cfg.get('onedrive_sync_path') or ''),
-            cloud_provider=(cfg.get('cloud_provider') or 'onedrive'),
+        _save_runtime_from_cfg(
+            cfg,
             station_mode=(cfg.get('station_mode') or 'instructor_server'),
-            backup_mode=(cfg.get('backup_mode') or 'instructor_snapshots_only'),
-            instructor_api_base_url=(cfg.get('instructor_api_base_url') or ''),
+            instructor_api_base_url=_normalize_base_url(cfg.get('instructor_api_base_url') or ''),
             station_pairing_token=generated_token,
-            snapshot_interval_minutes=int(cfg.get('snapshot_interval_minutes') or 15),
         )
 
         flash('New pairing token generated and saved.', 'success')
         return redirect(url_for('setup_storage'))
 
+    @app.route('/api/station/pairing/bootstrap', methods=['GET'])
+    def api_station_pairing_bootstrap():
+        """Expose scanner bootstrap info from Instructor station for low-input setup."""
+        status = get_db_config_status()
+        cfg = (status or {}).get('config', {}) if isinstance(status, dict) else {}
+        runtime = get_station_runtime_config()
+
+        if str(runtime.get('station_mode') or '').strip().lower() != 'instructor_server':
+            return jsonify({'ok': False, 'error': 'This machine is not configured as Instructor API Server.'}), 409
+
+        token = str(runtime.get('station_pairing_token') or '').strip()
+        if not token:
+            token = secrets.token_urlsafe(24)
+            _save_runtime_from_cfg(
+                cfg,
+                station_mode='instructor_server',
+                instructor_api_base_url='',
+                station_pairing_token=token,
+            )
+
+        return jsonify({
+            'ok': True,
+            'station_mode': 'instructor_server',
+            'backup_mode': 'instructor_snapshots_only',
+            'instructor_api_base_url': request.host_url.rstrip('/'),
+            'station_pairing_token': token,
+        }), 200
+
     @app.route('/setup/storage/test-pairing', methods=['POST'])
     @require_login
     def setup_storage_test_pairing():
         runtime = get_station_runtime_config()
-        base_url = str(runtime.get('instructor_api_base_url') or '').strip().rstrip('/')
+        base_url = _normalize_base_url(runtime.get('instructor_api_base_url') or '')
         token = str(runtime.get('station_pairing_token') or '').strip()
 
         if not base_url:
@@ -181,12 +324,12 @@ def register_setup_routes(app):
             )
             payload = resp.json() if resp.headers.get('content-type', '').lower().startswith('application/json') else {}
             if resp.ok and payload.get('ok'):
-                flash('Pairing test passed: scanner can reach instructor API.', 'success')
+                flash('Pair connection successful: scanner can reach instructor API.', 'success')
             else:
                 reason = payload.get('error') or f'HTTP {resp.status_code}'
-                flash(f'Pairing test failed: {reason}', 'warning')
+                flash(f'Pair connection failed: {reason}', 'warning')
         except requests.RequestException as exc:
-            flash(f'Pairing test failed: {exc}', 'warning')
+            flash(f'Pair connection failed: {exc}', 'warning')
 
         return redirect(url_for('setup_storage'))
 
