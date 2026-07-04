@@ -170,55 +170,65 @@
                         {% endif %}
 
                         {% if is_multi_station_license %}
-                        <div class="mt-3 mb-3">
-                            <label class="form-label" for="station_pairing_token">Pairing token</label>
-                            <div class="input-group">
-                                <input
-                                    class="form-control"
-                                    type="text"
-                                    id="station_pairing_token"
-                                    name="station_pairing_token"
-                                    value="{{ runtime.station_pairing_token if runtime else '' }}"
-                                    placeholder="Paste token from Instructor Station"
-                                >
-                                {% if not (subscription_access and subscription_access.is_checkin_station) %}
-                                <button class="btn btn-outline-secondary" type="submit" formaction="{{ url_for('setup_storage_generate_pairing_token') }}" formmethod="POST">
-                                    Generate token
-                                </button>
+                        <div class="card border-primary shadow-sm mb-3" id="pairing-code-window">
+                            <div class="card-header bg-primary text-white fw-semibold">Paring Code Generator</div>
+                            <div class="card-body">
+                                <div class="small mb-2">To generate a new code refresh teh browser both on teh instructor stattion and on the scanner station.</div>
+                                {% if runtime and runtime.station_mode == 'instructor_server' %}
+                                <div class="small mb-2">Instructor: generate a 4-digit code and show it on this screen.</div>
+                                <div class="d-flex flex-wrap align-items-center gap-2">
+                                    <button class="btn btn-primary btn-sm" type="submit" formaction="{{ url_for('setup_storage_show_pair_code') }}" formmethod="POST">
+                                        Show 4-digit Pair Code
+                                    </button>
+                                    <span class="badge bg-dark fs-5 px-3 py-2" id="pair_code_badge">{{ display_pair_code or '----' }}</span>
+                                    <button class="btn btn-outline-secondary btn-sm" type="button" id="copy_pair_code_btn">Copy code</button>
+                                    <span class="text-muted small" id="pair_code_ttl" data-remaining="{{ display_pair_code_ttl or 0 }}">
+                                        {% if display_pair_code %}
+                                        expires in {{ display_pair_code_ttl or 0 }}s
+                                        {% else %}
+                                        waiting for code
+                                        {% endif %}
+                                    </span>
+                                </div>
+                                {% else %}
+                                <div class="small mb-2">Scanner: enter the same 4-digit code shown on Instructor screen.</div>
+                                <div class="row g-2 align-items-end">
+                                    <div class="col-md-4">
+                                        <label class="form-label" for="pair_code">4-digit code</label>
+                                        <input class="form-control" id="pair_code" name="pair_code" type="text" maxlength="4" placeholder="1234">
+                                    </div>
+                                    <div class="col-md-4">
+                                        <button class="btn btn-primary" type="submit" formaction="{{ url_for('setup_storage_pair_by_code') }}" formmethod="POST">
+                                            Pair with 4-digit code
+                                        </button>
+                                    </div>
+                                </div>
                                 {% endif %}
                             </div>
-                            <div class="form-text">Advanced only. Recommended pairing is the 4-digit code flow below.</div>
                         </div>
 
-                        <div class="alert alert-primary" role="alert">
-                            <div class="fw-semibold mb-1">Bluetooth-style pairing (basic)</div>
-                            {% if runtime and runtime.station_mode == 'instructor_server' %}
-                            <div class="small mb-2">Instructor: generate a 4-digit code and show it on this screen.</div>
-                            <div class="d-flex flex-wrap align-items-center gap-2">
-                                <button class="btn btn-primary btn-sm" type="submit" formaction="{{ url_for('setup_storage_show_pair_code') }}" formmethod="POST">
-                                    Show 4-digit Pair Code
-                                </button>
-                                {% if display_pair_code %}
-                                <span class="badge bg-dark fs-5 px-3 py-2" id="pair_code_badge">{{ display_pair_code }}</span>
-                                <button class="btn btn-outline-secondary btn-sm" type="button" id="copy_pair_code_btn">Copy code</button>
-                                <span class="text-muted small" id="pair_code_ttl" data-remaining="{{ display_pair_code_ttl or 0 }}">expires in {{ display_pair_code_ttl or 0 }}s</span>
-                                {% endif %}
-                            </div>
-                            {% else %}
-                            <div class="small mb-2">Scanner: enter the same 4-digit code shown on Instructor screen.</div>
-                            <div class="row g-2 align-items-end">
-                                <div class="col-md-4">
-                                    <label class="form-label" for="pair_code">4-digit code</label>
-                                    <input class="form-control" id="pair_code" name="pair_code" type="text" maxlength="4" placeholder="1234">
-                                </div>
-                                <div class="col-md-4">
-                                    <button class="btn btn-primary" type="submit" formaction="{{ url_for('setup_storage_pair_by_code') }}" formmethod="POST">
-                                        Pair with 4-digit code
+                        <details class="mt-3 mb-3">
+                            <summary class="fw-semibold" style="cursor:pointer;">Advanced: pairing token (optional)</summary>
+                            <div class="mt-2">
+                                <label class="form-label" for="station_pairing_token">Pairing token</label>
+                                <div class="input-group">
+                                    <input
+                                        class="form-control"
+                                        type="text"
+                                        id="station_pairing_token"
+                                        name="station_pairing_token"
+                                        value="{{ runtime.station_pairing_token if runtime else '' }}"
+                                        placeholder="Paste token from Instructor Station"
+                                    >
+                                    {% if not (subscription_access and subscription_access.is_checkin_station) %}
+                                    <button class="btn btn-outline-secondary" type="submit" formaction="{{ url_for('setup_storage_generate_pairing_token') }}" formmethod="POST">
+                                        Generate token
                                     </button>
+                                    {% endif %}
                                 </div>
+                                <div class="form-text">Most setups should use the 4-digit code above. Token entry is optional.</div>
                             </div>
-                            {% endif %}
-                        </div>
+                        </details>
 
                         <div class="alert alert-secondary" role="alert">
                             <div class="fw-semibold mb-1">Pairing endpoint</div>

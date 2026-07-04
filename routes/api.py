@@ -1054,6 +1054,46 @@ def register_api_routes(app):
             "name": student_name,
         }), 200
 
+    @app.route("/api/bridge/sessions/active", methods=["GET"])
+    def api_bridge_sessions_active():
+        if not _bridge_request_is_pairing_authorized():
+            return _bridge_pairing_auth_error()
+
+        today = datetime.now().date().isoformat()
+
+        with sqlite3.connect(DB_PATH) as conn:
+            c = conn.cursor()
+            active_rows = c.execute(
+                """
+                SELECT student_id, start_time
+                FROM sessions
+                WHERE end_time IS NULL
+                  AND DATE(start_time)=?
+                """,
+                (today,),
+            ).fetchall()
+
+        students = {s[0]: s for s in student_manager.get_all_students()}
+        result = []
+        for sid, start in active_rows:
+            s = students.get(sid)
+            if not s:
+                continue
+            result.append({
+                "id": sid,
+                "name": s[1],
+                "subject": s[2],
+                "book_loaned": s[8] if len(s) > 8 else 0,
+                "device_loaned": s[9] if len(s) > 9 else 0,
+                "start_time": start,
+                "subjects": _subjects_from_student_row(s),
+                "total_study_minutes": _total_study_minutes_from_student_row(s),
+                "photo_url": f"/students/photo/{sid}" if _has_photo_blob(s) else '',
+                "photo_data_uri": _photo_data_uri(s),
+            })
+
+        return jsonify(result), 200
+
     @app.route("/api/bridge/reconcile/apply", methods=["POST"])
     def api_bridge_reconcile_apply():
         if not _bridge_request_is_pairing_authorized():
@@ -1274,6 +1314,11 @@ def register_api_routes(app):
     @require_login
     @require_feature(auth_manager.FEATURE_STDYTIMECLASS)
     def api_students_start(sid):
+        if _scanner_api_client_enabled():
+            forwarded = _bridge_forward_post('/api/bridge/sessions/toggle', {"student_id": int(sid)})
+            if forwarded is not None:
+                return forwarded
+
         student = student_manager.get_student(sid)
         if not student:
             return jsonify({"error": "Student not found"}), 404
@@ -1294,6 +1339,11 @@ def register_api_routes(app):
     @require_login
     @require_feature(auth_manager.FEATURE_STDYTIMECLASS)
     def api_students_stop(sid):
+        if _scanner_api_client_enabled():
+            forwarded = _bridge_forward_post('/api/bridge/sessions/toggle', {"student_id": int(sid)})
+            if forwarded is not None:
+                return forwarded
+
         student = student_manager.get_student(sid)
         if not student:
             return jsonify({"error": "Student not found"}), 404
@@ -1380,6 +1430,10 @@ def register_api_routes(app):
     @require_feature(auth_manager.FEATURE_STDYTIMECLASS)
     def api_sessions_active():
         """Return only currently active sessions; auto-stop any over 2h."""
+        forwarded = _bridge_forward_get('/api/bridge/sessions/active')
+        if forwarded is not None:
+            return forwarded
+
         now_str = time_now()
         today = datetime.now().date().isoformat()
 

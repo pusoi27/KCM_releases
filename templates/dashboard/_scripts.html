@@ -1420,6 +1420,7 @@ resetIdleTimer();
         }
         if(j && j.action === 'checked_out'){
           applyLocalCheckout(j.student_id || ident, j.checkout_email_status);
+          showQuickToast(`${j.name||('Student '+ident)} — Checked Out`);
         }
         logDebug(`TOGGLE OK id=${ident} action=${action}`);
       }
