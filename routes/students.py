@@ -1122,8 +1122,34 @@ def register_student_routes(app, upload_folder):
     @require_login
     @require_feature(auth_manager.FEATURE_STUDENT_DATABASE)
     def students_badges_pdf():
-        """Generate student badge cards (A4 landscape, 3.5x2in business cards)."""
+        """Generate student badge cards (A4 landscape, 3.5x2in business cards).
+
+        Optional query param:
+        - student_ids: comma-separated ids (e.g. 1,2,3)
+        """
         students = student_manager.get_students_badge_payload()
+
+        raw_ids = str(request.args.get('student_ids', '') or '').strip()
+        if raw_ids:
+            try:
+                requested_ids = [int(token) for token in raw_ids.split(',') if str(token).strip()]
+            except ValueError:
+                return "Invalid student selection", 400
+
+            seen = set()
+            selected_ids = []
+            for sid in requested_ids:
+                if sid in seen:
+                    continue
+                seen.add(sid)
+                selected_ids.append(sid)
+
+            if not selected_ids:
+                return "No students selected", 400
+
+            selected_set = set(selected_ids)
+            students = [row for row in students if int(row[0]) in selected_set]
+
         if not students:
             flash("No active students found for badge printing.", "warning")
             return redirect(url_for("students_list"))

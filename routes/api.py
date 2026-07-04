@@ -932,6 +932,7 @@ def register_api_routes(app):
                 "total_seconds": total_seconds,
                 "duration": dur,
                 "photo_url": f"/students/photo/{sid}" if _has_photo_blob(s) else "",
+                "photo_data_uri": _photo_data_uri(s),
             })
 
         return jsonify(result), 200
@@ -1239,6 +1240,7 @@ def register_api_routes(app):
                     "total_seconds": total_seconds,
                     "duration": dur,
                     "photo_url": f"/students/photo/{sid}" if _has_photo_blob(s) else "",
+                    "photo_data_uri": _photo_data_uri(s),
                 }
                 result.append(student_dict)
 

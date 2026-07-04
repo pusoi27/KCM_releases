@@ -265,7 +265,9 @@
     <a href="{{ url_for('students_add') }}" class="btn btn-success btn-sm">Add Student</a>
     <a href="{{ url_for('students_export') }}" class="btn btn-outline-primary btn-sm">Export CSV</a>
     <a href="{{ url_for('students_export_mailing_list') }}" class="btn btn-outline-primary btn-sm">Export CSV (Mailing List)</a>
-    <a href="{{ url_for('students_badges_pdf') }}" class="btn btn-outline-dark btn-sm">Print Students Badge</a>
+    <button type="button" class="btn btn-outline-dark btn-sm" data-bs-toggle="modal" data-bs-target="#badgePrintModal">
+      Print Students Badge
+    </button>
     <form action="{{ url_for('students_import') }}" method="post" enctype="multipart/form-data" id="importForm">
       <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
       <input type="file" name="csvfile" accept=".csv" required style="display:none;" id="csvFileInput" onchange="this.form.submit()">
@@ -583,6 +585,61 @@
   </div>
 </div>
 
+<!-- Badge Print Modal -->
+<div class="modal fade" id="badgePrintModal" tabindex="-1" aria-labelledby="badgePrintModalLabel" aria-hidden="true">
+  <div class="modal-dialog modal-lg modal-dialog-centered">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title" id="badgePrintModalLabel">Print Student Badges (A4 Business Card Format)</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body">
+        <div class="form-check mb-2">
+          <input class="form-check-input" type="radio" name="badgePrintMode" id="badgePrintModeAll" value="all" checked>
+          <label class="form-check-label" for="badgePrintModeAll">
+            <strong>Option 1 - Print all student badges</strong>
+            <div class="small text-muted">Print all active students with the current badge format.</div>
+          </label>
+        </div>
+
+        <div class="form-check mb-3">
+          <input class="form-check-input" type="radio" name="badgePrintMode" id="badgePrintModeSelected" value="selected">
+          <label class="form-check-label" for="badgePrintModeSelected">
+            <strong>Option 2 - Select student(s)</strong>
+            <div class="small text-muted">Choose specific students and print badges only for them.</div>
+          </label>
+        </div>
+
+        <div id="badgePrintSelectedPanel" class="border rounded p-3 bg-light" style="display:none;">
+          <div class="row g-3">
+            <div class="col-md-12">
+              <label class="form-label fw-semibold">Select students</label>
+              <div class="d-flex align-items-center gap-2 mb-2">
+                <button type="button" id="badgeSelectAllStudents" class="btn btn-outline-secondary btn-sm">Select all</button>
+                <button type="button" id="badgeClearAllStudents" class="btn btn-outline-secondary btn-sm">Clear all</button>
+              </div>
+              <div class="border bg-white rounded p-2" style="max-height:260px; overflow-y:auto;">
+                {% for s in students %}
+                <div class="form-check">
+                  <input class="form-check-input badge-student-check" type="checkbox" value="{{ s.id }}" id="badgeStudent{{ s.id }}">
+                  <label class="form-check-label" for="badgeStudent{{ s.id }}">
+                    {{ s.name }}{% if s.student_identifier %} <span class="text-muted">({{ s.student_identifier }})</span>{% endif %}
+                  </label>
+                </div>
+                {% endfor %}
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>
+        <button type="button" id="badgePrintConfirmBtn" class="btn btn-primary">Continue</button>
+      </div>
+    </div>
+  </div>
+</div>
+
 <script>
   function _retryImageOnce(imgElement) {
     if (imgElement.dataset.retryAttempted === '1') {
@@ -762,6 +819,63 @@
         label: String(startLabel),
       });
       openPdfInNewWindow(`{{ url_for('qr_pdf_selected') }}?${params.toString()}`);
+    });
+  })();
+
+  // ── Badge print modal logic (all vs selected students) ──────────────────
+  (function () {
+    const modal = document.getElementById('badgePrintModal');
+    if (!modal) return;
+
+    const modeAll = document.getElementById('badgePrintModeAll');
+    const modeSelected = document.getElementById('badgePrintModeSelected');
+    const selectedPanel = document.getElementById('badgePrintSelectedPanel');
+    const printBtn = document.getElementById('badgePrintConfirmBtn');
+
+    const studentChecks = Array.from(document.querySelectorAll('.badge-student-check'));
+    const selectAllBtn = document.getElementById('badgeSelectAllStudents');
+    const clearAllBtn = document.getElementById('badgeClearAllStudents');
+
+    function refreshPanelVisibility() {
+      selectedPanel.style.display = modeSelected.checked ? '' : 'none';
+    }
+
+    modeAll.addEventListener('change', refreshPanelVisibility);
+    modeSelected.addEventListener('change', refreshPanelVisibility);
+    refreshPanelVisibility();
+
+    if (selectAllBtn) {
+      selectAllBtn.addEventListener('click', () => {
+        studentChecks.forEach(cb => { cb.checked = true; });
+      });
+    }
+
+    if (clearAllBtn) {
+      clearAllBtn.addEventListener('click', () => {
+        studentChecks.forEach(cb => { cb.checked = false; });
+      });
+    }
+
+    function openPdfInNewWindow(url) {
+      window.open(url, '_blank', 'noopener,noreferrer');
+    }
+
+    printBtn.addEventListener('click', () => {
+      if (modeAll.checked) {
+        openPdfInNewWindow('{{ url_for("students_badges_pdf") }}');
+        return;
+      }
+
+      const selectedIds = studentChecks.filter(cb => cb.checked).map(cb => cb.value);
+      if (selectedIds.length === 0) {
+        alert('Please select at least one student to print badges.');
+        return;
+      }
+
+      const params = new URLSearchParams({
+        student_ids: selectedIds.join(','),
+      });
+      openPdfInNewWindow(`{{ url_for('students_badges_pdf') }}?${params.toString()}`);
     });
   })();
 </script>
