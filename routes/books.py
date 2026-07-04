@@ -33,6 +33,8 @@ from threading import Lock
 BOOK_LEVEL_ORDER = ["1", "2", "3", "4", "5", "6", "7", "A", "B", "C", "D", "E", "F", "G", "H", "I", "J", "K"]
 ISBN_LOOKUP_CACHE_TTL_SECONDS = 12 * 60 * 60
 ISBN_LOOKUP_RATE_LIMIT_COOLDOWN_KEY = "books:isbn_lookup:rate_limited:v1"
+BRIDGE_GET_TIMEOUT_SECONDS = 4
+BRIDGE_POST_TIMEOUT_SECONDS = 5
 _isbn_lookup_locks = {}
 _isbn_lookup_locks_guard = Lock()
 
@@ -79,7 +81,7 @@ def _bridge_forward_get(path: str, params: dict | None = None):
         g.scanner_bridge_fallback_reason = "missing_instructor_api_url"
         return None
     try:
-        response = requests.get(url, headers=_bridge_headers(), params=(params or {}), timeout=12)
+        response = requests.get(url, headers=_bridge_headers(), params=(params or {}), timeout=(2, BRIDGE_GET_TIMEOUT_SECONDS))
         payload = response.json()
     except requests.RequestException as exc:
         g.scanner_bridge_fallback = True
@@ -100,7 +102,7 @@ def _bridge_forward_post(path: str, payload: dict | None = None):
         g.scanner_bridge_fallback_reason = "missing_instructor_api_url"
         return None
     try:
-        response = requests.post(url, headers=_bridge_headers(), json=(payload or {}), timeout=15)
+        response = requests.post(url, headers=_bridge_headers(), json=(payload or {}), timeout=(2, BRIDGE_POST_TIMEOUT_SECONDS))
         body = response.json()
     except requests.RequestException as exc:
         g.scanner_bridge_fallback = True

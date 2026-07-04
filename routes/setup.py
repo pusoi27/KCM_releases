@@ -1,4 +1,4 @@
-from flask import render_template, request, redirect, url_for, flash, jsonify, session
+from flask import render_template, request, redirect, url_for, flash, jsonify, session, g
 import secrets
 import requests
 import socket
@@ -171,6 +171,15 @@ def _instructor_hours_status() -> dict:
     }
 
 
+def _is_multi_station_license_active() -> bool:
+    """True when current activated license supports scanner+instructor station split."""
+    try:
+        ctx = g.get('license_status') or {}
+        return int(ctx.get('activation_limit') or 0) >= 2
+    except Exception:
+        return False
+
+
 def register_setup_routes(app):
     @app.route('/setup', methods=['GET'])
     @require_login
@@ -209,11 +218,14 @@ def register_setup_routes(app):
     @app.route('/setup/storage', methods=['GET', 'POST'])
     @require_login
     def setup_storage():
+        is_multi_station_license = _is_multi_station_license_active()
+
         if request.method == 'POST':
             cloud_provider = (request.form.get('cloud_provider') or 'onedrive').strip().lower()
             gdrive_sync_path = (request.form.get('gdrive_sync_path') or '').strip()
             onedrive_sync_path = (request.form.get('onedrive_sync_path') or '').strip()
-            station_mode = (request.form.get('station_mode') or 'instructor_server').strip().lower()
+            requested_station_mode = (request.form.get('station_mode') or 'instructor_server').strip().lower()
+            station_mode = requested_station_mode if is_multi_station_license else 'instructor_server'
             backup_mode = 'instructor_snapshots_only'
             instructor_api_base_url = _normalize_base_url(request.form.get('instructor_api_base_url') or '')
             station_pairing_token = (request.form.get('station_pairing_token') or '').strip()
@@ -223,8 +235,12 @@ def register_setup_routes(app):
             except ValueError:
                 snapshot_interval_minutes = 15
 
+            if not is_multi_station_license:
+                # Single-machine license: always run combined functionality on this one station.
+                station_mode = 'instructor_server'
+
             # Minimize scanner setup friction: auto-fetch token from instructor when URL is provided.
-            if station_mode == 'scanner_api_client' and instructor_api_base_url and not station_pairing_token:
+            if is_multi_station_license and station_mode == 'scanner_api_client' and instructor_api_base_url and not station_pairing_token:
                 ok, msg, bootstrap = _attempt_pairing_bootstrap(instructor_api_base_url)
                 if ok:
                     station_pairing_token = str(bootstrap.get('station_pairing_token') or '').strip()
@@ -238,7 +254,8 @@ def register_setup_routes(app):
             # Minimize instructor setup friction: always ensure a token exists.
             if station_mode == 'instructor_server' and not station_pairing_token:
                 station_pairing_token = secrets.token_urlsafe(24)
-                flash('Instructor token auto-generated for scanner pairing.', 'success')
+                if is_multi_station_license:
+                    flash('Instructor token auto-generated for scanner pairing.', 'success')
 
             # For instructor mode, auto-fill a practical LAN URL when empty.
             if station_mode == 'instructor_server' and not instructor_api_base_url:
@@ -280,6 +297,7 @@ def register_setup_routes(app):
                 suggested_pairing_url=suggested_pairing_url,
                 display_pair_code=display_pair_code,
                 display_pair_code_ttl=display_pair_code_ttl,
+                is_multi_station_license=is_multi_station_license,
             )
 
         status = get_db_config_status()
@@ -301,11 +319,16 @@ def register_setup_routes(app):
             suggested_pairing_url=suggested_pairing_url,
             display_pair_code=display_pair_code,
             display_pair_code_ttl=display_pair_code_ttl,
+            is_multi_station_license=is_multi_station_license,
         )
 
     @app.route('/setup/storage/show-pair-code', methods=['POST'])
     @require_login
     def setup_storage_show_pair_code():
+        if not _is_multi_station_license_active():
+            flash('4-digit pairing is only available for multi-station licenses.', 'info')
+            return redirect(url_for('setup_storage'))
+
         runtime = get_station_runtime_config()
         if str(runtime.get('station_mode') or '').strip().lower() != 'instructor_server':
             flash('4-digit pairing code can only be generated on Instructor Station mode.', 'warning')
@@ -335,6 +358,10 @@ def register_setup_routes(app):
     @app.route('/setup/storage/pair-by-code', methods=['POST'])
     @require_login
     def setup_storage_pair_by_code():
+        if not _is_multi_station_license_active():
+            flash('Scanner pairing by code is only available for multi-station licenses.', 'info')
+            return redirect(url_for('setup_storage'))
+
         status = get_db_config_status()
         cfg = (status or {}).get('config', {}) if isinstance(status, dict) else {}
 
@@ -390,6 +417,10 @@ def register_setup_routes(app):
     @app.route('/setup/storage/auto-connect', methods=['POST'])
     @require_login
     def setup_storage_auto_connect():
+        if not _is_multi_station_license_active():
+            flash('Auto-connect scanner is only available for multi-station licenses.', 'info')
+            return redirect(url_for('setup_storage'))
+
         status = get_db_config_status()
         cfg = (status or {}).get('config', {}) if isinstance(status, dict) else {}
 
@@ -439,6 +470,10 @@ def register_setup_routes(app):
     @app.route('/setup/storage/generate-pairing-token', methods=['POST'])
     @require_login
     def setup_storage_generate_pairing_token():
+        if not _is_multi_station_license_active():
+            flash('Pairing token tools are only available for multi-station licenses.', 'info')
+            return redirect(url_for('setup_storage'))
+
         status = get_db_config_status()
         cfg = (status or {}).get('config', {}) if isinstance(status, dict) else {}
         generated_token = secrets.token_urlsafe(24)
@@ -526,6 +561,10 @@ def register_setup_routes(app):
     @app.route('/setup/storage/test-pairing', methods=['POST'])
     @require_login
     def setup_storage_test_pairing():
+        if not _is_multi_station_license_active():
+            flash('Pairing test is only available for multi-station licenses.', 'info')
+            return redirect(url_for('setup_storage'))
+
         runtime = get_station_runtime_config()
         base_url = _normalize_base_url(runtime.get('instructor_api_base_url') or '')
         token = str(runtime.get('station_pairing_token') or '').strip()

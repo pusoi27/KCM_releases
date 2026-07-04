@@ -202,14 +202,14 @@ def reconcile_pending_once(limit: int = 50) -> dict:
             sent += 1
             continue
 
-        # Conflict-safe behavior: treat duplicate/conflict/no-op as applied.
-        if resp.status_code in {200, 409, 422}:
+        # Conflict-safe behavior: only treat explicit duplicates as applied.
+        if resp.status_code == 409 and bool(body.get("duplicate")):
             _mark_mutation_sent(op_id)
             sent += 1
             continue
 
         _mark_mutation_error(op_id, body.get("error") or f"http {resp.status_code}")
-        if resp.status_code >= 500:
+        if resp.status_code >= 500 or resp.status_code == 409:
             break
 
     return {"processed": processed, "sent": sent, "skipped": False}

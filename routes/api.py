@@ -30,6 +30,8 @@ from routes.auth import require_login, require_admin, require_feature
 
 CHECKOUT_COOLDOWN_SECONDS = 60
 STAFF_DUTY_MAX_DAILY_SECONDS = 6 * 60 * 60
+BRIDGE_GET_TIMEOUT_SECONDS = 4
+BRIDGE_POST_TIMEOUT_SECONDS = 5
 
 
 def _runtime_station_mode() -> str:
@@ -96,7 +98,7 @@ def _bridge_forward_get(path: str):
         _mark_scanner_bridge_offline("missing_instructor_api_url")
         return None
     try:
-        response = requests.get(url, headers=_build_bridge_headers(), timeout=12)
+        response = requests.get(url, headers=_build_bridge_headers(), timeout=(2, BRIDGE_GET_TIMEOUT_SECONDS))
     except requests.RequestException as exc:
         _mark_scanner_bridge_offline(f"request_error:{exc}")
         return None
@@ -113,7 +115,7 @@ def _bridge_forward_post(path: str, payload: dict | None = None):
         _mark_scanner_bridge_offline("missing_instructor_api_url")
         return None
     try:
-        response = requests.post(url, headers=_build_bridge_headers(), json=(payload or {}), timeout=15)
+        response = requests.post(url, headers=_build_bridge_headers(), json=(payload or {}), timeout=(2, BRIDGE_POST_TIMEOUT_SECONDS))
     except requests.RequestException as exc:
         _mark_scanner_bridge_offline(f"request_error:{exc}")
         return None

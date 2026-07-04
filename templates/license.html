@@ -55,7 +55,16 @@
             <a href="https://stdytime.com/#pricing" target="_blank" class="btn btn-sm btn-success">Buy a subscription</a>
           </div>
           {% endif %}
-          <p class="text-muted">After purchase, LemonSqueezy emails you a license key. Paste it below to activate this installation. If your plan includes multiple machines, the license will show its activation limit here.</p>
+          <p class="text-muted">
+            After purchase, LemonSqueezy emails you a license key. Paste it below to activate this installation.
+            {% if license_status.activation_limit and license_status.activation_limit >= 2 %}
+            Multi-machine plans can assign station roles (Scanner/Instructor).
+            {% elif license_status.has_license_key and license_status.activation_limit and license_status.activation_limit < 2 %}
+            Single-machine plans run all functionality on one combined station (no station-role setup needed).
+            {% else %}
+            The license will show its activation limit after activation.
+            {% endif %}
+          </p>
 
           <form method="POST" action="{{ url_for('activate_license') }}" class="mb-4">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
@@ -81,6 +90,11 @@
               <li><strong>Network grace window:</strong> {{ license_status.grace_hours if license_status.grace_hours is not none else '—' }} hour(s)</li>
               <li><strong>Last LS verification:</strong> {{ license_status.ls_last_verified_at or 'Not verified yet' }}</li>
             </ul>
+            {% if license_status.has_license_key and license_status.activation_limit and license_status.activation_limit < 2 %}
+            <div class="alert alert-info mt-3 mb-0 py-2 small">
+              Single-machine license detected: this device uses combined mode by default (scanner + instructor functionality together).
+            </div>
+            {% endif %}
           </div>
 
           {% if license_status.has_license_key %}

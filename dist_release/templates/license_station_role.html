@@ -15,12 +15,19 @@
 <body>
   <div class="container station-shell">
     <div class="card station-card p-4 p-lg-5">
-      <h1 class="h3 fw-bold mb-2">Choose this machine's role</h1>
+      <h1 class="h3 fw-bold mb-2">Machine role setup</h1>
+      {% if license_status.activation_limit and license_status.activation_limit >= 2 %}
       <p class="text-muted mb-4">
         Your license allows <strong>{{ license_status.activation_limit }}</strong> machines.
         Assign this machine as either the Scanner Station or the Instructor Station.
       </p>
+      {% else %}
+      <p class="text-muted mb-4">
+        Single-machine license detected. This device runs in combined mode by default, so station role selection is not required.
+      </p>
+      {% endif %}
 
+      {% if license_status.activation_limit and license_status.activation_limit >= 2 %}
       <div class="alert alert-secondary mb-4">
         <div class="fw-semibold mb-2">Recommended two-station deployment pattern</div>
         <ul class="mb-0">
@@ -29,6 +36,11 @@
           <li><strong>Backups</strong>: snapshots from Instructor only (avoid multi-writer cloud DB sync).</li>
         </ul>
       </div>
+      {% else %}
+      <div class="alert alert-info mb-4">
+        No action needed here for single-machine plans. Use the standard setup flow with combined functionality.
+      </div>
+      {% endif %}
 
       {% with messages = get_flashed_messages(with_categories=true) %}
         {% if messages %}
@@ -43,6 +55,7 @@
 
       <form method="POST" action="{{ url_for('license_station_role') }}">
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        {% if license_status.activation_limit and license_status.activation_limit >= 2 %}
         <div class="row g-3 mb-4">
           <div class="col-md-6">
             <label class="choice d-block">
@@ -63,9 +76,12 @@
             </label>
           </div>
         </div>
+        {% endif %}
 
         <div class="d-flex gap-2">
+          {% if license_status.activation_limit and license_status.activation_limit >= 2 %}
           <button type="submit" class="btn btn-success">Save Role</button>
+          {% endif %}
           <a href="{{ url_for('license_page') }}" class="btn btn-outline-secondary">Back to License</a>
         </div>
       </form>
