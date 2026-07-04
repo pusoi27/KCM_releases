@@ -630,6 +630,69 @@ def _bridge_student_payload(student_row) -> dict:
     }
 
 
+def _resolve_student_id_from_scan_payload(payload: dict) -> int | None:
+    """Resolve student id from scan payload using id first, then UID/name fallbacks."""
+    payload = payload or {}
+
+    try:
+        sid = int(payload.get("student_id") or 0)
+    except (TypeError, ValueError):
+        sid = 0
+
+    if sid > 0:
+        return sid
+
+    uid = str(payload.get("student_uid") or "").strip()
+    if uid:
+        with sqlite3.connect(DB_PATH) as conn:
+            c = conn.cursor()
+            try:
+                row = c.execute(
+                    """
+                    SELECT owner_id
+                    FROM qr_token_registry
+                    WHERE LOWER(COALESCE(token, '')) = LOWER(?)
+                      AND LOWER(COALESCE(owner_type, '')) = 'student'
+                    LIMIT 1
+                    """,
+                    (uid,),
+                ).fetchone()
+            except sqlite3.OperationalError:
+                row = None
+            if row and row[0]:
+                try:
+                    resolved = int(row[0])
+                except (TypeError, ValueError):
+                    resolved = 0
+                if resolved > 0:
+                    return resolved
+
+    name_hint = str(payload.get("student_name") or "").strip()
+    if name_hint:
+        with sqlite3.connect(DB_PATH) as conn:
+            c = conn.cursor()
+            row = c.execute(
+                """
+                SELECT id
+                FROM students
+                WHERE active = 1
+                  AND LOWER(TRIM(COALESCE(name, ''))) = LOWER(TRIM(?))
+                ORDER BY id DESC
+                LIMIT 1
+                """,
+                (name_hint,),
+            ).fetchone()
+            if row and row[0]:
+                try:
+                    resolved = int(row[0])
+                except (TypeError, ValueError):
+                    resolved = 0
+                if resolved > 0:
+                    return resolved
+
+    return None
+
+
 def _bridge_send_email(data: dict) -> dict:
     email_manager = get_email_manager()
     sender_email = str(getattr(email_manager, "sender_email", "") or "").strip()
@@ -975,7 +1038,7 @@ def register_api_routes(app):
             return _bridge_pairing_auth_error()
 
         data = request.get_json(silent=True) or {}
-        student_id = data.get("student_id")
+        student_id = _resolve_student_id_from_scan_payload(data)
         if not student_id:
             return jsonify({"error": "Missing student_id"}), 400
 
@@ -1549,7 +1612,7 @@ def register_api_routes(app):
 
         try:
             data = request.get_json() or {}
-            student_id = data.get("student_id")
+            student_id = _resolve_student_id_from_scan_payload(data)
             
             if not student_id:
                 return jsonify({"error": "Missing student_id"}), 400

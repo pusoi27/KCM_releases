@@ -99,6 +99,27 @@ def register_qr_routes(app):
 
         return redirect(url_for("students_list"))
 
+    @app.route("/qr/students/regenerate/<int:sid>", methods=["POST"])
+    @require_login
+    @require_feature(auth_manager.FEATURE_STUDENT_DATABASE)
+    def qr_students_regenerate_one_dashboard(sid):
+        """Regenerate a single student's QR code from Student Database actions."""
+        student = student_manager.get_student(sid)
+        if not student:
+            flash("Student not found.", "danger")
+            return redirect(url_for("students_list"))
+
+        try:
+            unique_token = issue_unique_qr_token("STU", "student", sid)
+            qr_data = f"ID:{student[0]}\nName:{student[1]}\nUID:{unique_token}"
+            qr_blob = qr_generator.generate_qr_bytes(qr_data)
+            student_manager.set_student_qr_code(sid, qr_blob)
+            flash(f"QR code regenerated for {student[1]}.", "success")
+        except Exception as exc:
+            flash(f"Failed to regenerate QR code for {student[1]}: {exc}", "warning")
+
+        return redirect(url_for("students_list"))
+
     @app.route('/students/qr/<int:sid>')
     def serve_student_qr(sid):
         """Serve student QR code from database."""

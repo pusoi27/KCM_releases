@@ -392,6 +392,8 @@ async function finalizeScan(){
       fields[k] = v;
     }
   });
+  const scannedNameHint = fields.NAME || '';
+  const scannedUidHint = fields.UID || '';
   
   const nameMatch = fields.NAME || null;
   const titleMatch = fields.TITLE || null;
@@ -425,7 +427,7 @@ async function finalizeScan(){
       const toggleRes = await fetch('/api/sessions/toggle', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ student_id: id })
+        body: JSON.stringify({ student_id: id, student_name: scannedNameHint, student_uid: scannedUidHint })
       });
       const toggleData = await toggleRes.json();
       if (toggleRes.ok && toggleData.action){

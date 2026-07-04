@@ -409,6 +409,10 @@
         <td class="col-actions">
           <a href="{{ url_for('students_edit',sid=s.id) }}" class="btn btn-outline-info btn-sm">Edit</a>
           <a href="{{ url_for('students_export_vcf', sid=s.id) }}" class="btn btn-outline-success btn-sm" title="Download VCF contact file (browser save dialog)">VCF</a>
+          <form method="POST" action="{{ url_for('qr_students_regenerate_one_dashboard', sid=s.id) }}" class="d-inline">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <button type="submit" class="btn btn-outline-warning btn-sm" onclick='return confirm("Regenerate QR for " + {{ s.name|tojson }} + "?");'>Regenerate QR</button>
+          </form>
           <a href="{{ url_for('qr_print_individual', sid=s.id) }}" class="btn btn-outline-dark btn-sm" title="Select label slot and download individual QR PDF">Print QR</a>
           {% if current_user and current_user.is_admin() %}
           <form method="POST" action="{{ url_for('students_delete',sid=s.id) }}" class="d-inline">

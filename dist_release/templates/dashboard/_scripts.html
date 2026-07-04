@@ -1362,6 +1362,8 @@ resetIdleTimer();
       const mm = line.match(/^([^:;=]+)[:;=](.*)$/);
       if(mm){ fields[mm[1].trim().toUpperCase()] = mm[2].trim(); }
     });
+    const scannedNameHint = fields.NAME || '';
+    const scannedUidHint = fields.UID || '';
 
     async function resolveAssistantName(aid){
       if(fields.NAME) return fields.NAME;
@@ -1404,7 +1406,7 @@ resetIdleTimer();
     try{
       const res = await fetch('/api/sessions/toggle',{
         method:'POST', headers:{'Content-Type':'application/json'},
-        body: JSON.stringify({ student_id: ident })
+        body: JSON.stringify({ student_id: ident, student_name: scannedNameHint, student_uid: scannedUidHint })
       });
       const j = await res.json().catch(()=>({}));
       if(!res.ok){
