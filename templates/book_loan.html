@@ -559,6 +559,12 @@ function clearLoan(bookId, studentId, bookTitle, studentName) {
     const txt = normalizeScanPayload(payload);
     if (!txt) return null;
 
+    // Student QR payloads can include UID values whose digits accidentally pass
+    // ISBN validation; keep those in the student-scan lane.
+    if (/(?:^|\n)\s*(ID|NAME|UID)\s*[:;=]/i.test(txt)) {
+      return null;
+    }
+
     const labeled = txt.match(/ISBN(?:-1[03])?\s*[:;=]?\s*([0-9Xx\-\s]{10,20})/i);
     if (labeled) {
       const token = normalizeIsbnToken(labeled[1]);
