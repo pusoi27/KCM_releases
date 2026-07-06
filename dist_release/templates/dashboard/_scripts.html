@@ -117,7 +117,8 @@ function exitFullscreenMode(){
 }
 
 function formatHHMM(sec){
-  const h=Math.floor(sec/3600), m=Math.floor(sec%3600/60);
+  const safeSec = Math.max(0, Number(sec) || 0);
+  const h=Math.floor(safeSec/3600), m=Math.floor(safeSec%3600/60);
   return [h,m].map(v=>String(v).padStart(2,"0")).join(":");
 }
 function formatSessionTime(seconds){
@@ -153,18 +154,50 @@ function subjectBadgeHtml(value){
 
 function sessionLimitSeconds(session){
   const plannedMinutes = Number(session && session.total_study_minutes);
+  const subjects = Array.isArray(session && session.subjects)
+    ? session.subjects.filter(Boolean)
+    : [];
+
+  const subjectDerivedMinutes = subjects.length > 0 ? subjects.length * 30 : 0;
+
+  // Prefer the larger value to avoid under-timing students when one source is stale
+  // (e.g., total_study_minutes still at 30 while two subjects are selected).
+  if (Number.isFinite(plannedMinutes) && plannedMinutes > 0 && subjectDerivedMinutes > 0) {
+    return Math.round(Math.max(plannedMinutes, subjectDerivedMinutes) * 60);
+  }
+
   if (Number.isFinite(plannedMinutes) && plannedMinutes > 0) {
     return Math.round(plannedMinutes * 60);
   }
 
-  const subjects = Array.isArray(session && session.subjects)
-    ? session.subjects.filter(Boolean)
-    : [];
-  if (subjects.length > 0) {
-    return subjects.length * 30 * 60;
+  if (subjectDerivedMinutes > 0) {
+    return subjectDerivedMinutes * 60;
   }
 
   return 30 * 60;
+}
+
+function parseSessionStartTime(rawStartTime){
+  const raw = String(rawStartTime || '').trim();
+  if (!raw) {
+    return new Date();
+  }
+
+  // Normalize unicode spacing artifacts from scanner/browser payloads.
+  const cleaned = raw.replace(/[\u202f\u2009]/g, ' ').trim();
+
+  // SQLite timestamps often come as "YYYY-MM-DD HH:MM:SS".
+  // Try a local-time friendly ISO variant first.
+  let dt = new Date(cleaned.includes('T') ? cleaned : cleaned.replace(' ', 'T'));
+  if (Number.isNaN(dt.getTime())) {
+    dt = new Date(cleaned);
+  }
+
+  // Final safety: never propagate an invalid start timestamp into timer math.
+  if (Number.isNaN(dt.getTime())) {
+    return new Date();
+  }
+  return dt;
 }
 
 function fitSeatCardName(nameEl){
@@ -821,7 +854,7 @@ function buildSeatGrid(activeSessions){
         newMap.set(sid, existing);
       } else {
         // New session: build card and start timer
-        const start=new Date((s.start_time||"").replace(/\u202f|\u2009/g," "));
+        const start = parseSessionStartTime(s.start_time);
         const limit = sessionLimitSeconds(s);
 
         const card=document.createElement("div");
@@ -874,7 +907,7 @@ function buildSeatGrid(activeSessions){
         col.appendChild(card); grid.appendChild(col);
         const tEl=card.querySelector(".timer");
         const updateSeatTimer = ()=>{
-          const diff=Math.floor((new Date()-start)/1000);
+          const diff = Math.max(0, Math.floor((Date.now() - start.getTime()) / 1000));
           tEl.textContent=formatHHMM(diff);
           tEl.classList.toggle("text-danger",diff>limit);
           tEl.classList.toggle("text-success",diff<=limit);
@@ -913,7 +946,7 @@ function buildSeatGrid(activeSessions){
     overflowList.innerHTML = '';
     overflowStudents.forEach(s => {
       const sid = s.id ?? s.student_id ?? s.sid;
-      const start = new Date((s.start_time||'').replace(/\u202f|\u2009/g,' '));
+      const start = parseSessionStartTime(s.start_time);
       const limit = sessionLimitSeconds(s);
 
       const row = document.createElement('div');
@@ -927,7 +960,7 @@ function buildSeatGrid(activeSessions){
 
       // Live elapsed timer for overflow student
       const updateOverflowTimer = () => {
-        const elapsed = Math.floor((new Date() - start) / 1000);
+        const elapsed = Math.max(0, Math.floor((Date.now() - start.getTime()) / 1000));
         timerEl.textContent = formatHHMM(elapsed);
         const over = elapsed > limit;
         row.classList.toggle('over-time', over);
@@ -1224,9 +1257,21 @@ resetIdleTimer();
     return false;
   }
 
+  function looksLikeStructuredIdentityQr(data){
+    const txt = String(data || '').trim();
+    if(!txt) return false;
+    return /(?:^|\n)\s*(ID|ASST|ASSISTANT|NAME|UID)\s*[:;=]/i.test(txt);
+  }
+
   function extractValidIsbn(data){
     const txt = String(data || '').trim();
     if(!txt) return null;
+
+    // Student/staff QR payloads may contain a UID whose digits can coincidentally
+    // form a valid ISBN checksum; never route those away from attendance flows.
+    if(looksLikeStructuredIdentityQr(txt)){
+      return null;
+    }
 
     // Prefer explicit ISBN labels when present.
     const labeled = txt.match(/ISBN(?:-1[03])?\s*[:;=]?\s*([0-9Xx\-\s]{10,20})/i);
