@@ -31,6 +31,7 @@ def register_reports_routes(app):
         # Get parameters from query string
         start_param = request.args.get('start', '')
         end_param = request.args.get('end', '')
+        print_mode = str(request.args.get('print', '')).strip().lower() in ('1', 'true', 'yes')
         
         # Use provided params or defaults for display
         display_start = start_param if start_param else default_start
@@ -79,7 +80,8 @@ def register_reports_routes(app):
             end=display_end,
             error=error,
             staff_hours=staff_hours,
-            show_data=show_data
+            show_data=show_data,
+            print_mode=print_mode,
         )
 
     @app.route('/reports/assistants/pdf')
@@ -209,6 +211,7 @@ def register_reports_routes(app):
         orientation = (request.args.get('orientation', 'portrait') or 'portrait').strip().lower()
         if orientation not in ('portrait', 'landscape'):
             orientation = 'portrait'
+        print_mode = str(request.args.get('print', '')).strip().lower() in ('1', 'true', 'yes')
         error = None
         by_day = {}
 
@@ -263,6 +266,7 @@ def register_reports_routes(app):
             start=start_date.isoformat(),
             end=end_date.isoformat(),
             orientation=orientation,
+            print_mode=print_mode,
             error=error,
             by_day=by_day_list,
         )
@@ -389,6 +393,7 @@ def register_reports_routes(app):
         sid = request.args.get('sid', type=int)
         start_param = request.args.get('start', default_start)
         end_param = request.args.get('end', default_end)
+        print_mode = str(request.args.get('print', '')).strip().lower() in ('1', 'true', 'yes')
         error = None
         sessions = []
         student_name = None
@@ -444,6 +449,7 @@ def register_reports_routes(app):
             start=start_date.isoformat(),
             end=end_date.isoformat(),
             student_name=student_name,
+            print_mode=print_mode,
             error=error,
             sessions=sessions_list,
         )

@@ -2,7 +2,7 @@
 {% block content %}
 <div class="container py-3">
   <h4>Student Attendance Report</h4>
-  <form class="row gy-2 gx-2 align-items-end" method="get" action="{{ url_for('student_attendance_page') }}">
+  <form class="row gy-2 gx-2 align-items-end no-print" method="get" action="{{ url_for('student_attendance_page') }}">
     <div class="col-auto">
       <label for="student" class="form-label small mb-0">Student</label>
       <select id="student" name="sid" class="form-select form-select-sm">
@@ -24,12 +24,12 @@
       <button type="submit" class="btn btn-primary btn-sm">Update</button>
     </div>
     <div class="col-auto ms-auto">
-      <button type="button" class="btn btn-outline-secondary btn-sm" onclick="printPDF()" {% if not sid %}disabled{% endif %}>Print to PDF</button>
+      <button type="button" class="btn btn-outline-secondary btn-sm" onclick="printReport()" {% if not sid %}disabled{% endif %}>Print</button>
     </div>
   </form>
 
   {% if error %}
-    <div class="alert alert-warning mt-3 mb-0">{{ error }}</div>
+    <div class="alert alert-warning mt-3 mb-0 no-print">{{ error }}</div>
   {% endif %}
 
   {% if sid and student_name %}
@@ -66,14 +66,14 @@
     </div>
   </div>
   {% elif sid %}
-    <div class="alert alert-info mt-3">Student not found or no data available.</div>
+    <div class="alert alert-info mt-3 no-print">Student not found or no data available.</div>
   {% else %}
-    <div class="alert alert-info mt-3">Please select a student to view attendance.</div>
+    <div class="alert alert-info mt-3 no-print">Please select a student to view attendance.</div>
   {% endif %}
 </div>
 
 <script>
-function printPDF(){
+function printReport(){
   const sid = document.getElementById('student').value;
   const start = document.getElementById('start').value;
   const end = document.getElementById('end').value;
@@ -88,8 +88,16 @@ function printPDF(){
     alert('Dates must be within the last 30 calendar days.');
     return;
   }
-  const url = `/reports/student-attendance/pdf?sid=${sid}&start=${start}&end=${end}`;
+  const url = `/reports/student-attendance?sid=${sid}&start=${start}&end=${end}&print=1`;
   window.open(url, '_blank');
 }
+
+{% if print_mode %}
+window.addEventListener('load', function () {
+  setTimeout(function () {
+    window.print();
+  }, 150);
+});
+{% endif %}
 </script>
 {% endblock %}

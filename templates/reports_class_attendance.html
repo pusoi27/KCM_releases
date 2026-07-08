@@ -2,7 +2,7 @@
 {% block content %}
 <div class="container py-3">
   <h4>Class Attendance Report</h4>
-  <form class="row gy-2 gx-2 align-items-end" method="get" action="{{ url_for('class_attendance_page') }}">
+  <form class="row gy-2 gx-2 align-items-end no-print" method="get" action="{{ url_for('class_attendance_page') }}">
     <div class="col-auto">
       <label for="start" class="form-label small mb-0">Start date</label>
       <input type="date" id="start" name="start" class="form-control form-control-sm" value="{{ start }}">
@@ -22,12 +22,12 @@
       <button type="submit" class="btn btn-primary btn-sm">Update</button>
     </div>
     <div class="col-auto ms-auto">
-      <button type="button" class="btn btn-outline-secondary btn-sm" onclick="printPDF()">Print to PDF</button>
+      <button type="button" class="btn btn-outline-secondary btn-sm" onclick="printReport()">Print</button>
     </div>
   </form>
 
   {% if error %}
-    <div class="alert alert-warning mt-3 mb-0">{{ error }}</div>
+    <div class="alert alert-warning mt-3 mb-0 no-print">{{ error }}</div>
   {% endif %}
 
   <div class="card mt-3">
@@ -71,7 +71,7 @@
 </div>
 
 <script>
-function printPDF(){
+function printReport(){
   const start = document.getElementById('start').value;
   const end = document.getElementById('end').value;
   const orientation = document.getElementById('orientation').value || 'portrait';
@@ -85,8 +85,24 @@ function printPDF(){
     alert('Dates must be within the last 30 calendar days.');
     return;
   }
-  const url = `/reports/class-attendance/pdf?start=${start}&end=${end}&orientation=${orientation}`;
+  const url = `/reports/class-attendance?start=${start}&end=${end}&orientation=${orientation}&print=1`;
   window.open(url, '_blank');
 }
+
+{% if print_mode %}
+window.addEventListener('load', function () {
+  setTimeout(function () {
+    window.print();
+  }, 150);
+});
+{% endif %}
 </script>
+
+{% if print_mode %}
+<style>
+@page {
+  size: {{ orientation }};
+}
+</style>
+{% endif %}
 {% endblock %}

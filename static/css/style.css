@@ -312,6 +312,32 @@ img.rounded-circle[src*='default.png'] {
   .navbar, .btn, .form-control {
     display: none !important;
   }
+
+  .no-print {
+    display: none !important;
+  }
+
+  .container,
+  .container-fluid,
+  .card,
+  .card-body,
+  .table-responsive {
+    width: 100% !important;
+    max-width: none !important;
+    margin: 0 !important;
+    padding-left: 0 !important;
+    padding-right: 0 !important;
+    box-shadow: none !important;
+    border: 0 !important;
+  }
+
+  .alert {
+    display: none !important;
+  }
+
+  .table {
+    font-size: 12px;
+  }
   
   body {
     margin: 0;

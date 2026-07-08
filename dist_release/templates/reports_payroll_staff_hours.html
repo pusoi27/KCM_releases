@@ -2,7 +2,7 @@
 {% block content %}
 <div class="container py-3">
   <h4>Payroll Staff Hours Report</h4>
-  <form method="get" action="{{ url_for('reports_assistants') }}" class="mb-3">
+  <form method="get" action="{{ url_for('reports_assistants') }}" class="mb-3 no-print">
     <div class="row g-3 align-items-end">
       <div class="col-md-3">
         <label for="start" class="form-label">Start Date</label>
@@ -19,15 +19,15 @@
         <button type="button" class="btn btn-success" onclick="exportCSV()" {% if not show_data or not staff_hours %}disabled{% endif %}>
           <i class="bi bi-file-earmark-spreadsheet"></i> Export to CSV
         </button>
-        <button type="button" class="btn btn-outline-secondary" onclick="printPDF()" {% if not show_data or not staff_hours %}disabled{% endif %}>
-          <i class="bi bi-printer"></i> Print to PDF
+        <button type="button" class="btn btn-outline-secondary" onclick="printReport()" {% if not show_data or not staff_hours %}disabled{% endif %}>
+          <i class="bi bi-printer"></i> Print
         </button>
       </div>
     </div>
   </form>
 
   {% if error %}
-    <div class="alert alert-warning mt-3 mb-0">{{ error }}</div>
+    <div class="alert alert-warning mt-3 mb-0 no-print">{{ error }}</div>
   {% endif %}
 
   {% if show_data %}
@@ -73,7 +73,7 @@
     </div>
   </div>
   {% else %}
-  <div class="alert alert-info mt-3">
+  <div class="alert alert-info mt-3 no-print">
     <i class="bi bi-info-circle"></i> Please select a start date and end date, then click <strong>Update Report</strong> to view payroll staff hours.
   </div>
   {% endif %}
@@ -90,15 +90,23 @@ function exportCSV() {
   window.location.href = `/reports/assistants/csv?start=${start}&end=${end}`;
 }
 
-function printPDF() {
+function printReport() {
   const start = document.getElementById('start').value;
   const end = document.getElementById('end').value;
   if (!start || !end) {
     alert('Please select both start and end dates.');
     return;
   }
-  window.open(`/reports/assistants/pdf?start=${start}&end=${end}`, '_blank');
+  window.open(`/reports/assistants?start=${start}&end=${end}&print=1`, '_blank');
 }
+
+{% if print_mode %}
+window.addEventListener('load', function () {
+  setTimeout(function () {
+    window.print();
+  }, 150);
+});
+{% endif %}
 </script>
 
 <style>
