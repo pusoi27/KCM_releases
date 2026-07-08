@@ -134,6 +134,43 @@ def _bridge_request_is_pairing_authorized() -> bool:
 def _bridge_pairing_auth_error(message: str = "Invalid or missing pairing token."):
     return jsonify({"error": message}), 401
 
+
+def _request_is_loopback_client() -> bool:
+    remote_addr = str(request.remote_addr or "").strip().lower()
+    if not remote_addr:
+        return False
+
+    if remote_addr in {"127.0.0.1", "::1", "localhost"}:
+        return True
+
+    try:
+        return bool(ipaddress.ip_address(remote_addr).is_loopback)
+    except ValueError:
+        return False
+
+
+def _bridge_single_station_remote_block_response():
+    return jsonify({
+        "error": "Remote bridge/database access is disabled for single-station licenses.",
+        "hint": "Upgrade to a multi-machine license (2+ activations) and pair stations to allow remote bridge traffic.",
+    }), 403
+
+
+def _enforce_bridge_remote_access_policy():
+    """Block remote machine bridge/database access when this is a single-station license."""
+    status = g.get("license_status") or {}
+    activation_limit = int(status.get("activation_limit") or 0)
+
+    # Multi-machine licenses can allow remote bridge requests (token-gated).
+    if activation_limit >= 2:
+        return None
+
+    # Single-station license: only same-machine loopback may call bridge routes.
+    if _request_is_loopback_client():
+        return None
+
+    return _bridge_single_station_remote_block_response()
+
 # Global helper cache for performance (UI helpers)
 
 
@@ -908,6 +945,9 @@ def register_api_routes(app):
 
     @app.route("/api/bridge/students/list", methods=["GET"])
     def api_bridge_students_list():
+        guard = _enforce_bridge_remote_access_policy()
+        if guard is not None:
+            return guard
         if not _bridge_request_is_pairing_authorized():
             return _bridge_pairing_auth_error()
         students = student_manager.get_all_students()
@@ -1004,6 +1044,9 @@ def register_api_routes(app):
 
     @app.route("/api/bridge/assistants/list", methods=["GET"])
     def api_bridge_assistants_list():
+        guard = _enforce_bridge_remote_access_policy()
+        if guard is not None:
+            return guard
         if not _bridge_request_is_pairing_authorized():
             return _bridge_pairing_auth_error()
 
@@ -1034,6 +1077,9 @@ def register_api_routes(app):
 
     @app.route("/api/bridge/sessions/toggle", methods=["POST"])
     def api_bridge_sessions_toggle():
+        guard = _enforce_bridge_remote_access_policy()
+        if guard is not None:
+            return guard
         if not _bridge_request_is_pairing_authorized():
             return _bridge_pairing_auth_error()
 
@@ -1119,6 +1165,9 @@ def register_api_routes(app):
 
     @app.route("/api/bridge/sessions/active", methods=["GET"])
     def api_bridge_sessions_active():
+        guard = _enforce_bridge_remote_access_policy()
+        if guard is not None:
+            return guard
         if not _bridge_request_is_pairing_authorized():
             return _bridge_pairing_auth_error()
 
@@ -1159,6 +1208,9 @@ def register_api_routes(app):
 
     @app.route("/api/bridge/reconcile/apply", methods=["POST"])
     def api_bridge_reconcile_apply():
+        guard = _enforce_bridge_remote_access_policy()
+        if guard is not None:
+            return guard
         if not _bridge_request_is_pairing_authorized():
             return _bridge_pairing_auth_error()
 

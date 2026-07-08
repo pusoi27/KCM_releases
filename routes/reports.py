@@ -4,7 +4,7 @@ import csv
 import sqlite3
 from datetime import datetime, timedelta
 from flask import render_template, request, send_file, redirect, url_for
-from reportlab.lib.pagesizes import letter
+from reportlab.lib.pagesizes import letter, landscape
 from reportlab.lib.units import inch
 from reportlab.pdfgen import canvas
 from modules import reports, student_manager, book_manager, auth_manager, materials_manager
@@ -206,6 +206,9 @@ def register_reports_routes(app):
 
         start_param = request.args.get('start', default_start)
         end_param = request.args.get('end', default_end)
+        orientation = (request.args.get('orientation', 'portrait') or 'portrait').strip().lower()
+        if orientation not in ('portrait', 'landscape'):
+            orientation = 'portrait'
         error = None
         by_day = {}
 
@@ -259,6 +262,7 @@ def register_reports_routes(app):
             'reports_class_attendance.html',
             start=start_date.isoformat(),
             end=end_date.isoformat(),
+            orientation=orientation,
             error=error,
             by_day=by_day_list,
         )
@@ -270,6 +274,9 @@ def register_reports_routes(app):
         """Generate PDF: Class attendance by date with active student list."""
         start_param = request.args.get('start')
         end_param = request.args.get('end')
+        orientation = (request.args.get('orientation', 'portrait') or 'portrait').strip().lower()
+        if orientation not in ('portrait', 'landscape'):
+            orientation = 'portrait'
         if not start_param or not end_param:
             return "start and end parameters are required (YYYY-MM-DD)", 400
 
@@ -304,9 +311,10 @@ def register_reports_routes(app):
         for day, name in rows:
             by_day.setdefault(day, set()).add(name)
 
+        page_size = landscape(letter) if orientation == 'landscape' else letter
         buffer = io.BytesIO()
-        canv = canvas.Canvas(buffer, pagesize=letter)
-        width, height = letter
+        canv = canvas.Canvas(buffer, pagesize=page_size)
+        width, height = page_size
 
         canv.setFont("Helvetica-Bold", 16)
         canv.drawString(inch, height - inch, "Class Attendance Report")

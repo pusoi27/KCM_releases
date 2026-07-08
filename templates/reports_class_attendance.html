@@ -12,6 +12,13 @@
       <input type="date" id="end" name="end" class="form-control form-control-sm" value="{{ end }}">
     </div>
     <div class="col-auto">
+      <label for="orientation" class="form-label small mb-0">Page orientation</label>
+      <select id="orientation" name="orientation" class="form-select form-select-sm">
+        <option value="portrait" {% if orientation != 'landscape' %}selected{% endif %}>Portrait</option>
+        <option value="landscape" {% if orientation == 'landscape' %}selected{% endif %}>Landscape</option>
+      </select>
+    </div>
+    <div class="col-auto">
       <button type="submit" class="btn btn-primary btn-sm">Update</button>
     </div>
     <div class="col-auto ms-auto">
@@ -67,6 +74,7 @@
 function printPDF(){
   const start = document.getElementById('start').value;
   const end = document.getElementById('end').value;
+  const orientation = document.getElementById('orientation').value || 'portrait';
   if(!start || !end){ alert('Please select start and end dates.'); return; }
   if(start > end){ alert('Start date must be before or equal to end date.'); return; }
   // Enforce last 30 calendar days
@@ -77,7 +85,7 @@ function printPDF(){
     alert('Dates must be within the last 30 calendar days.');
     return;
   }
-  const url = `/reports/class-attendance/pdf?start=${start}&end=${end}`;
+  const url = `/reports/class-attendance/pdf?start=${start}&end=${end}&orientation=${orientation}`;
   window.open(url, '_blank');
 }
 </script>
