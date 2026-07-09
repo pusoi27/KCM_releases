@@ -4,7 +4,7 @@ import io
 import sqlite3
 from flask import render_template, request, jsonify, send_file, flash, redirect, url_for
 from modules import student_manager, assistant_manager, qr_generator, auth_manager, book_manager, materials_manager
-from modules.database import DB_PATH, issue_unique_qr_token
+from modules.database import DB_PATH, issue_unique_qr_token, retire_owner_qr_tokens
 from routes.auth import require_login, require_feature
 from reportlab.lib.pagesizes import A4, letter, landscape
 from reportlab.lib.units import mm
@@ -64,6 +64,7 @@ def register_qr_routes(app):
         if not student:
             return "Student not found", 404
         unique_token = issue_unique_qr_token("STU", "student", sid)
+        retire_owner_qr_tokens("student", sid, exclude_token=unique_token)
         qr_data = f"ID:{student[0]}\nName:{student[1]}\nUID:{unique_token}"
         qr_blob = qr_generator.generate_qr_bytes(qr_data)
         student_manager.set_student_qr_code(sid, qr_blob)
@@ -111,6 +112,7 @@ def register_qr_routes(app):
 
         try:
             unique_token = issue_unique_qr_token("STU", "student", sid)
+            retire_owner_qr_tokens("student", sid, exclude_token=unique_token)
             qr_data = f"ID:{student[0]}\nName:{student[1]}\nUID:{unique_token}"
             qr_blob = qr_generator.generate_qr_bytes(qr_data)
             student_manager.set_student_qr_code(sid, qr_blob)

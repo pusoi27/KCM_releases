@@ -847,6 +847,29 @@ def issue_unique_qr_token(prefix: str, owner_type: str, owner_id: int | None = N
     raise RuntimeError("Unable to issue a unique QR token after multiple attempts.")
 
 
+def retire_owner_qr_tokens(owner_type: str, owner_id: int, exclude_token: str | None = None) -> None:
+    """Retire all active QR tokens for an owner, optionally keeping one active token."""
+    kind = str(owner_type or '').strip().lower()
+    if not kind or not owner_id:
+        return
+    try:
+        with sqlite3.connect(DB_PATH) as conn:
+            _ensure_qr_registry_table(conn)
+            if exclude_token:
+                conn.execute(
+                    "UPDATE qr_token_registry SET retired=1 WHERE owner_type=? AND owner_id=? AND retired=0 AND token!=?",
+                    (kind, owner_id, exclude_token),
+                )
+            else:
+                conn.execute(
+                    "UPDATE qr_token_registry SET retired=1 WHERE owner_type=? AND owner_id=? AND retired=0",
+                    (kind, owner_id),
+                )
+            conn.commit()
+    except Exception:
+        pass
+
+
 def _db_health_backup_dir() -> str:
     """Return persistent directory for emergency DB health snapshots."""
     return os.path.join(_CONFIG_DIR, "backups", "db_health")

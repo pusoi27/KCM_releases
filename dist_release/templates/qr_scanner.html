@@ -224,7 +224,10 @@ function deduplicateRepeatingDigits(numStr){
   // Case A: all digits identical
   if(uniqCount === 1){
     if(numStr.length <= 2) return numStr;     // e.g., 44 stays 44
-    return numStr.slice(0, 2);                // e.g., 333333 -> 33
+    // Only collapse for even-length strings (scanner sends 2x or 4x, not 3x)
+    // Odd-length like "111" is more likely an actual 3-digit ID than 1x repetition
+    if(numStr.length % 2 !== 0) return numStr;
+    return numStr.slice(0, numStr.length / 2); // e.g., 333333 -> 333, 1111 -> 11
   }
 
   // Case B: digit-repeat-based (e.g., 5577 -> 57)
@@ -269,7 +272,9 @@ async function finalizeScan(){
     scannerLogDebug('finalizeScan called');
     let raw = scanBuffer;
     // Deduplicate character-level repetition first (scanner sends 4x chars)
+    const rawBeforeDedup = raw;
     raw = deduplicateCharacters(raw);
+    const charDeduplicationApplied = (raw !== rawBeforeDedup);
     const data = normalizePayload(raw);
     
     // Only process if buffer has meaningful content (at least 3 chars for "ID:X")
@@ -325,7 +330,8 @@ async function finalizeScan(){
       console.log('FLEX MATCH:', flexMatch);
       type = (flexMatch[1].toUpperCase() === 'ASSISTANT') ? 'ASST' : flexMatch[1].toUpperCase();
       let idStr = flexMatch[2];
-      idStr = deduplicateRepeatingDigits(idStr);
+      // Only dedup digits if deduplicateCharacters didn't already clean the string
+      if (!charDeduplicationApplied) idStr = deduplicateRepeatingDigits(idStr);
       id = parseInt(idStr, 10);
       scannerLogDebug(`FLEX match -> type=${type} id=${id} (from ${flexMatch[2]})`);
     }
@@ -367,7 +373,7 @@ async function finalizeScan(){
       console.log('LAST ATTEMPT:', lastAttempt);
       type = (lastAttempt[1].toUpperCase() === 'ASSISTANT') ? 'ASST' : lastAttempt[1].toUpperCase();
       let idStr = lastAttempt[2];
-      idStr = deduplicateRepeatingDigits(idStr);
+      if (!charDeduplicationApplied) idStr = deduplicateRepeatingDigits(idStr);
       id = parseInt(idStr, 10);
       scannerLogDebug(`LAST ATTEMPT -> type=${type} id=${id}`);
     }
