@@ -5,7 +5,7 @@
   <div class="d-flex justify-content-between align-items-center mb-3">
     <div>
       <h4 class="mb-1"><i class="bi bi-arrow-left-right"></i> Book Checkout / Checkin</h4>
-      <p class="text-muted mb-0">Scan or type an ISBN, or type a title to find a book. Then loan or return it.</p>
+      <p class="text-muted mb-0">Step 1: Scan ISBN to load Book card. Step 2: Scan student QR to load Student card. Step 3: Click <strong>Complete Checkout</strong>.</p>
     </div>
     <a class="btn btn-outline-secondary btn-sm" href="{{ url_for('books_list') }}"><i class="bi bi-arrow-left"></i> Back to Book List</a>
   </div>
@@ -13,64 +13,75 @@
   <div class="card shadow-sm mb-3">
     <div class="card-body">
       <div class="row g-3 align-items-end">
-        <div class="col-md-6">
-          <label class="form-label">Book (title or ISBN)</label>
-          <input type="text" id="bookSearch" class="form-control" placeholder="Scan or type ISBN, or type title">
+        <div class="col-md-8">
+          <label class="form-label">Scanner Input</label>
+          <input type="text" id="scanInput" class="form-control" placeholder="Scan ISBN first, then scan Student QR">
         </div>
-        <div class="col-md-3">
-          <button class="btn btn-primary w-100" id="findBookBtn"><i class="bi bi-search"></i> Find Book</button>
+        <div class="col-md-2">
+          <button class="btn btn-primary w-100" id="processScanBtn"><i class="bi bi-upc-scan"></i> Process</button>
         </div>
-        <div class="col-md-3 text-end">
+        <div class="col-md-2 text-end">
           <span id="statusText" class="text-muted small"></span>
         </div>
       </div>
     </div>
   </div>
 
-  <div class="card mb-3 d-none" id="bookCard">
-    <div class="card-body">
-      <div class="row">
-        <div class="col-md-8">
-          <h5 id="bookTitle" class="mb-1"></h5>
-          <p class="text-muted mb-1" id="bookAuthor"></p>
-          <p class="mb-1"><strong>Publisher:</strong> <span id="bookPublisher"></span></p>
-          <p class="mb-1"><strong>Level:</strong> <span id="bookLevel" class="badge bg-info"></span></p>
-          <p class="mb-0"><strong>ISBN:</strong> <span id="bookIsbn"></span></p>
+  <div class="row g-3 mb-3">
+    <div class="col-lg-6">
+      <div class="card h-100" id="bookCard">
+        <div class="card-header bg-light fw-semibold">1) Book Card (scan ISBN)</div>
+        <div class="card-body">
+          <div class="d-flex gap-3 align-items-start">
+            <div>
+              <img id="bookCover" src="" alt="Book Cover" style="width:90px;height:120px;object-fit:cover;border-radius:8px;border:1px solid #dee2e6;display:none;">
+              <div id="bookCoverPlaceholder" class="d-flex align-items-center justify-content-center border rounded" style="width:90px;height:120px;background:#f8f9fa;">
+                <i class="bi bi-book text-muted" style="font-size:1.8rem;"></i>
+              </div>
+            </div>
+            <div class="flex-grow-1">
+              <h5 id="bookTitle" class="mb-1">Waiting for ISBN scan...</h5>
+              <p class="text-muted mb-1" id="bookAuthor">-</p>
+              <p class="mb-1"><strong>Publisher:</strong> <span id="bookPublisher">-</span></p>
+              <p class="mb-1"><strong>Level:</strong> <span id="bookLevel" class="badge bg-secondary">-</span></p>
+              <p class="mb-1"><strong>ISBN:</strong> <span id="bookIsbn">-</span></p>
+              <p class="mb-1"><strong>Status:</strong> <span id="bookStatus" class="badge bg-secondary">Not selected</span></p>
+              <p class="mb-1"><strong>Borrower:</strong> <span id="bookBorrower">-</span></p>
+              <p class="mb-0"><strong>Copies:</strong> <span id="bookCopies">-</span></p>
+            </div>
+          </div>
         </div>
-        <div class="col-md-4 text-md-end">
-          <p class="mb-1"><strong>Status:</strong> <span id="bookStatus" class="badge"></span></p>
-          <p class="mb-1"><strong>Borrower:</strong> <span id="bookBorrower">-</span></p>
-          <p class="mb-0"><strong>Copies:</strong> <span id="bookCopies"></span></p>
+      </div>
+    </div>
+
+    <div class="col-lg-6">
+      <div class="card h-100" id="studentCard">
+        <div class="card-header bg-light fw-semibold">2) Student Card (scan Student QR)</div>
+        <div class="card-body">
+          <div class="d-flex gap-3 align-items-start">
+            <div>
+              <img id="studentPhoto" src="" alt="Student Photo" style="width:90px;height:120px;object-fit:cover;border-radius:8px;border:1px solid #dee2e6;display:none;">
+              <div id="studentPhotoPlaceholder" class="d-flex align-items-center justify-content-center border rounded" style="width:90px;height:120px;background:#f8f9fa;">
+                <i class="bi bi-person text-muted" style="font-size:1.8rem;"></i>
+              </div>
+            </div>
+            <div class="flex-grow-1">
+              <h5 id="studentName" class="mb-1">Waiting for student QR scan...</h5>
+              <p class="mb-1"><strong>Student ID:</strong> <span id="studentId">-</span></p>
+              <div class="small text-muted mt-1" id="studentStatus">Scan student after selecting a book.</div>
+            </div>
+          </div>
         </div>
       </div>
     </div>
   </div>
 
-  <div class="card d-none" id="loanCard">
-    <div class="card-body">
-      <div id="loanAvailable" class="d-none">
-        <div class="row g-3 align-items-end">
-          <div class="col-md-8">
-            <label class="form-label">Student (active students)</label>
-            <input type="text" id="studentSearch" class="form-control mb-2" placeholder="Scan student QR or type student name / ID">
-            <select id="studentSelect" class="form-select">
-              <option value="">Select student...</option>
-            </select>
-            <div class="small text-muted mt-1" id="studentStatus"></div>
-          </div>
-          <div class="col-md-4">
-            <button class="btn btn-success w-100" id="checkoutBtn" disabled><i class="bi bi-box-arrow-right"></i> Check Out</button>
-          </div>
-        </div>
-      </div>
-      <div id="loanBorrowed" class="d-none">
-        <p class="mb-3 text-warning"><i class="bi bi-info-circle"></i> Book is currently loaned to <strong id="borrowedName"></strong>. Click return when it comes back.</p>
-        <div class="row g-3">
-          <div class="col-md-3">
-            <button class="btn btn-info w-100" id="returnBtn"><i class="bi bi-box-arrow-in-left"></i> Check In / Return Book</button>
-          </div>
-        </div>
-      </div>
+  <div class="card mb-3" id="confirmCard">
+    <div class="card-body d-flex flex-wrap align-items-center justify-content-between gap-2">
+      <div class="small text-muted" id="confirmHint">Scan book ISBN and student QR, then confirm checkout.</div>
+      <button class="btn btn-success" id="completeCheckoutBtn" disabled>
+        <i class="bi bi-check2-circle"></i> Complete Checkout
+      </button>
     </div>
   </div>
 </div>
@@ -165,49 +176,89 @@ function clearLoan(bookId, studentId, bookTitle, studentName) {
 
 <script>
 (function() {
-  const bookSearch = document.getElementById('bookSearch');
-  const findBookBtn = document.getElementById('findBookBtn');
+  const scanInput = document.getElementById('scanInput');
+  const processScanBtn = document.getElementById('processScanBtn');
   const statusText = document.getElementById('statusText');
-  const bookCard = document.getElementById('bookCard');
-  const loanCard = document.getElementById('loanCard');
-  const loanAvailable = document.getElementById('loanAvailable');
-  const loanBorrowed = document.getElementById('loanBorrowed');
-  const studentSearch = document.getElementById('studentSearch');
-  const studentSelect = document.getElementById('studentSelect');
-  const checkoutBtn = document.getElementById('checkoutBtn');
-  const returnBtn = document.getElementById('returnBtn');
+  const completeCheckoutBtn = document.getElementById('completeCheckoutBtn');
+  const confirmHint = document.getElementById('confirmHint');
   const alertBox = document.getElementById('alertBox');
   const studentStatus = document.getElementById('studentStatus');
-  const CLASSROOM_HOME_URL = "{{ url_for(subscription_access.default_home_endpoint) }}";
 
   let currentBookId = null;
-  let studentReady = false;
+  let bookAvailableForLoan = false;
   let currentStudent = null;
-  let activeStudentsLoaded = false;
-  const activeStudentsById = new Map();
   let scanBuffer = '';
   let scanFinalizeTimer = null;
   const SCAN_IDLE_MS = 180;
 
-  findBookBtn.addEventListener('click', findBook);
-  bookSearch.addEventListener('keypress', e => { if (e.key === 'Enter') { e.preventDefault(); findBook(); } });
-  studentSearch.addEventListener('keypress', e => {
+  processScanBtn.addEventListener('click', () => processScannerPayload(scanInput.value));
+  scanInput.addEventListener('keypress', e => {
     if (e.key === 'Enter') {
       e.preventDefault();
-      resolveStudentFromInput(studentSearch.value, { autoCheckout: false });
+      processScannerPayload(scanInput.value);
     }
   });
-  studentSelect.addEventListener('change', handleStudentSelection);
-  checkoutBtn.addEventListener('click', () => checkoutBook({ autoReturn: false }));
-  returnBtn.addEventListener('click', returnBook);
+  completeCheckoutBtn.addEventListener('click', completeCheckout);
 
-  loadActiveStudents();
-
-  // Auto-focus book search input on page load
-  bookSearch.focus();
+  // Auto-focus scan input on page load
+  scanInput.focus();
 
   function setStatus(msg) {
     statusText.textContent = msg || '';
+  }
+
+  function resetLoanWorkflow() {
+    currentBookId = null;
+    bookAvailableForLoan = false;
+    currentStudent = null;
+
+    document.getElementById('bookTitle').textContent = 'Waiting for ISBN scan...';
+    document.getElementById('bookAuthor').textContent = '-';
+    document.getElementById('bookPublisher').textContent = '-';
+    const levelBadge = document.getElementById('bookLevel');
+    levelBadge.textContent = '-';
+    levelBadge.className = 'badge bg-secondary';
+    document.getElementById('bookIsbn').textContent = '-';
+    const statusBadge = document.getElementById('bookStatus');
+    statusBadge.textContent = 'Not selected';
+    statusBadge.className = 'badge bg-secondary';
+    document.getElementById('bookBorrower').textContent = '-';
+    document.getElementById('bookCopies').textContent = '-';
+
+    const bookCover = document.getElementById('bookCover');
+    const bookCoverPlaceholder = document.getElementById('bookCoverPlaceholder');
+    bookCover.src = '';
+    bookCover.style.display = 'none';
+    bookCoverPlaceholder.style.display = 'flex';
+
+    document.getElementById('studentName').textContent = 'Waiting for student QR scan...';
+    document.getElementById('studentId').textContent = '-';
+    const studentPhoto = document.getElementById('studentPhoto');
+    const studentPlaceholder = document.getElementById('studentPhotoPlaceholder');
+    studentPhoto.src = '';
+    studentPhoto.style.display = 'none';
+    studentPlaceholder.style.display = 'flex';
+    setStudentStatus('Scan student after selecting a book.');
+
+    scanInput.value = '';
+    setStatus('Ready for next loan');
+    refreshConfirmationState();
+    scanInput.focus();
+  }
+
+  function refreshConfirmationState() {
+    const ready = !!(currentBookId && bookAvailableForLoan && currentStudent && currentStudent.id);
+    completeCheckoutBtn.disabled = !ready;
+
+    if (ready) {
+      confirmHint.textContent = `Ready to checkout: "${currentStudent.name}" will borrow selected book.`;
+    } else if (!currentBookId) {
+      confirmHint.textContent = 'Scan book ISBN to load Book card.';
+    } else if (!bookAvailableForLoan) {
+      confirmHint.textContent = 'Selected book is not currently available for checkout.';
+    } else {
+      confirmHint.textContent = 'Now scan student QR to load Student card, then click Complete Checkout.';
+    }
   }
 
   function showAlert(msg, type='info') {
@@ -222,10 +273,6 @@ function clearLoan(bookId, studentId, bookTitle, studentName) {
     studentStatus.className = 'small mt-1 text-' + (type === 'muted' ? 'muted' : type);
   }
 
-  function setCheckoutEnabled(enabled) {
-    checkoutBtn.disabled = !enabled;
-  }
-
   function normalizeBookQuery(raw) {
     const value = String(raw || '').trim();
     if (!value) return '';
@@ -234,108 +281,6 @@ function clearLoan(bookId, studentId, bookTitle, studentName) {
       return isbnCandidate;
     }
     return value;
-  }
-
-  async function loadActiveStudents(forceReload = false) {
-    if (activeStudentsLoaded && !forceReload) {
-      return;
-    }
-    try {
-      const resp = await fetch('/api/students/active');
-      const data = await resp.json();
-      if (!resp.ok) throw new Error(data.error || 'Failed to load active students');
-
-      studentSelect.innerHTML = '<option value="">Select student...</option>';
-      activeStudentsById.clear();
-      (data.students || []).forEach(student => {
-        const option = document.createElement('option');
-        option.value = String(student.id);
-        option.textContent = student.name;
-        option.dataset.name = student.name;
-        studentSelect.appendChild(option);
-        activeStudentsById.set(Number(student.id), {
-          id: Number(student.id),
-          name: student.name,
-        });
-      });
-      activeStudentsLoaded = true;
-    } catch (err) {
-      showAlert(err.message, 'danger');
-    }
-  }
-
-  function selectStudent(student) {
-    if (!student || !Number.isFinite(Number(student.id))) {
-      currentStudent = null;
-      studentReady = false;
-      setCheckoutEnabled(false);
-      setStudentStatus('');
-      return false;
-    }
-
-    currentStudent = {
-      id: Number(student.id),
-      name: student.name || `Student ${student.id}`,
-    };
-
-    studentSelect.value = String(currentStudent.id);
-    studentSearch.value = currentStudent.name;
-    studentReady = true;
-    setCheckoutEnabled(true);
-    setStudentStatus(`Student: ${currentStudent.name} (ID ${currentStudent.id})`, 'primary');
-    return true;
-  }
-
-  function lookupStudentByInput(input) {
-    const raw = String(input || '').trim();
-    if (!raw) return null;
-
-    if (/^\d+$/.test(raw)) {
-      const byId = activeStudentsById.get(Number(raw));
-      if (byId) return byId;
-    }
-
-    for (const student of activeStudentsById.values()) {
-      if (student.name && student.name.toLowerCase() === raw.toLowerCase()) {
-        return student;
-      }
-    }
-
-    return null;
-  }
-
-  function resolveStudentFromInput(input, options = {}) {
-    const student = lookupStudentByInput(input);
-    if (!student) {
-      showAlert('Active student not found for scanned/typed input.', 'warning');
-      return false;
-    }
-    const ok = selectStudent(student);
-    if (ok && options.autoCheckout) {
-      checkoutBook({ autoReturn: true });
-    }
-    return ok;
-  }
-
-  function handleStudentSelection() {
-    const selectedOption = studentSelect.options[studentSelect.selectedIndex];
-    const studentId = studentSelect.value;
-    if (!studentId || !selectedOption) {
-      currentStudent = null;
-      studentReady = false;
-      setCheckoutEnabled(false);
-      setStudentStatus('');
-      return;
-    }
-
-    currentStudent = {
-      id: parseInt(studentId, 10),
-      name: selectedOption.dataset.name || selectedOption.textContent || '',
-    };
-    studentSearch.value = currentStudent.name;
-    studentReady = true;
-    setCheckoutEnabled(true);
-    setStudentStatus(`Student: ${currentStudent.name} (ID ${currentStudent.id})`, 'primary');
   }
 
   function renderBook(book) {
@@ -348,51 +293,49 @@ function clearLoan(bookId, studentId, bookTitle, studentName) {
     const statusBadge = document.getElementById('bookStatus');
     const hasIsbn = !!(book.isbn || book.isbn13);
     const isAvailable = !!(hasIsbn && book.available && !book.borrower_id);
+    bookAvailableForLoan = isAvailable;
     statusBadge.textContent = isAvailable ? 'Available' : 'Unavailable';
     statusBadge.className = 'badge ' + (isAvailable ? 'bg-success' : 'bg-secondary');
     document.getElementById('bookBorrower').textContent = book.borrower_name || '-';
-    document.getElementById('borrowedName').textContent = book.borrower_name || '-';
 
-    bookCard.classList.remove('d-none');
-    loanCard.classList.remove('d-none');
+    const cover = document.getElementById('bookCover');
+    const coverPlaceholder = document.getElementById('bookCoverPlaceholder');
+    cover.src = `/api/books/cover/${book.id}?t=${Date.now()}`;
+    cover.style.display = 'block';
+    coverPlaceholder.style.display = 'none';
+    cover.onerror = () => {
+      cover.style.display = 'none';
+      coverPlaceholder.style.display = 'flex';
+    };
+
+    // reset student card for new checkout flow
+    currentStudent = null;
+    document.getElementById('studentName').textContent = 'Waiting for student QR scan...';
+    document.getElementById('studentId').textContent = '-';
+    const studentPhoto = document.getElementById('studentPhoto');
+    const studentPlaceholder = document.getElementById('studentPhotoPlaceholder');
+    studentPhoto.src = '';
+    studentPhoto.style.display = 'none';
+    studentPlaceholder.style.display = 'flex';
     if (isAvailable) {
-      // Book can be loaned
-      loanAvailable.classList.remove('d-none');
-      loanBorrowed.classList.add('d-none');
-      studentReady = false;
-      setCheckoutEnabled(false);
-      currentStudent = null;
-      setStudentStatus('');
-      studentSelect.value = '';
-      studentSearch.value = '';
-      if (!activeStudentsLoaded) {
-        loadActiveStudents();
-      }
-      studentSearch.focus();
-    } else if (book.borrower_name) {
-      // Book currently loaned to someone
-      loanAvailable.classList.add('d-none');
-      loanBorrowed.classList.remove('d-none');
-      returnBtn.focus();
+      setStudentStatus('Book loaded. Now scan student QR.', 'primary');
     } else if (!hasIsbn) {
-      // Book missing ISBN
-      loanAvailable.classList.add('d-none');
-      loanBorrowed.classList.add('d-none');
-      setCheckoutEnabled(false);
+      setStudentStatus('Book unavailable: missing ISBN.', 'warning');
       showAlert('This book is unavailable for loan (missing ISBN).', 'warning');
+    } else if (book.borrower_name) {
+      setStudentStatus(`Book currently loaned to ${book.borrower_name}.`, 'warning');
+      showAlert(`This book is currently loaned to ${book.borrower_name}.`, 'warning');
     } else {
-      // Has ISBN but marked unavailable (e.g., manual flag or copies 0)
-      loanAvailable.classList.add('d-none');
-      loanBorrowed.classList.add('d-none');
-      setCheckoutEnabled(false);
+      setStudentStatus('This book is currently unavailable for loan.', 'warning');
       showAlert('This book is currently unavailable for loan.', 'warning');
     }
+    refreshConfirmationState();
   }
 
-  async function findBook() {
+  async function findBook(rawInput) {
     showAlert('', 'info');
     setStatus('Searching...');
-    const q = normalizeBookQuery(bookSearch.value);
+    const q = normalizeBookQuery(rawInput);
     if (!q) { showAlert('Please enter a title or ISBN.', 'warning'); setStatus(''); return; }
 
     // Always search in local database only (no external API lookup)
@@ -423,23 +366,73 @@ function clearLoan(bookId, studentId, bookTitle, studentName) {
       }
 
       currentBookId = book.id;
-      studentReady = false;
-      setCheckoutEnabled(false);
       currentStudent = null;
-      setStudentStatus('');
-      studentSelect.value = '';
       renderBook(book);
+      scanInput.value = '';
       setStatus('Ready');
     } catch (err) {
       showAlert(err.message, 'danger');
       setStatus('');
+      refreshConfirmationState();
     }
   }
 
-  async function checkoutBook(options = {}) {
-    const autoReturn = !!options.autoReturn;
+  async function resolveStudentByScan(input) {
+    const raw = String(input || '').trim();
+    if (!raw) return;
+
+    if (!currentBookId) {
+      showAlert('Scan book ISBN first, then scan student QR.', 'warning');
+      return;
+    }
+    if (!bookAvailableForLoan) {
+      showAlert('Selected book is not available for checkout.', 'warning');
+      return;
+    }
+
+    setStatus('Resolving student...');
+    try {
+      const resp = await fetch(`/api/students/lookup?q=${encodeURIComponent(raw)}`);
+      const data = await resp.json();
+      if (!resp.ok || !data.student) {
+        throw new Error(data.error || 'Student not found.');
+      }
+
+      currentStudent = {
+        id: Number(data.student.id),
+        name: String(data.student.name || `Student ${data.student.id}`),
+      };
+
+      document.getElementById('studentName').textContent = currentStudent.name;
+      document.getElementById('studentId').textContent = String(currentStudent.id);
+
+      const photo = document.getElementById('studentPhoto');
+      const placeholder = document.getElementById('studentPhotoPlaceholder');
+      photo.src = `/students/photo/${currentStudent.id}?t=${Date.now()}`;
+      photo.style.display = 'block';
+      placeholder.style.display = 'none';
+      photo.onerror = () => {
+        photo.style.display = 'none';
+        placeholder.style.display = 'flex';
+      };
+
+      setStudentStatus(`Student loaded: ${currentStudent.name} (ID ${currentStudent.id})`, 'success');
+      scanInput.value = '';
+      refreshConfirmationState();
+    } catch (err) {
+      showAlert(err.message, 'warning');
+      setStudentStatus('Unable to resolve scanned student QR.', 'warning');
+      refreshConfirmationState();
+    } finally {
+      setStatus('');
+    }
+  }
+
+  async function completeCheckout() {
     if (!currentBookId) { showAlert('Find a book first.', 'warning'); return; }
-    if (!studentReady || !currentStudent) { showAlert('Select a student from the dropdown first.', 'warning'); return; }
+    if (!bookAvailableForLoan) { showAlert('Selected book is unavailable for checkout.', 'warning'); return; }
+    if (!currentStudent || !currentStudent.id) { showAlert('Scan student QR first.', 'warning'); return; }
+
     setStatus('Checking out...');
     try {
       const resp = await fetch('/api/books/loan', {
@@ -451,55 +444,12 @@ function clearLoan(bookId, studentId, bookTitle, studentName) {
       if (!resp.ok) throw new Error(data.error || 'Checkout failed');
       const targetName = (data && data.student_name) || currentStudent.name || 'student';
       showAlert(`Book loaned successfully to ${targetName}.`, 'success');
-      studentReady = false;
-      setCheckoutEnabled(false);
-      currentStudent = null;
-      setStudentStatus('');
-      studentSelect.value = '';
-      studentSearch.value = '';
-      if (autoReturn) {
-        setStatus('Returning to classroom...');
-        setTimeout(() => {
-          window.location.href = CLASSROOM_HOME_URL;
-        }, 1400);
-        return;
-      }
-      // Manual flow: keep existing behavior
-      window.location.reload();
+      resetLoanWorkflow();
     } catch (err) {
       showAlert(err.message, 'danger');
     } finally {
       setStatus('');
     }
-  }
-
-  async function returnBook() {
-    if (!currentBookId) { showAlert('Find a book first.', 'warning'); return; }
-    setStatus('Checking in...');
-    try {
-      const resp = await fetch('/api/books/return', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ book_id: currentBookId })
-      });
-      const data = await resp.json();
-      if (!resp.ok) throw new Error(data.error || 'Return failed');
-      showAlert('Book checked in successfully.', 'success');
-      // Refresh page so server-rendered "Currently Loaned Books" section updates immediately
-      window.location.reload();
-    } catch (err) {
-      showAlert(err.message, 'danger');
-    } finally {
-      setStatus('');
-    }
-  }
-
-  async function refreshBook() {
-    if (!currentBookId) return;
-    const resp = await fetch(`/api/books/${currentBookId}`);
-    const data = await resp.json();
-    if (!resp.ok) { showAlert(data.error || 'Failed to refresh book.', 'danger'); return; }
-    renderBook(data.book);
   }
 
   function deduplicateCharacters(str) {
@@ -604,33 +554,24 @@ function clearLoan(bookId, studentId, bookTitle, studentName) {
 
     const isbn = extractIsbnFromPayload(normalized);
     if (isbn) {
-      bookSearch.value = isbn;
-      await findBook();
+      scanInput.value = isbn;
+      await findBook(isbn);
       return;
-    }
-
-    // Student QR handling only when a book is loaded and available to loan.
-    const bookReadyForLoan = currentBookId && !loanAvailable.classList.contains('d-none');
-    if (!bookReadyForLoan) return;
-
-    if (!activeStudentsLoaded) {
-      await loadActiveStudents();
     }
 
     const candidate = extractStudentCandidate(normalized);
-    if (candidate.id && activeStudentsById.has(Number(candidate.id))) {
-      const ok = selectStudent(activeStudentsById.get(Number(candidate.id)));
-      if (ok) {
-        await checkoutBook({ autoReturn: true });
-      }
+    if (candidate.id) {
+      await resolveStudentByScan(String(candidate.id));
+      return;
+    }
+    if (candidate.name) {
+      await resolveStudentByScan(candidate.name);
       return;
     }
 
-    if (candidate.name) {
-      const ok = resolveStudentFromInput(candidate.name, { autoCheckout: false });
-      if (ok) {
-        await checkoutBook({ autoReturn: true });
-      }
+    // Fallbacks: manual ID or name scan strings.
+    if (/^\d+$/.test(normalized) || /^ID:/i.test(normalized) || /^Name:/i.test(normalized)) {
+      await resolveStudentByScan(normalized);
     }
   }
 
@@ -665,6 +606,7 @@ function clearLoan(bookId, studentId, bookTitle, studentName) {
   }
 
   document.addEventListener('keydown', onGlobalScannerKeydown, { capture: true });
+  refreshConfirmationState();
 })();
 </script>
 {% endblock %}

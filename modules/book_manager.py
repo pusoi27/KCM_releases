@@ -3,8 +3,13 @@
 #*****************************
 import sqlite3
 from datetime import datetime
+import requests
 
 from modules.database import DB_PATH
+
+
+BOOK_COVER_FETCH_TIMEOUT_SECONDS = 8
+BOOK_COVER_MAX_BYTES = 128 * 1024
 
 
 def _has_isbn(isbn, isbn13) -> bool:
@@ -19,6 +24,85 @@ def _safe_non_negative_int(value, default=0) -> int:
     except (TypeError, ValueError):
         parsed = default
     return max(parsed, 0)
+
+
+def _normalize_isbn_token(value: str | None) -> str | None:
+    token = ''.join(ch for ch in str(value or '').upper() if ch.isdigit() or ch == 'X')
+    return token or None
+
+
+def _is_valid_isbn10(token: str | None) -> bool:
+    code = _normalize_isbn_token(token)
+    if not code or len(code) != 10:
+        return False
+    if not code[:9].isdigit():
+        return False
+    if not (code[9].isdigit() or code[9] == 'X'):
+        return False
+
+    total = 0
+    for idx, ch in enumerate(code[:9]):
+        total += (10 - idx) * int(ch)
+    total += 10 if code[9] == 'X' else int(code[9])
+    return total % 11 == 0
+
+
+def _is_valid_isbn13(token: str | None) -> bool:
+    code = _normalize_isbn_token(token)
+    if not code or len(code) != 13 or not code.isdigit():
+        return False
+
+    total = 0
+    for idx, ch in enumerate(code[:12]):
+        n = int(ch)
+        total += n if idx % 2 == 0 else n * 3
+    check = (10 - (total % 10)) % 10
+    return check == int(code[12])
+
+
+def _preferred_valid_isbn(isbn: str | None, isbn13: str | None) -> str | None:
+    code13 = _normalize_isbn_token(isbn13)
+    if _is_valid_isbn13(code13):
+        return code13
+
+    code10 = _normalize_isbn_token(isbn)
+    if _is_valid_isbn10(code10):
+        return code10
+
+    return None
+
+
+def _fetch_small_cover_blob_from_openlibrary(isbn_token: str) -> tuple[bytes | None, str]:
+    """Return (blob, mime) for a small cover image, or (None, '')."""
+    if not isbn_token:
+        return None, ''
+
+    url = f"https://covers.openlibrary.org/b/isbn/{isbn_token}-S.jpg"
+    params = {"default": "false"}
+    headers = {"User-Agent": "Stdytime/1.0"}
+
+    try:
+        response = requests.get(
+            url,
+            params=params,
+            headers=headers,
+            timeout=(3, BOOK_COVER_FETCH_TIMEOUT_SECONDS),
+        )
+    except requests.RequestException:
+        return None, ''
+
+    if response.status_code != 200:
+        return None, ''
+
+    mime = str(response.headers.get('Content-Type') or '').split(';', 1)[0].strip().lower()
+    if not mime.startswith('image/'):
+        return None, ''
+
+    payload = response.content or b''
+    if not payload or len(payload) > BOOK_COVER_MAX_BYTES:
+        return None, ''
+
+    return payload, mime or 'image/jpeg'
 
 
 def _sync_student_book_loaned(cursor, student_id: int):
@@ -171,6 +255,32 @@ def get_book_qr_code(book_id):
     return None
 
 
+def set_book_cover(book_id, cover_blob, cover_mime=''):
+    """Store a book cover as BLOB in database."""
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.execute(
+            "UPDATE books SET cover_blob=?, cover_mime=? WHERE id=?",
+            (sqlite3.Binary(cover_blob) if cover_blob else None, (cover_mime or ''), book_id),
+        )
+        conn.commit()
+
+
+def get_book_cover(book_id):
+    """Retrieve a book cover blob from database."""
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.row_factory = sqlite3.Row
+        row = conn.execute(
+            "SELECT cover_blob, COALESCE(cover_mime, '') AS cover_mime FROM books WHERE id=?",
+            (book_id,),
+        ).fetchone()
+        if row and row['cover_blob']:
+            return {
+                'cover_blob': _coerce_blob(row['cover_blob']),
+                'cover_mime': str(row['cover_mime'] or '') or 'image/jpeg',
+            }
+    return None
+
+
 def add_book(title, author, publisher, isbn=None, isbn13=None, available=1, reading_level=None, copies=1):
     """Add a new book to the database."""
     copies = _safe_non_negative_int(copies, default=1)
@@ -196,6 +306,16 @@ def add_book(title, author, publisher, isbn=None, isbn13=None, available=1, read
         if not existing_qr:
             # If you have a QR code generation logic, add it here
             pass  # No QR code generation if one exists
+
+        valid_isbn = _preferred_valid_isbn(isbn, isbn13)
+        if valid_isbn:
+            cover_blob, cover_mime = _fetch_small_cover_blob_from_openlibrary(valid_isbn)
+            if cover_blob:
+                c.execute(
+                    "UPDATE books SET cover_blob = ?, cover_mime = ? WHERE id = ?",
+                    (sqlite3.Binary(cover_blob), cover_mime or 'image/jpeg', book_id),
+                )
+
         conn.commit()
         return book_id
 

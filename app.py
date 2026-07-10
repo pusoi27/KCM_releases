@@ -400,6 +400,8 @@ class RequestProfiler:
         # Console output (compact format)
         req_type = "WRITE" if is_write else "READ"
         print(f"[{req_type}] {method:6} {endpoint:40} {status_code}")
+        ID:111Name:Joshua R.UID:STU-A66F9B19D60F
+        Name:Joshua R.UID:STU-A66F9B19D60F
         
         # Log to file
         self._write_log(f"[{req_type}] {method:6} {endpoint:40} {status_code}")

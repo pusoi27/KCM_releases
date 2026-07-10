@@ -1,9 +1,10 @@
 ﻿# routes/books.py
 """Books management routes."""
 
-from flask import render_template, request, jsonify, redirect, url_for, flash, g
+from flask import render_template, request, jsonify, redirect, url_for, flash, g, send_file
 from modules.book_manager import (
     get_books,
+    get_book_cover,
     find_book_by_title,
     find_book_by_isbn,
     add_book,
@@ -28,6 +29,7 @@ import requests
 import re
 import time
 from threading import Lock
+import io
 
 
 BOOK_LEVEL_ORDER = ["1", "2", "3", "4", "5", "6", "7", "A", "B", "C", "D", "E", "F", "G", "H", "I", "J", "K"]
@@ -1383,6 +1385,23 @@ def register_book_routes(app):
             return jsonify(payload)
         except Exception as e:
             return jsonify({'error': str(e)}), 500
+
+    @app.route("/api/books/cover/<int:book_id>")
+    @require_login
+    @require_feature(auth_manager.FEATURE_BOOKS)
+    def api_books_cover(book_id: int):
+        """Return stored book cover blob image."""
+        try:
+            cover = get_book_cover(book_id)
+            if not cover or not cover.get('cover_blob'):
+                return ('', 404)
+            return send_file(
+                io.BytesIO(cover['cover_blob']),
+                mimetype=cover.get('cover_mime') or 'image/jpeg',
+                download_name=f'book_{book_id}_cover.jpg',
+            )
+        except Exception:
+            return ('', 404)
 
     # ----------------------------------------
     # Delete book

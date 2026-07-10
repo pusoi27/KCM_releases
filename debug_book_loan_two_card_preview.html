@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Book Loan Two-Card Preview</title>
+  <style>
+    body{font-family:Arial,Helvetica,sans-serif;background:#f5f7fb;margin:0;padding:24px;color:#222}
+    .container{max-width:1100px;margin:0 auto}
+    .row{display:flex;gap:16px;flex-wrap:wrap}
+    .card{background:#fff;border:1px solid #e2e8f0;border-radius:12px;box-shadow:0 4px 14px rgba(0,0,0,.06)}
+    .card-header{padding:12px 16px;border-bottom:1px solid #edf2f7;background:#f8fafc;font-weight:700}
+    .card-body{padding:16px}
+    .top{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px}
+    .muted{color:#667085}
+    .scan-wrap{margin-bottom:16px}
+    .scan-controls{display:flex;gap:12px;align-items:flex-end}
+    .scan-controls input{flex:1;padding:10px;border:1px solid #cbd5e1;border-radius:8px}
+    .btn{border:0;border-radius:8px;padding:10px 14px;font-weight:700;cursor:pointer}
+    .btn-primary{background:#2563eb;color:#fff}
+    .btn-success{background:#16a34a;color:#fff}
+    .btn-success[disabled]{opacity:.5;cursor:not-allowed}
+    .blob{width:90px;height:120px;border:1px solid #d0d7de;border-radius:8px;object-fit:cover;background:#f8fafc}
+    .meta h4{margin:0 0 6px}
+    .meta p{margin:6px 0}
+    .badge{display:inline-block;padding:3px 8px;border-radius:999px;font-size:12px;font-weight:700}
+    .badge-ok{background:#dcfce7;color:#166534}
+    .confirm{display:flex;justify-content:space-between;align-items:center;padding:12px 16px;margin-top:16px}
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="top">
+      <div>
+        <h2 style="margin:0">Book Checkout / Checkin</h2>
+        <p class="muted" style="margin:6px 0 0">Step 1: Scan ISBN → Book Card. Step 2: Scan Student QR → Student Card. Step 3: Click <b>Complete Checkout</b>.</p>
+      </div>
+      <button class="btn">Back to Book List</button>
+    </div>
+
+    <div class="card scan-wrap">
+      <div class="card-body scan-controls">
+        <div style="flex:1">
+          <div style="font-size:13px;margin-bottom:6px">Scanner Input</div>
+          <input value="ID:42\nName:Jane Student" />
+        </div>
+        <button class="btn btn-primary">Process</button>
+        <span class="muted" style="font-size:13px">Ready</span>
+      </div>
+    </div>
+
+    <div class="row">
+      <div class="card" style="flex:1;min-width:320px">
+        <div class="card-header">1) Book Card (scan ISBN)</div>
+        <div class="card-body" style="display:flex;gap:14px">
+          <img class="blob" alt="Book cover" src="https://covers.openlibrary.org/b/isbn/9780394800011-S.jpg?default=false" />
+          <div class="meta">
+            <h4>The Cat in the Hat</h4>
+            <p class="muted">Dr. Seuss</p>
+            <p><b>Publisher:</b> Random House</p>
+            <p><b>Level:</b> <span class="badge">2A</span></p>
+            <p><b>ISBN:</b> 9780394800011</p>
+            <p><b>Status:</b> <span class="badge badge-ok">Available</span></p>
+            <p><b>Borrower:</b> -</p>
+            <p><b>Copies:</b> 3</p>
+          </div>
+        </div>
+      </div>
+
+      <div class="card" style="flex:1;min-width:320px">
+        <div class="card-header">2) Student Card (scan Student QR)</div>
+        <div class="card-body" style="display:flex;gap:14px">
+          <img class="blob" alt="Student photo" src="data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='90' height='120'><rect width='100%' height='100%' fill='%23e2e8f0'/><circle cx='45' cy='40' r='18' fill='%2394a3b8'/><rect x='20' y='65' width='50' height='35' rx='8' fill='%2394a3b8'/></svg>" />
+          <div class="meta">
+            <h4>Jane Student</h4>
+            <p><b>Student ID:</b> 42</p>
+            <p class="muted">Student loaded: Jane Student (ID 42)</p>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card confirm">
+      <span class="muted">Ready to checkout: “Jane Student” will borrow selected book.</span>
+      <button class="btn btn-success">Complete Checkout</button>
+    </div>
+  </div>
+</body>
+</html>

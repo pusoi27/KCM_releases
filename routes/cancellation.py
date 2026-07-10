@@ -506,6 +506,35 @@ def register_cancellation_routes(app):
                 )
 
                 if email_result.get("success"):
+                    center_copy_sent = False
+                    center_copy_status = ""
+                    center_copy_target = str(center_email or "").strip()
+                    if center_copy_target and "@" in center_copy_target and center_copy_target.lower() != guardian_email.lower():
+                        center_copy_result = _send_cancellation_confirmation_email(
+                            guardian_email=center_copy_target,
+                            guardian_name=guardian_name,
+                            student_name=student_name,
+                            notice_date=notice_date,
+                            last_attendance_date=effective_date,
+                            last_payment_date=last_payment_date,
+                            center_name=center_name,
+                            center_phone=center_phone_display,
+                            center_email=center_email,
+                        )
+                        center_copy_sent = bool(center_copy_result.get("success"))
+                        if center_copy_sent:
+                            center_copy_status = f" Copy sent to instructor profile email ({center_copy_target})."
+                        else:
+                            center_copy_status = (
+                                f" Guardian email sent, but copy to instructor profile email ({center_copy_target}) failed: "
+                                f"{center_copy_result.get('error', 'unknown error')}."
+                            )
+                    elif center_copy_target and center_copy_target.lower() == guardian_email.lower():
+                        center_copy_sent = True
+                        center_copy_status = " Copy skipped because guardian and instructor profile email are identical."
+                    elif center_copy_target and "@" not in center_copy_target:
+                        center_copy_status = " Guardian email sent, but instructor profile email is invalid for copy delivery."
+
                     selection_label = next((o["label"] for o in options if o["value"] == selected_option), "")
                     notice_id = _insert_cancellation_notice(
                         student_ids=[int(student_item.get("id"))],
@@ -515,14 +544,20 @@ def register_cancellation_routes(app):
                         effective_last_attendance_date=effective_date,
                         customer_name=guardian_name,
                         customer_email=guardian_email,
-                        center_email_sent=True,
-                        center_email_status="Confirmation email sent to guardian",
+                        center_email_sent=center_copy_sent,
+                        center_email_status=(
+                            "Confirmation email sent to guardian."
+                            + (center_copy_status or "")
+                        ).strip(),
                     )
                     flash(
                         f"Cancellation confirmation email sent to {guardian_name} at {guardian_email} (Notice #{notice_id}). "
-                        f"Last day of attendance: {_format_long_date(effective_date)}",
+                        f"Last day of attendance: {_format_long_date(effective_date)}"
+                        + (f"{center_copy_status}" if center_copy_status else ""),
                         "success",
                     )
+                    if center_copy_status and not center_copy_sent and "failed" in center_copy_status.lower():
+                        flash(center_copy_status, "warning")
                     email_sent = True
                 else:
                     flash(

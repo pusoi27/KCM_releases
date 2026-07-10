@@ -3979,7 +3979,9 @@ def init_db():
             available INTEGER DEFAULT 1,
             reading_level TEXT,
             copies INTEGER DEFAULT 1,
-            borrower_id INTEGER
+            borrower_id INTEGER,
+            cover_blob BLOB,
+            cover_mime TEXT DEFAULT ''
         )
     """)
 
@@ -4342,6 +4344,10 @@ def init_db():
             cur.execute("ALTER TABLE books ADD COLUMN borrower_id INTEGER REFERENCES students(id)")
         if "qr_code_blob" not in cols:
             cur.execute("ALTER TABLE books ADD COLUMN qr_code_blob BLOB")
+        if "cover_blob" not in cols:
+            cur.execute("ALTER TABLE books ADD COLUMN cover_blob BLOB")
+        if "cover_mime" not in cols:
+            cur.execute("ALTER TABLE books ADD COLUMN cover_mime TEXT DEFAULT ''")
         
         conn.commit()
 

@@ -184,6 +184,50 @@ def safe_int(value, default=0):
         return default
 
 
+def _is_repeating_digit_student_id(candidate_id):
+    """Return True when an integer ID is 3+ digits of the same number (e.g., 111)."""
+    token = str(candidate_id or '').strip()
+    return len(token) >= 3 and token.isdigit() and len(set(token)) == 1
+
+
+def _next_student_id_candidate(conn):
+    """Best-effort next student id prediction for AUTOINCREMENT-backed tables."""
+    seq_row = conn.execute(
+        "SELECT seq FROM sqlite_sequence WHERE name='students'",
+        (),
+    ).fetchone()
+    if seq_row and seq_row[0] is not None:
+        return int(seq_row[0]) + 1
+
+    max_row = conn.execute("SELECT COALESCE(MAX(id), 0) FROM students", ()).fetchone()
+    return int((max_row[0] if max_row else 0) or 0) + 1
+
+
+def _advance_student_id_sequence_past_repeating_digits(conn):
+    """Skip repeating-digit student IDs by advancing sqlite_sequence before insert.
+
+    This keeps the QR payload's `ID:<sid>` value on non-repeating IDs while
+    preserving the DB-primary-key-based ID model.
+    """
+    try:
+        next_id = _next_student_id_candidate(conn)
+        skipped = 0
+        while _is_repeating_digit_student_id(next_id):
+            conn.execute(
+                "INSERT INTO sqlite_sequence(name, seq) VALUES('students', ?) "
+                "ON CONFLICT(name) DO UPDATE SET seq=excluded.seq",
+                (next_id,),
+            )
+            skipped += 1
+            next_id += 1
+
+        if skipped > 0:
+            print(f"[student-id] Skipped {skipped} repeating-digit ID(s); next student ID will start at {next_id}.")
+    except sqlite3.OperationalError:
+        # sqlite_sequence may be unavailable when table is not AUTOINCREMENT.
+        pass
+
+
 def _normalize_csv_key(key):
     return str(key or '').strip().lower().replace(' ', '').replace('_', '').replace('-', '')
 
@@ -627,6 +671,7 @@ def add_student(name, subject, email, phone, book_loaned=0, el=0, pi=0, v=0, ind
     primary_subject = subjects_list[0]
 
     with sqlite3.connect(DB_PATH) as conn:
+        _advance_student_id_sequence_past_repeating_digits(conn)
         c = conn.cursor()
         c.execute("""INSERT INTO students
             (name,student_identifier,subject,subjects_json,subject_minutes_json,total_study_minutes,email,phone,guardian,active,book_loaned,el,pi,v,ind,day1,day2,day1_time,day2_time,day3,day3_time,day4,day4_time,day5,day5_time,day6,day6_time,schedule_json)
@@ -1001,6 +1046,7 @@ def import_csv(file_path):
                 updated+=1
             else:
                 print(f"INSERTING new student: {name}")
+                _advance_student_id_sequence_past_repeating_digits(conn)
                 conn.execute(
                     """
                     INSERT INTO students(
