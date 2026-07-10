@@ -16,6 +16,7 @@ a = Analysis(
         ('data', 'data'),
     ],
     hiddenimports=[
+        'app',
         'flask',
         'werkzeug',
         'reportlab',

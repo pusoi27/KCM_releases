@@ -25,6 +25,21 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 
+def _ensure_app_import_path() -> None:
+    """Ensure the app directory is importable in script and frozen runs."""
+    try:
+        base_dir = Path(sys.executable).resolve().parent if getattr(sys, 'frozen', False) else Path(__file__).resolve().parent
+    except Exception:
+        base_dir = Path(__file__).resolve().parent
+
+    base_dir_str = str(base_dir)
+    if base_dir_str not in sys.path:
+        sys.path.insert(0, base_dir_str)
+
+
+_ensure_app_import_path()
+
+
 def _load_local_env() -> None:
     """Load .env from app directory when available."""
     env_path = Path(__file__).with_name('.env')
@@ -125,7 +140,13 @@ def _load_icon_image():
 def start_server():
     global _server
     from waitress import create_server
-    from app import app
+
+    try:
+        from app import app
+    except ModuleNotFoundError:
+        log.exception("Could not import 'app'. launcher_dir=%s; sys.path[0]=%s", Path(__file__).resolve().parent, sys.path[0] if sys.path else "")
+        raise
+
     log.info("Starting Waitress on %s", URL)
     _server = create_server(app, host=HOST, port=PORT, threads=8)
     _server.run()
