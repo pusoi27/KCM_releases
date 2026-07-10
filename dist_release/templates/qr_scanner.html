@@ -330,8 +330,12 @@ async function finalizeScan(){
       console.log('FLEX MATCH:', flexMatch);
       type = (flexMatch[1].toUpperCase() === 'ASSISTANT') ? 'ASST' : flexMatch[1].toUpperCase();
       let idStr = flexMatch[2];
-      // Only dedup digits if deduplicateCharacters didn't already clean the string
-      if (!charDeduplicationApplied) idStr = deduplicateRepeatingDigits(idStr);
+      // Only dedup if it looks malformed (has actual repetition indicators)
+      // Normal QR codes from database won't need this
+      if (idStr.length >= 4 && /^(\d)\1{2,}$/.test(idStr)) {
+        // Only collapse if all digits identical AND length >= 4 (4x scanner repetition)
+        idStr = idStr.slice(0, idStr.length / 2) || idStr[0];
+      }
       id = parseInt(idStr, 10);
       scannerLogDebug(`FLEX match -> type=${type} id=${id} (from ${flexMatch[2]})`);
     }
@@ -373,7 +377,10 @@ async function finalizeScan(){
       console.log('LAST ATTEMPT:', lastAttempt);
       type = (lastAttempt[1].toUpperCase() === 'ASSISTANT') ? 'ASST' : lastAttempt[1].toUpperCase();
       let idStr = lastAttempt[2];
-      if (!charDeduplicationApplied) idStr = deduplicateRepeatingDigits(idStr);
+      // Only dedup if it looks malformed (actual repetition)
+      if (idStr.length >= 4 && /^(\d)\1{2,}$/.test(idStr)) {
+        idStr = idStr.slice(0, idStr.length / 2) || idStr[0];
+      }
       id = parseInt(idStr, 10);
       scannerLogDebug(`LAST ATTEMPT -> type=${type} id=${id}`);
     }
