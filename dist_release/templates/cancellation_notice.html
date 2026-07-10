@@ -66,7 +66,7 @@
               <th>Last Day of Attendance</th>
               <td>
                 <div class="d-flex flex-wrap align-items-center gap-2">
-                  <strong>{{ effective_last_attendance_date_display }}</strong>
+                  <strong id="attendanceDateDisplay" data-default="{{ effective_last_attendance_date_display }}">{{ effective_last_attendance_date_display }}</strong>
                   <button type="button" id="modifyAttendanceBtn" class="btn btn-outline-secondary btn-sm" onclick="toggleDateOverride('custom_last_attendance_date', 'modifyAttendanceBtn')">Modify Date</button>
                 </div>
                 <input type="date" id="custom_last_attendance_date" name="custom_last_attendance_date" value="{{ effective_last_attendance_date }}" class="form-control form-control-sm mt-2 d-none" style="max-width: 240px;">
@@ -76,11 +76,8 @@
               <th>Last Payment Date</th>
               <td>
                 <div class="d-flex flex-wrap align-items-center gap-2">
-                  {% if requires_payment %}
-                    <strong>{{ last_payment_date_display }}</strong>
-                  {% else %}
-                    <em>No additional payment required</em>
-                  {% endif %}
+                  <strong id="paymentDateDisplay" data-default="{{ last_payment_date_display or '' }}" {% if not requires_payment %}class="d-none"{% endif %}>{{ last_payment_date_display or '' }}</strong>
+                  <em id="paymentDateNone" {% if requires_payment %}class="d-none"{% endif %}>No additional payment required</em>
                   <button type="button" id="modifyPaymentBtn" class="btn btn-outline-secondary btn-sm" onclick="toggleDateOverride('custom_last_payment_date', 'modifyPaymentBtn')">Modify Date</button>
                 </div>
                 <input type="date" id="custom_last_payment_date" name="custom_last_payment_date" value="{{ last_payment_date or '' }}" class="form-control form-control-sm mt-2 d-none" style="max-width: 240px;">
@@ -100,14 +97,8 @@
           <p class="mb-2">Dear {{ selected_students[0].guardian or 'Parent/Guardian' }},</p>
           <p class="mb-2">We have received your cancellation notice for <strong>{{ selected_students[0].name }}</strong> on <strong>{{ notice_date_display }}</strong>.</p>
           <ul class="mb-2">
-            <li>Last day of attendance: <strong>{{ effective_last_attendance_date_display }}</strong></li>
-            <li>Last payment date:
-              {% if requires_payment %}
-                <strong>{{ last_payment_date_display }}</strong>
-              {% else %}
-                <strong>No additional payment required</strong>
-              {% endif %}
-            </li>
+            <li>Last day of attendance: <strong id="previewAttendanceDate">{{ effective_last_attendance_date_display }}</strong></li>
+            <li>Last payment date: <strong id="previewPaymentDate">{% if requires_payment %}{{ last_payment_date_display }}{% else %}No additional payment required{% endif %}</strong></li>
           </ul>
           <p class="mb-2">Please keep a copy of this email for your records. If you have any questions or concerns, please contact your center.</p>
           <p class="mb-2">We wish {{ selected_students[0].name }} success and the best grades in school!</p>
@@ -141,6 +132,80 @@
 </div>
 
 <script>
+  function formatLongDate(isoDate) {
+    const token = String(isoDate || '').trim();
+    if (!token) return '';
+    const parts = token.split('-');
+    if (parts.length !== 3) return token;
+
+    const year = Number(parts[0]);
+    const month = Number(parts[1]);
+    const day = Number(parts[2]);
+    if (!Number.isFinite(year) || !Number.isFinite(month) || !Number.isFinite(day)) {
+      return token;
+    }
+
+    const monthNames = [
+      'January', 'February', 'March', 'April', 'May', 'June',
+      'July', 'August', 'September', 'October', 'November', 'December'
+    ];
+    const ord = (d) => {
+      if (d % 100 >= 11 && d % 100 <= 13) return `${d}th`;
+      if (d % 10 === 1) return `${d}st`;
+      if (d % 10 === 2) return `${d}nd`;
+      if (d % 10 === 3) return `${d}rd`;
+      return `${d}th`;
+    };
+
+    const monthLabel = monthNames[month - 1] || String(month);
+    return `${monthLabel} ${ord(day)}, ${year}`;
+  }
+
+  function syncCancellationPreviewDates() {
+    const attendanceInput = document.getElementById('custom_last_attendance_date');
+    const paymentInput = document.getElementById('custom_last_payment_date');
+
+    const attendanceDisplay = document.getElementById('attendanceDateDisplay');
+    const paymentDisplay = document.getElementById('paymentDateDisplay');
+    const paymentNone = document.getElementById('paymentDateNone');
+
+    const previewAttendance = document.getElementById('previewAttendanceDate');
+    const previewPayment = document.getElementById('previewPaymentDate');
+
+    if (attendanceDisplay && previewAttendance) {
+      const attendanceValue = String(attendanceInput?.value || '').trim();
+      const attendanceLabel = attendanceValue
+        ? formatLongDate(attendanceValue)
+        : String(attendanceDisplay.dataset.default || attendanceDisplay.textContent || '').trim();
+
+      attendanceDisplay.textContent = attendanceLabel;
+      previewAttendance.textContent = attendanceLabel;
+    }
+
+    if (paymentDisplay && paymentNone && previewPayment) {
+      const defaultPayment = String(paymentDisplay.dataset.default || '').trim();
+      const paymentValue = String(paymentInput?.value || '').trim();
+
+      if (paymentValue) {
+        const label = formatLongDate(paymentValue);
+        paymentDisplay.textContent = label;
+        paymentDisplay.classList.remove('d-none');
+        paymentNone.classList.add('d-none');
+        previewPayment.textContent = label;
+      } else if (defaultPayment) {
+        paymentDisplay.textContent = defaultPayment;
+        paymentDisplay.classList.remove('d-none');
+        paymentNone.classList.add('d-none');
+        previewPayment.textContent = defaultPayment;
+      } else {
+        paymentDisplay.textContent = '';
+        paymentDisplay.classList.add('d-none');
+        paymentNone.classList.remove('d-none');
+        previewPayment.textContent = 'No additional payment required';
+      }
+    }
+  }
+
   function toggleDateOverride(inputId, buttonId) {
     const input = document.getElementById(inputId);
     const button = document.getElementById(buttonId);
@@ -156,6 +221,25 @@
       input.value = '';
       button.textContent = 'Modify Date';
     }
+
+    syncCancellationPreviewDates();
   }
+
+  document.addEventListener('DOMContentLoaded', () => {
+    const attendanceInput = document.getElementById('custom_last_attendance_date');
+    const paymentInput = document.getElementById('custom_last_payment_date');
+
+    if (attendanceInput) {
+      attendanceInput.addEventListener('input', syncCancellationPreviewDates);
+      attendanceInput.addEventListener('change', syncCancellationPreviewDates);
+    }
+
+    if (paymentInput) {
+      paymentInput.addEventListener('input', syncCancellationPreviewDates);
+      paymentInput.addEventListener('change', syncCancellationPreviewDates);
+    }
+
+    syncCancellationPreviewDates();
+  });
 </script>
 {% endblock %}
