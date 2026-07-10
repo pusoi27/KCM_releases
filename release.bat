@@ -35,7 +35,7 @@ if not exist "build_nsis_installer.bat" (
   exit /b 1
 )
 
-set "COMMIT_MSG=%~1"
+set "COMMIT_MSG=%*"
 if "%COMMIT_MSG%"=="" (
   set "COMMIT_MSG=release"
 )
@@ -80,7 +80,12 @@ if errorlevel 1 (
 )
 
 echo.
-echo [5/5] Building NSIS installer...
+echo [5/6] Cleaning PyInstaller cache for a deterministic installer build...
+if exist "build" rmdir /s /q "build"
+if exist "dist" rmdir /s /q "dist"
+
+echo.
+echo [6/6] Building NSIS installer...
 call build_nsis_installer.bat
 if errorlevel 1 (
   echo [ERROR] Installer build failed.

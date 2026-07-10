@@ -21,20 +21,52 @@ import tempfile
 import shutil
 import socket
 import ctypes
+import importlib.util
 from pathlib import Path
 from dotenv import load_dotenv
 
 
 def _ensure_app_import_path() -> None:
     """Ensure the app directory is importable in script and frozen runs."""
-    try:
-        base_dir = Path(sys.executable).resolve().parent if getattr(sys, 'frozen', False) else Path(__file__).resolve().parent
-    except Exception:
-        base_dir = Path(__file__).resolve().parent
+    candidate_dirs = []
 
-    base_dir_str = str(base_dir)
-    if base_dir_str not in sys.path:
-        sys.path.insert(0, base_dir_str)
+    try:
+        candidate_dirs.append(Path(__file__).resolve().parent)
+    except Exception:
+        pass
+
+    try:
+        candidate_dirs.append(Path(sys.executable).resolve().parent)
+    except Exception:
+        pass
+
+    # PyInstaller onefile extraction directory.
+    meipass = getattr(sys, '_MEIPASS', None)
+    if meipass:
+        try:
+            candidate_dirs.append(Path(meipass).resolve())
+        except Exception:
+            pass
+
+    try:
+        candidate_dirs.append(Path.cwd().resolve())
+    except Exception:
+        pass
+
+    seen = set()
+    ordered = []
+    for directory in candidate_dirs:
+        if not directory:
+            continue
+        key = os.path.normcase(str(directory))
+        if key in seen:
+            continue
+        seen.add(key)
+        ordered.append(str(directory))
+
+    for directory in reversed(ordered):
+        if directory not in sys.path:
+            sys.path.insert(0, directory)
 
 
 _ensure_app_import_path()
@@ -141,11 +173,61 @@ def start_server():
     global _server
     from waitress import create_server
 
-    try:
-        from app import app
-    except ModuleNotFoundError:
-        log.exception("Could not import 'app'. launcher_dir=%s; sys.path[0]=%s", Path(__file__).resolve().parent, sys.path[0] if sys.path else "")
-        raise
+    def _load_wsgi_app():
+        try:
+            from app import app as flask_app
+            return flask_app
+        except ModuleNotFoundError as exc:
+            # Only handle missing top-level app module here.
+            if getattr(exc, 'name', None) != 'app':
+                raise
+
+        candidate_app_files = []
+        for raw_base in (
+            getattr(sys, '_MEIPASS', None),
+            Path(__file__).resolve().parent,
+            Path(sys.executable).resolve().parent if getattr(sys, 'frozen', False) else None,
+            Path.cwd(),
+        ):
+            if not raw_base:
+                continue
+            try:
+                base = Path(raw_base).resolve()
+            except Exception:
+                continue
+            app_file = base / 'app.py'
+            if app_file.exists():
+                candidate_app_files.append(app_file)
+
+        seen_files = set()
+        for app_file in candidate_app_files:
+            key = os.path.normcase(str(app_file))
+            if key in seen_files:
+                continue
+            seen_files.add(key)
+            try:
+                spec = importlib.util.spec_from_file_location('stdytime_runtime_app', str(app_file))
+                if spec and spec.loader:
+                    module = importlib.util.module_from_spec(spec)
+                    spec.loader.exec_module(module)
+                    flask_app = getattr(module, 'app', None)
+                    if flask_app is not None:
+                        log.info("Loaded app via fallback file: %s", app_file)
+                        return flask_app
+            except Exception as fallback_exc:
+                log.warning("Fallback app load failed from %s: %s", app_file, fallback_exc)
+
+        log.exception(
+            "Could not import 'app'. launcher_dir=%s; executable_dir=%s; meipass=%s; cwd=%s; sys.path[0]=%s",
+            Path(__file__).resolve().parent,
+            Path(sys.executable).resolve().parent if getattr(sys, 'frozen', False) else '',
+            getattr(sys, '_MEIPASS', ''),
+            Path.cwd(),
+            sys.path[0] if sys.path else '',
+        )
+        raise ModuleNotFoundError("No module named 'app'")
+
+    app = _load_wsgi_app()
 
     log.info("Starting Waitress on %s", URL)
     _server = create_server(app, host=HOST, port=PORT, threads=8)
