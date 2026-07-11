@@ -402,7 +402,10 @@ class RequestProfiler:
         print(f"[{req_type}] {method:6} {endpoint:40} {status_code}")
         
         # Log to file
-        self._write_log(f"[{req_type}] {method:6} {endpoint:40} {status_code}")
+        self._write_log(f"[{req_type}] {method:6} {endpoint:40} {statName:Joshua R.UID:STU-EEC7F9CC11BC
+                                                                 Name:Joshua R.UID:STU-EEC7F9CC11BC
+                                                                 Name:Ace S.
+                                                                 us_code}")
     
     def _write_log(self, message):
         """Append to log file."""

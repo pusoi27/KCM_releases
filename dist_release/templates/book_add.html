@@ -18,7 +18,7 @@
     <div class="card-body">
       <form id="bookForm">
         <input type="hidden" id="bookId" name="bookId">
-        <div class="row g-3 align-items-end">
+        <div class="row g-2 align-items-end compact-row">
           <div class="col-md-6">
             <label class="form-label">ISBN (scan or type)</label>
             <input type="text" class="form-control" id="isbnInput" placeholder="ISBN-10 or ISBN-13" autofocus>
@@ -34,9 +34,9 @@
           </div>
         </div>
 
-        <hr class="my-4" />
+        <hr class="my-3" />
 
-        <div class="row g-3">
+        <div class="row g-2 compact-row">
           <div class="col-md-6">
             <label class="form-label">Title <span class="text-danger">*</span></label>
             <input type="text" class="form-control" id="titleInput" required>
@@ -87,7 +87,7 @@
           </div>
         </div>
 
-        <div class="mt-4 d-flex gap-2">
+        <div class="mt-3 d-flex gap-2 flex-wrap">
           <button type="button" id="saveBtn" class="btn btn-success">
             <i class="bi bi-save"></i> Save Book
           </button>
@@ -140,6 +140,7 @@
     isbnExistingBook: null,
     titleExistingBook: null
   };
+  let currentLookupCoverUrl = '';
 
   // Autofocus for scanner-friendly input
   isbnInput.focus();
@@ -170,6 +171,7 @@
       publisher: publisherEl.value.trim(),
       isbn: isbn10El.value.trim(),
       isbn13: isbn13El.value.trim(),
+      cover_url: currentLookupCoverUrl || '',
       reading_level: levelEl.value.trim(),
       copies: parseInt(copiesEl.value || '1', 10),
     };
@@ -220,6 +222,7 @@
       publisher: publisherEl.value.trim(),
       isbn: isbn10El.value.trim(),
       isbn13: isbn13El.value.trim(),
+      cover_url: currentLookupCoverUrl || '',
       reading_level: levelEl.value.trim(),
       copies: parseInt(copiesEl.value || '1', 10),
     };
@@ -327,6 +330,7 @@
       const book = data.book || {};
       const titleExisting = data.existing_book || null;
       const isbnExisting = data.isbn_existing_book || null;
+      currentLookupCoverUrl = book.cover_url || '';
 
       // Store state for button handlers
       currentState.isbnExistingBook = isbnExisting;
@@ -499,6 +503,7 @@
     isbn13El.value = '';
     levelEl.value = '';
     copiesEl.value = 1;
+    currentLookupCoverUrl = '';
     levelEl.disabled = false;
     levelRequiredStar.classList.remove('d-none');
     isbnInput.focus();
@@ -513,6 +518,22 @@
 
 #bookForm.lookup-busy {
   opacity: 0.92;
+}
+
+/* Tighter Add/Update Book form spacing */
+#bookForm .compact-row {
+  --bs-gutter-x: 0.85rem;
+  --bs-gutter-y: 0.6rem;
+}
+
+#bookForm .form-label {
+  margin-bottom: 0.2rem;
+}
+
+#bookForm .form-control,
+#bookForm .form-select {
+  padding-top: 0.35rem;
+  padding-bottom: 0.35rem;
 }
 </style>
 {% endblock %}

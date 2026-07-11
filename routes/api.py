@@ -668,17 +668,12 @@ def _bridge_student_payload(student_row) -> dict:
 
 
 def _resolve_student_id_from_scan_payload(payload: dict) -> int | None:
-    """Resolve student id from scan payload using id first, then UID/name fallbacks."""
+    """Resolve student id from scan payload using UID first, then id/name fallbacks."""
     payload = payload or {}
 
-    try:
-        sid = int(payload.get("student_id") or 0)
-    except (TypeError, ValueError):
-        sid = 0
-
-    if sid > 0:
-        return sid
-
+    # Prefer UID from regenerated QR payloads.
+    # Scanner inputs can occasionally mangle repeated digits in ID-only scans
+    # (e.g., 111 becoming 11), while UID remains globally unique and stable.
     uid = str(payload.get("student_uid") or "").strip()
     if uid:
         with sqlite3.connect(DB_PATH) as conn:
@@ -703,6 +698,14 @@ def _resolve_student_id_from_scan_payload(payload: dict) -> int | None:
                     resolved = 0
                 if resolved > 0:
                     return resolved
+
+    try:
+        sid = int(payload.get("student_id") or 0)
+    except (TypeError, ValueError):
+        sid = 0
+
+    if sid > 0:
+        return sid
 
     name_hint = str(payload.get("student_name") or "").strip()
     if name_hint:

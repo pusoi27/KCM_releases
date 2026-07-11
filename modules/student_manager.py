@@ -185,9 +185,9 @@ def safe_int(value, default=0):
 
 
 def _is_repeating_digit_student_id(candidate_id):
-    """Return True when an integer ID is 3+ digits of the same number (e.g., 111)."""
+    """Return True when a numeric ID has all identical digits (e.g., 11, 111, 2222)."""
     token = str(candidate_id or '').strip()
-    return len(token) >= 3 and token.isdigit() and len(set(token)) == 1
+    return len(token) >= 2 and token.isdigit() and len(set(token)) == 1
 
 
 def _next_student_id_candidate(conn):
@@ -213,6 +213,7 @@ def _advance_student_id_sequence_past_repeating_digits(conn):
         next_id = _next_student_id_candidate(conn)
         skipped = 0
         while _is_repeating_digit_student_id(next_id):
+            # Move ahead by +1 until at least one digit differs from the rest.
             conn.execute(
                 "INSERT INTO sqlite_sequence(name, seq) VALUES('students', ?) "
                 "ON CONFLICT(name) DO UPDATE SET seq=excluded.seq",

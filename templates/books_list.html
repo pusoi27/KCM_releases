@@ -59,6 +59,7 @@
       <table class="table table-hover mb-0" id="booksTable">
         <thead class="table-light">
           <tr>
+            <th class="text-center col-cover">Cover</th>
             <th>Title</th>
             <th>Author</th>
             <th>Publisher</th>
@@ -74,6 +75,18 @@
           {% if books %}
             {% for book in books %}
               <tr class="book-row" data-id="{{ book.id }}">
+                <td class="text-center col-cover-cell">
+                  <div class="book-cover-frame" aria-label="Book cover preview">
+                    <img
+                      src="{{ url_for('api_books_cover', book_id=book.id) }}"
+                      alt="{{ book.title or 'Book cover' }}"
+                      class="book-cover-thumb"
+                      loading="lazy"
+                      onerror="this.style.display='none'; this.nextElementSibling.style.display='flex';"
+                    >
+                    <div class="book-cover-fallback" style="display:none;">📘</div>
+                  </div>
+                </td>
                 <td class="fw-500">{{ book.title or 'Untitled' }}</td>
                 <td>{{ book.author or 'Unknown' }}</td>
                 <td class="text-muted small">{{ (book.publisher or '')[:40] }}{% if (book.publisher or '')|length > 40 %}...{% endif %}</td>
@@ -102,7 +115,7 @@
             {% endfor %}
           {% else %}
             <tr>
-              <td colspan="9" class="text-center text-muted py-4">No books found</td>
+              <td colspan="10" class="text-center text-muted py-4">No books found</td>
             </tr>
           {% endif %}
         </tbody>
@@ -153,6 +166,24 @@ document.addEventListener('DOMContentLoaded', function() {
     document.body.appendChild(form);
     form.submit();
   };
+
+  function coverCellHtml(book) {
+    const safeTitle = escapeHtml(book.title || 'Book cover');
+    return `
+      <td class="text-center col-cover-cell">
+        <div class="book-cover-frame" aria-label="Book cover preview">
+          <img
+            src="/api/books/cover/${book.id}"
+            alt="${safeTitle}"
+            class="book-cover-thumb"
+            loading="lazy"
+            onerror="this.style.display='none'; this.nextElementSibling.style.display='flex';"
+          >
+          <div class="book-cover-fallback" style="display:none;">📘</div>
+        </div>
+      </td>
+    `;
+  }
   
   // Search functionality
   function performSearch() {
@@ -178,6 +209,7 @@ document.addEventListener('DOMContentLoaded', function() {
             row.className = 'book-row';
             row.dataset.id = book.id;
             row.innerHTML = `
+              ${coverCellHtml(book)}
               <td class="fw-500">${escapeHtml(book.title)}</td>
               <td>${escapeHtml(book.author)}</td>
               <td class="text-muted small">${escapeHtml((book.publisher || '').substring(0, 40))}</td>
@@ -203,7 +235,7 @@ document.addEventListener('DOMContentLoaded', function() {
           
         } else {
           const row = document.createElement('tr');
-          row.innerHTML = '<td colspan="9" class="text-center text-muted py-4">No books found</td>';
+          row.innerHTML = '<td colspan="10" class="text-center text-muted py-4">No books found</td>';
           booksTableBody.appendChild(row);
         }
       })
@@ -231,6 +263,12 @@ document.addEventListener('DOMContentLoaded', function() {
 </script>
 
 <style>
+#booksTable .col-cover,
+#booksTable .col-cover-cell {
+  width: 76px;
+  min-width: 76px;
+}
+
 #booksTable .col-level,
 #booksTable .col-level-cell {
   width: 72px;
@@ -258,6 +296,36 @@ document.addEventListener('DOMContentLoaded', function() {
 
 #booksTable .col-actions-cell .btn {
   white-space: nowrap;
+}
+
+.book-cover-frame {
+  width: 42px;
+  height: 56px;
+  margin: 0 auto;
+  border: 1px solid #d7dee5;
+  border-radius: 6px;
+  overflow: hidden;
+  background: #f8f9fa;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.book-cover-thumb {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.book-cover-fallback {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.2rem;
+  color: #6c757d;
 }
 </style>
 {% endblock %}

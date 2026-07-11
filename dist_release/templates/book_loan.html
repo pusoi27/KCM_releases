@@ -5,26 +5,9 @@
   <div class="d-flex justify-content-between align-items-center mb-3">
     <div>
       <h4 class="mb-1"><i class="bi bi-arrow-left-right"></i> Book Checkout / Checkin</h4>
-      <p class="text-muted mb-0">Step 1: Scan ISBN to load Book card. Step 2: Scan student QR to load Student card. Step 3: Click <strong>Complete Checkout</strong>.</p>
+      <p class="text-muted mb-0">Step 1: Scan book barcode/ISBN to load Book card. Step 2: Scan student QR to load Student card. Step 3: Click <strong>Complete Checkout</strong>.</p>
     </div>
     <a class="btn btn-outline-secondary btn-sm" href="{{ url_for('books_list') }}"><i class="bi bi-arrow-left"></i> Back to Book List</a>
-  </div>
-
-  <div class="card shadow-sm mb-3">
-    <div class="card-body">
-      <div class="row g-3 align-items-end">
-        <div class="col-md-8">
-          <label class="form-label">Scanner Input</label>
-          <input type="text" id="scanInput" class="form-control" placeholder="Scan ISBN first, then scan Student QR">
-        </div>
-        <div class="col-md-2">
-          <button class="btn btn-primary w-100" id="processScanBtn"><i class="bi bi-upc-scan"></i> Process</button>
-        </div>
-        <div class="col-md-2 text-end">
-          <span id="statusText" class="text-muted small"></span>
-        </div>
-      </div>
-    </div>
   </div>
 
   <div class="row g-3 mb-3">
@@ -39,15 +22,8 @@
                 <i class="bi bi-book text-muted" style="font-size:1.8rem;"></i>
               </div>
             </div>
-            <div class="flex-grow-1">
-              <h5 id="bookTitle" class="mb-1">Waiting for ISBN scan...</h5>
-              <p class="text-muted mb-1" id="bookAuthor">-</p>
-              <p class="mb-1"><strong>Publisher:</strong> <span id="bookPublisher">-</span></p>
-              <p class="mb-1"><strong>Level:</strong> <span id="bookLevel" class="badge bg-secondary">-</span></p>
-              <p class="mb-1"><strong>ISBN:</strong> <span id="bookIsbn">-</span></p>
-              <p class="mb-1"><strong>Status:</strong> <span id="bookStatus" class="badge bg-secondary">Not selected</span></p>
-              <p class="mb-1"><strong>Borrower:</strong> <span id="bookBorrower">-</span></p>
-              <p class="mb-0"><strong>Copies:</strong> <span id="bookCopies">-</span></p>
+            <div class="flex-grow-1 d-flex align-items-center">
+              <h5 id="bookTitle" class="mb-0">Waiting for book scan...</h5>
             </div>
           </div>
         </div>
@@ -119,6 +95,14 @@
                 <td>{{ book.title }}</td>
                 <td><small class="text-muted">{{ book.checkout_date }}</small></td>
                 <td class="text-center">
+                  <button
+                    type="button"
+                    class="btn btn-outline-info btn-sm"
+                    onclick='returnLoanedBook({{ book.book_id }}, {{ book.title|tojson }}, {{ student_name|tojson }})'
+                    title="Return this book to library"
+                  >
+                    <i class="bi bi-box-arrow-in-left"></i> Return
+                  </button>
                   {% if book.show_clear and current_user and current_user.is_admin() %}
                   <button
                     type="button"
@@ -172,13 +156,35 @@ function clearLoan(bookId, studentId, bookTitle, studentName) {
       alert('Failed to clear loan: ' + err);
     });
 }
+
+function returnLoanedBook(bookId, bookTitle, studentName) {
+  const ok = confirm(`Return "${bookTitle}" from ${studentName}?`);
+  if (!ok) {
+    return;
+  }
+
+  fetch('/api/books/return', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ book_id: bookId })
+  })
+    .then(response => response.json())
+    .then(data => {
+      if (data.error) {
+        alert('Error: ' + data.error);
+        return;
+      }
+      alert('Book returned to library.');
+      location.reload();
+    })
+    .catch(err => {
+      alert('Failed to return book: ' + err);
+    });
+}
 </script>
 
 <script>
 (function() {
-  const scanInput = document.getElementById('scanInput');
-  const processScanBtn = document.getElementById('processScanBtn');
-  const statusText = document.getElementById('statusText');
   const completeCheckoutBtn = document.getElementById('completeCheckoutBtn');
   const confirmHint = document.getElementById('confirmHint');
   const alertBox = document.getElementById('alertBox');
@@ -189,22 +195,14 @@ function clearLoan(bookId, studentId, bookTitle, studentName) {
   let currentStudent = null;
   let scanBuffer = '';
   let scanFinalizeTimer = null;
+  let suppressLoanedReturnPrompt = false;
   const SCAN_IDLE_MS = 180;
 
-  processScanBtn.addEventListener('click', () => processScannerPayload(scanInput.value));
-  scanInput.addEventListener('keypress', e => {
-    if (e.key === 'Enter') {
-      e.preventDefault();
-      processScannerPayload(scanInput.value);
-    }
-  });
   completeCheckoutBtn.addEventListener('click', completeCheckout);
 
-  // Auto-focus scan input on page load
-  scanInput.focus();
-
   function setStatus(msg) {
-    statusText.textContent = msg || '';
+    // Status text UI removed; keep hook for future logging if needed.
+    return msg;
   }
 
   function resetLoanWorkflow() {
@@ -212,18 +210,7 @@ function clearLoan(bookId, studentId, bookTitle, studentName) {
     bookAvailableForLoan = false;
     currentStudent = null;
 
-    document.getElementById('bookTitle').textContent = 'Waiting for ISBN scan...';
-    document.getElementById('bookAuthor').textContent = '-';
-    document.getElementById('bookPublisher').textContent = '-';
-    const levelBadge = document.getElementById('bookLevel');
-    levelBadge.textContent = '-';
-    levelBadge.className = 'badge bg-secondary';
-    document.getElementById('bookIsbn').textContent = '-';
-    const statusBadge = document.getElementById('bookStatus');
-    statusBadge.textContent = 'Not selected';
-    statusBadge.className = 'badge bg-secondary';
-    document.getElementById('bookBorrower').textContent = '-';
-    document.getElementById('bookCopies').textContent = '-';
+    document.getElementById('bookTitle').textContent = 'Waiting for book scan...';
 
     const bookCover = document.getElementById('bookCover');
     const bookCoverPlaceholder = document.getElementById('bookCoverPlaceholder');
@@ -240,10 +227,8 @@ function clearLoan(bookId, studentId, bookTitle, studentName) {
     studentPlaceholder.style.display = 'flex';
     setStudentStatus('Scan student after selecting a book.');
 
-    scanInput.value = '';
     setStatus('Ready for next loan');
     refreshConfirmationState();
-    scanInput.focus();
   }
 
   function refreshConfirmationState() {
@@ -285,18 +270,9 @@ function clearLoan(bookId, studentId, bookTitle, studentName) {
 
   function renderBook(book) {
     document.getElementById('bookTitle').textContent = book.title || 'Untitled';
-    document.getElementById('bookAuthor').textContent = book.author || 'Unknown';
-    document.getElementById('bookPublisher').textContent = book.publisher || '-';
-    document.getElementById('bookLevel').textContent = book.reading_level || '-';
-    document.getElementById('bookIsbn').textContent = book.isbn13 || book.isbn || '-';
-    document.getElementById('bookCopies').textContent = book.copies || 0;
-    const statusBadge = document.getElementById('bookStatus');
     const hasIsbn = !!(book.isbn || book.isbn13);
     const isAvailable = !!(hasIsbn && book.available && !book.borrower_id);
     bookAvailableForLoan = isAvailable;
-    statusBadge.textContent = isAvailable ? 'Available' : 'Unavailable';
-    statusBadge.className = 'badge ' + (isAvailable ? 'bg-success' : 'bg-secondary');
-    document.getElementById('bookBorrower').textContent = book.borrower_name || '-';
 
     const cover = document.getElementById('bookCover');
     const coverPlaceholder = document.getElementById('bookCoverPlaceholder');
@@ -325,18 +301,64 @@ function clearLoan(bookId, studentId, bookTitle, studentName) {
     } else if (book.borrower_name) {
       setStudentStatus(`Book currently loaned to ${book.borrower_name}.`, 'warning');
       showAlert(`This book is currently loaned to ${book.borrower_name}.`, 'warning');
+      if (!suppressLoanedReturnPrompt) {
+        promptReturnScannedLoanedBook(book);
+      }
     } else {
       setStudentStatus('This book is currently unavailable for loan.', 'warning');
       showAlert('This book is currently unavailable for loan.', 'warning');
     }
+    suppressLoanedReturnPrompt = false;
     refreshConfirmationState();
+  }
+
+  async function loadBookById(bookId) {
+    const resp = await fetch(`/api/books/${bookId}`);
+    const data = await resp.json();
+    if (!resp.ok || !data.book) {
+      throw new Error(data.error || 'Failed to load updated book.');
+    }
+    currentBookId = data.book.id;
+    currentStudent = null;
+    renderBook(data.book);
+  }
+
+  async function returnBookById(bookId, contextLabel='book') {
+    const resp = await fetch('/api/books/return', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ book_id: bookId })
+    });
+    const data = await resp.json();
+    if (!resp.ok) {
+      throw new Error(data.error || `Failed to return ${contextLabel}.`);
+    }
+    return data;
+  }
+
+  async function promptReturnScannedLoanedBook(book) {
+    const borrowerName = book.borrower_name || 'current borrower';
+    const ok = window.confirm(`"${book.title || 'Book'}" is currently loaned to ${borrowerName}.\n\nReturn this book to library now?`);
+    if (!ok) {
+      return;
+    }
+
+    try {
+      await returnBookById(book.id, 'book');
+      showAlert(`"${book.title || 'Book'}" returned to library.`, 'success');
+      suppressLoanedReturnPrompt = true;
+      await loadBookById(book.id);
+    } catch (err) {
+      showAlert(err.message || 'Failed to return book.', 'danger');
+      setStudentStatus('Book return failed. Please try again.', 'warning');
+    }
   }
 
   async function findBook(rawInput) {
     showAlert('', 'info');
     setStatus('Searching...');
     const q = normalizeBookQuery(rawInput);
-    if (!q) { showAlert('Please enter a title or ISBN.', 'warning'); setStatus(''); return; }
+    if (!q) { showAlert('Please scan a book barcode or ISBN.', 'warning'); setStatus(''); return; }
 
     // Always search in local database only (no external API lookup)
     const url = `/api/books/search?q=${encodeURIComponent(q)}&level=`;
@@ -354,13 +376,13 @@ function clearLoan(bookId, studentId, bookTitle, studentName) {
         setStatus('');
         return;
       } else {
-        showAlert('Book not found in your library. Add it first in the Books page.', 'warning');
+        promptAddMissingBook(q);
         setStatus('');
         return;
       }
 
       if (!book) {
-        showAlert('Book not found in database. Add it first.', 'warning');
+        promptAddMissingBook(q);
         setStatus('');
         return;
       }
@@ -368,7 +390,6 @@ function clearLoan(bookId, studentId, bookTitle, studentName) {
       currentBookId = book.id;
       currentStudent = null;
       renderBook(book);
-      scanInput.value = '';
       setStatus('Ready');
     } catch (err) {
       showAlert(err.message, 'danger');
@@ -417,7 +438,6 @@ function clearLoan(bookId, studentId, bookTitle, studentName) {
       };
 
       setStudentStatus(`Student loaded: ${currentStudent.name} (ID ${currentStudent.id})`, 'success');
-      scanInput.value = '';
       refreshConfirmationState();
     } catch (err) {
       showAlert(err.message, 'warning');
@@ -548,13 +568,24 @@ function clearLoan(bookId, studentId, bookTitle, studentName) {
     return candidate;
   }
 
+  function promptAddMissingBook(scannedToken) {
+    const token = String(scannedToken || '').trim();
+    const message = token
+      ? `Book "${token}" was not found in the library.\n\nDo you want to open Add Book and add it now?`
+      : 'Book was not found in the library.\n\nDo you want to open Add Book and add it now?';
+    const goAdd = window.confirm(message);
+    if (goAdd) {
+      const qs = token ? `?isbn=${encodeURIComponent(token)}` : '';
+      window.location.href = `/books/add${qs}`;
+    }
+  }
+
   async function processScannerPayload(payload) {
     const normalized = normalizeScanPayload(deduplicateCharacters(payload));
     if (!normalized) return;
 
     const isbn = extractIsbnFromPayload(normalized);
     if (isbn) {
-      scanInput.value = isbn;
       await findBook(isbn);
       return;
     }

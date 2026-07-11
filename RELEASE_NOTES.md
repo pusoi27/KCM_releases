@@ -526,3 +526,30 @@ This file is automatically appended by `scripts/version_bump.py` on every versio
 ## v01.03.68 - 2026-07-10
 - TODO: summarize changes for this release.
 
+## v01.03.69 - 2026-07-10
+- TODO: summarize changes for this release.
+
+## v01.03.70 - 2026-07-10
+- TODO: summarize changes for this release.
+
+## v01.03.71 - 2026-07-11
+- TODO: summarize changes for this release.
+
+## v01.03.72 - 2026-07-11
+- TODO: summarize changes for this release.
+
+## v01.03.73 - 2026-07-11
+- TODO: summarize changes for this release.
+
+## v01.03.74 - 2026-07-11
+- TODO: summarize changes for this release.
+
+## v01.03.75 - 2026-07-11
+- TODO: summarize changes for this release.
+
+## v01.03.76 - 2026-07-11
+- TODO: summarize changes for this release.
+
+## v01.03.77 - 2026-07-11
+- TODO: summarize changes for this release.
+

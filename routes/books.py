@@ -4,7 +4,9 @@
 from flask import render_template, request, jsonify, redirect, url_for, flash, g, send_file
 from modules.book_manager import (
     get_books,
+    ensure_book_cover,
     get_book_cover,
+    set_book_cover,
     find_book_by_title,
     find_book_by_isbn,
     add_book,
@@ -30,6 +32,7 @@ import re
 import time
 from threading import Lock
 import io
+from pathlib import Path
 
 
 BOOK_LEVEL_ORDER = ["1", "2", "3", "4", "5", "6", "7", "A", "B", "C", "D", "E", "F", "G", "H", "I", "J", "K"]
@@ -39,6 +42,8 @@ BRIDGE_GET_TIMEOUT_SECONDS = 4
 BRIDGE_POST_TIMEOUT_SECONDS = 5
 _isbn_lookup_locks = {}
 _isbn_lookup_locks_guard = Lock()
+BOOK_COVER_URL_FETCH_TIMEOUT_SECONDS = 8
+BOOK_COVER_URL_MAX_BYTES = 256 * 1024
 
 
 def _runtime_station_mode() -> str:
@@ -156,6 +161,10 @@ def _book_detail_prefix() -> str:
 
 def _students_list_cache_key() -> str:
     return server_cache.STUDENTS_LIST_CACHE_KEY
+
+
+def _book_cover_fallback_logo_path() -> Path:
+    return Path(__file__).resolve().parent.parent / 'static' / 'img' / 'logo.png'
 
 
 def _isbn_lookup_cache_key(isbn: str) -> str:
@@ -443,6 +452,7 @@ def register_book_routes(app):
         publisher = (payload.get('publisher') or '').strip()
         isbn = _sanitize_isbn(payload.get('isbn')) if payload.get('isbn') else None
         isbn13 = _sanitize_isbn(payload.get('isbn13')) if payload.get('isbn13') else None
+        cover_url = _normalize_cover_url(payload.get('cover_url')) if payload.get('cover_url') else ''
         level = (payload.get('reading_level') or '').strip()
         copies = _parse_non_negative_int(payload.get('copies'), default=1)
         existing_id = payload.get('id')
@@ -510,6 +520,11 @@ def register_book_routes(app):
                 reading_level=level,
                 copies=copies
             )
+            # Prefer explicit cover from ISBN lookup flow when available.
+            if cover_url and not get_book_cover(new_id):
+                cover_blob, cover_mime = _fetch_cover_blob_from_url(cover_url)
+                if cover_blob:
+                    set_book_cover(new_id, cover_blob, cover_mime or 'image/jpeg')
             _invalidate_books_cache(new_id)
             return jsonify({'status': 'created', 'id': new_id})
         except Exception as e:
@@ -1062,6 +1077,7 @@ def register_book_routes(app):
         publisher = (payload.get('publisher') or '').strip()
         isbn = _sanitize_isbn(payload.get('isbn')) if payload.get('isbn') else None
         isbn13 = _sanitize_isbn(payload.get('isbn13')) if payload.get('isbn13') else None
+        cover_url = _normalize_cover_url(payload.get('cover_url')) if payload.get('cover_url') else ''
         level = (payload.get('reading_level') or '').strip()
         copies = _parse_non_negative_int(payload.get('copies'), default=1)
         existing_id = payload.get('id')
@@ -1134,6 +1150,11 @@ def register_book_routes(app):
                 reading_level=level,
                 copies=copies
             )
+            # Prefer explicit cover from ISBN lookup flow when available.
+            if cover_url and not get_book_cover(new_id):
+                cover_blob, cover_mime = _fetch_cover_blob_from_url(cover_url)
+                if cover_blob:
+                    set_book_cover(new_id, cover_blob, cover_mime or 'image/jpeg')
             _invalidate_books_cache(new_id)
             return jsonify({'status': 'created', 'id': new_id})
         except Exception as e:
@@ -1390,18 +1411,22 @@ def register_book_routes(app):
     @require_login
     @require_feature(auth_manager.FEATURE_BOOKS)
     def api_books_cover(book_id: int):
-        """Return stored book cover blob image."""
+        """Return stored/fetched book cover image, or the Stdytime logo fallback."""
         try:
-            cover = get_book_cover(book_id)
-            if not cover or not cover.get('cover_blob'):
-                return ('', 404)
-            return send_file(
-                io.BytesIO(cover['cover_blob']),
-                mimetype=cover.get('cover_mime') or 'image/jpeg',
-                download_name=f'book_{book_id}_cover.jpg',
-            )
+            cover = ensure_book_cover(book_id)
+            if cover and cover.get('cover_blob'):
+                return send_file(
+                    io.BytesIO(cover['cover_blob']),
+                    mimetype=cover.get('cover_mime') or 'image/jpeg',
+                    download_name=f'book_{book_id}_cover.jpg',
+                )
         except Exception:
-            return ('', 404)
+            pass
+
+        fallback_logo = _book_cover_fallback_logo_path()
+        if fallback_logo.exists():
+            return send_file(fallback_logo, mimetype='image/png', download_name='stdytime_logo.png')
+        return ('', 404)
 
     # ----------------------------------------
     # Delete book
@@ -1599,6 +1624,13 @@ def _lookup_isbn_google(isbn: str):
     
     # Publisher
     publisher = volume_info.get("publisher") or ""
+
+    image_links = volume_info.get("imageLinks") or {}
+    cover_url = (
+        image_links.get("thumbnail")
+        or image_links.get("smallThumbnail")
+        or ""
+    )
     
     # ISBN info
     isbn_data = volume_info.get("industryIdentifiers") or []
@@ -1626,6 +1658,7 @@ def _lookup_isbn_google(isbn: str):
         'publisher': publisher.strip(),
         'isbn': isbn10,
         'isbn13': isbn13,
+        'cover_url': _normalize_cover_url(cover_url),
     }
 
 
@@ -1701,6 +1734,7 @@ def _lookup_isbn_open_library(isbn: str):
                 'publisher': publisher,
                 'isbn': isbn10,
                 'isbn13': isbn13,
+                'cover_url': '',
             }
 
     # Secondary fallback: Open Library search endpoint
@@ -1746,6 +1780,7 @@ def _lookup_isbn_open_library(isbn: str):
         'publisher': str(publishers[0]).strip() if publishers else "",
         'isbn': isbn10,
         'isbn13': isbn13,
+        'cover_url': '',
     }
 
 
@@ -1764,6 +1799,43 @@ def _isbn_tokens(isbn: str, isbn13: str) -> set[str]:
         if clean:
             tokens.add(clean)
     return tokens
+
+
+def _normalize_cover_url(raw_url: str | None) -> str:
+    token = str(raw_url or '').strip()
+    if not token:
+        return ''
+    if token.startswith('//'):
+        return f"https:{token}"
+    return token
+
+
+def _fetch_cover_blob_from_url(raw_url: str | None) -> tuple[bytes | None, str]:
+    """Download a small image blob from a trusted http/https cover URL."""
+    url = _normalize_cover_url(raw_url)
+    if not url.lower().startswith(("http://", "https://")):
+        return None, ''
+
+    headers = {
+        "User-Agent": "Mozilla/5.0 (compatible; Stdytime/1.0)",
+    }
+    try:
+        resp = requests.get(url, headers=headers, timeout=(3, BOOK_COVER_URL_FETCH_TIMEOUT_SECONDS))
+    except requests.RequestException:
+        return None, ''
+
+    if resp.status_code != 200:
+        return None, ''
+
+    mime = str(resp.headers.get('Content-Type') or '').split(';', 1)[0].strip().lower()
+    if not mime.startswith('image/'):
+        return None, ''
+
+    payload = resp.content or b''
+    if not payload or len(payload) > BOOK_COVER_URL_MAX_BYTES:
+        return None, ''
+
+    return payload, (mime or 'image/jpeg')
 
 
 def _book_row_to_dict(row):

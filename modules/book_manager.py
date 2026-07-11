@@ -232,6 +232,38 @@ def _coerce_blob(raw_value):
     return None
 
 
+def _normalize_cover_lookup_attempted(raw_value) -> int:
+    try:
+        return 1 if int(raw_value or 0) else 0
+    except (TypeError, ValueError):
+        return 0
+
+
+def _get_book_cover_state(book_id):
+    """Return cover/ISBN metadata for one book."""
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.row_factory = sqlite3.Row
+        row = conn.execute(
+            """
+            SELECT id, isbn, isbn13, cover_blob, COALESCE(cover_mime, '') AS cover_mime,
+                   COALESCE(cover_lookup_attempted, 0) AS cover_lookup_attempted
+            FROM books
+            WHERE id = ?
+            """,
+            (book_id,),
+        ).fetchone()
+        if not row:
+            return None
+        return {
+            'id': row['id'],
+            'isbn': row['isbn'],
+            'isbn13': row['isbn13'],
+            'cover_blob': _coerce_blob(row['cover_blob']),
+            'cover_mime': str(row['cover_mime'] or '') or 'image/jpeg',
+            'cover_lookup_attempted': _normalize_cover_lookup_attempted(row['cover_lookup_attempted']),
+        }
+
+
 def set_book_qr_code(book_id, qr_blob):
     """Store a book's QR code as BLOB in database."""
     with sqlite3.connect(DB_PATH) as conn:
@@ -259,25 +291,72 @@ def set_book_cover(book_id, cover_blob, cover_mime=''):
     """Store a book cover as BLOB in database."""
     with sqlite3.connect(DB_PATH) as conn:
         conn.execute(
-            "UPDATE books SET cover_blob=?, cover_mime=? WHERE id=?",
+            "UPDATE books SET cover_blob=?, cover_mime=?, cover_lookup_attempted=1 WHERE id=?",
             (sqlite3.Binary(cover_blob) if cover_blob else None, (cover_mime or ''), book_id),
         )
         conn.commit()
 
 
+def mark_book_cover_lookup_attempted(book_id, *, clear_cover=False):
+    """Persist that a cover lookup has already been attempted for this book."""
+    with sqlite3.connect(DB_PATH) as conn:
+        if clear_cover:
+            conn.execute(
+                "UPDATE books SET cover_blob=NULL, cover_mime='', cover_lookup_attempted=1 WHERE id=?",
+                (book_id,),
+            )
+        else:
+            conn.execute(
+                "UPDATE books SET cover_lookup_attempted=1 WHERE id=?",
+                (book_id,),
+            )
+        conn.commit()
+
+
 def get_book_cover(book_id):
     """Retrieve a book cover blob from database."""
-    with sqlite3.connect(DB_PATH) as conn:
-        conn.row_factory = sqlite3.Row
-        row = conn.execute(
-            "SELECT cover_blob, COALESCE(cover_mime, '') AS cover_mime FROM books WHERE id=?",
-            (book_id,),
-        ).fetchone()
-        if row and row['cover_blob']:
-            return {
-                'cover_blob': _coerce_blob(row['cover_blob']),
-                'cover_mime': str(row['cover_mime'] or '') or 'image/jpeg',
-            }
+    state = _get_book_cover_state(book_id)
+    if state and state.get('cover_blob'):
+        return {
+            'cover_blob': state['cover_blob'],
+            'cover_mime': state.get('cover_mime') or 'image/jpeg',
+            'cover_lookup_attempted': state.get('cover_lookup_attempted', 0),
+        }
+    return None
+
+
+def ensure_book_cover(book_id):
+    """Return an existing/stored cover, attempting a one-time fetch when missing."""
+    state = _get_book_cover_state(book_id)
+    if not state:
+        return None
+
+    existing_blob = state.get('cover_blob')
+    if existing_blob:
+        return {
+            'cover_blob': existing_blob,
+            'cover_mime': state.get('cover_mime') or 'image/jpeg',
+            'cover_lookup_attempted': state.get('cover_lookup_attempted', 0),
+        }
+
+    if state.get('cover_lookup_attempted'):
+        return None
+
+    valid_isbn = _preferred_valid_isbn(state.get('isbn'), state.get('isbn13'))
+    if not valid_isbn:
+        mark_book_cover_lookup_attempted(book_id)
+        return None
+
+    cover_blob, cover_mime = _fetch_small_cover_blob_from_openlibrary(valid_isbn)
+    if cover_blob:
+        set_book_cover(book_id, cover_blob, cover_mime or 'image/jpeg')
+        return {
+            'cover_blob': cover_blob,
+            'cover_mime': cover_mime or 'image/jpeg',
+            'cover_lookup_attempted': 1,
+        }
+
+    mark_book_cover_lookup_attempted(book_id)
     return None
 
 
@@ -312,9 +391,19 @@ def add_book(title, author, publisher, isbn=None, isbn13=None, available=1, read
             cover_blob, cover_mime = _fetch_small_cover_blob_from_openlibrary(valid_isbn)
             if cover_blob:
                 c.execute(
-                    "UPDATE books SET cover_blob = ?, cover_mime = ? WHERE id = ?",
+                    "UPDATE books SET cover_blob = ?, cover_mime = ?, cover_lookup_attempted = 1 WHERE id = ?",
                     (sqlite3.Binary(cover_blob), cover_mime or 'image/jpeg', book_id),
                 )
+            else:
+                c.execute(
+                    "UPDATE books SET cover_lookup_attempted = 1 WHERE id = ?",
+                    (book_id,),
+                )
+        else:
+            c.execute(
+                "UPDATE books SET cover_lookup_attempted = 1 WHERE id = ?",
+                (book_id,),
+            )
 
         conn.commit()
         return book_id
@@ -322,6 +411,13 @@ def add_book(title, author, publisher, isbn=None, isbn13=None, available=1, read
 
 def update_book(book_id, title=None, author=None, publisher=None, isbn=None, isbn13=None, available=None, reading_level=None, copies=None, borrower_id=None):
     """Update a book."""
+    previous_row = None
+    with sqlite3.connect(DB_PATH) as conn:
+        previous_row = conn.execute(
+            "SELECT isbn, isbn13 FROM books WHERE id = ?",
+            (book_id,),
+        ).fetchone()
+
     updates = []
     params = []
 
@@ -371,6 +467,18 @@ def update_book(book_id, title=None, author=None, publisher=None, isbn=None, isb
         if row:
             current_isbn, current_isbn13, current_copies, current_borrower_id = row
             current_copies = _safe_non_negative_int(current_copies, default=0)
+
+            previous_isbn = previous_row[0] if previous_row else None
+            previous_isbn13 = previous_row[1] if previous_row else None
+            isbn_changed = (
+                _normalize_isbn_token(previous_isbn) != _normalize_isbn_token(current_isbn)
+                or _normalize_isbn_token(previous_isbn13) != _normalize_isbn_token(current_isbn13)
+            )
+            if isbn_changed:
+                c.execute(
+                    "UPDATE books SET cover_blob = NULL, cover_mime = '', cover_lookup_attempted = 0 WHERE id = ?",
+                    (book_id,),
+                )
 
             if current_copies == 0:
                 c.execute(

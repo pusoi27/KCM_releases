@@ -3981,7 +3981,8 @@ def init_db():
             copies INTEGER DEFAULT 1,
             borrower_id INTEGER,
             cover_blob BLOB,
-            cover_mime TEXT DEFAULT ''
+            cover_mime TEXT DEFAULT '',
+            cover_lookup_attempted INTEGER DEFAULT 0
         )
     """)
 
@@ -4348,6 +4349,8 @@ def init_db():
             cur.execute("ALTER TABLE books ADD COLUMN cover_blob BLOB")
         if "cover_mime" not in cols:
             cur.execute("ALTER TABLE books ADD COLUMN cover_mime TEXT DEFAULT ''")
+        if "cover_lookup_attempted" not in cols:
+            cur.execute("ALTER TABLE books ADD COLUMN cover_lookup_attempted INTEGER DEFAULT 0")
         
         conn.commit()
 

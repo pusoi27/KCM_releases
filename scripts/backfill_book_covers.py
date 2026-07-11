@@ -33,6 +33,8 @@ def _ensure_cover_columns(conn: sqlite3.Connection) -> None:
         cur.execute("ALTER TABLE books ADD COLUMN cover_blob BLOB")
     if "cover_mime" not in cols:
         cur.execute("ALTER TABLE books ADD COLUMN cover_mime TEXT DEFAULT ''")
+    if "cover_lookup_attempted" not in cols:
+        cur.execute("ALTER TABLE books ADD COLUMN cover_lookup_attempted INTEGER DEFAULT 0")
     conn.commit()
 
 
@@ -43,7 +45,8 @@ def _iter_books_missing_cover(conn: sqlite3.Connection) -> Iterable[sqlite3.Row]
         """
         SELECT id, title, isbn, isbn13, cover_blob
         FROM books
-        WHERE COALESCE(cover_blob, X'') = X''
+                WHERE COALESCE(cover_blob, X'') = X''
+                    AND COALESCE(cover_lookup_attempted, 0) = 0
         ORDER BY id ASC
         """
     )
@@ -71,6 +74,12 @@ def run_backfill(*, dry_run: bool = False, throttle_ms: int = 120) -> dict:
             valid_isbn = _preferred_valid_isbn(isbn, isbn13)
             if not valid_isbn:
                 skipped_no_valid_isbn += 1
+                if not dry_run:
+                    conn.execute(
+                        "UPDATE books SET cover_lookup_attempted = 1 WHERE id = ?",
+                        (book_id,),
+                    )
+                    conn.commit()
                 continue
 
             try:
@@ -82,6 +91,12 @@ def run_backfill(*, dry_run: bool = False, throttle_ms: int = 120) -> dict:
 
             if not blob:
                 skipped_not_found += 1
+                if not dry_run:
+                    conn.execute(
+                        "UPDATE books SET cover_lookup_attempted = 1 WHERE id = ?",
+                        (book_id,),
+                    )
+                    conn.commit()
                 continue
 
             if dry_run:
@@ -89,7 +104,7 @@ def run_backfill(*, dry_run: bool = False, throttle_ms: int = 120) -> dict:
                 print(f"[dry-run] would update id={book_id} title={title!r} isbn={valid_isbn}")
             else:
                 conn.execute(
-                    "UPDATE books SET cover_blob = ?, cover_mime = ? WHERE id = ?",
+                    "UPDATE books SET cover_blob = ?, cover_mime = ?, cover_lookup_attempted = 1 WHERE id = ?",
                     (sqlite3.Binary(blob), (mime or "image/jpeg"), book_id),
                 )
                 conn.commit()
