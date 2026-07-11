@@ -72,23 +72,25 @@ if errorlevel 1 (
 )
 
 echo.
-echo [4/5] Pushing to GitHub...
-git push
-if errorlevel 1 (
-  echo [ERROR] git push failed.
-  exit /b 1
-)
-
-echo.
-echo [5/6] Cleaning PyInstaller cache for a deterministic installer build...
+echo [4/6] Cleaning PyInstaller cache for a deterministic installer build...
 if exist "build" rmdir /s /q "build"
 if exist "dist" rmdir /s /q "dist"
 
 echo.
-echo [6/6] Building NSIS installer...
+echo [5/6] Building NSIS installer...
 call build_nsis_installer.bat
 if errorlevel 1 (
   echo [ERROR] Installer build failed.
+  exit /b 1
+)
+
+call :validate_release_artifacts || exit /b 1
+
+echo.
+echo [6/6] Pushing to GitHub...
+git push
+if errorlevel 1 (
+  echo [ERROR] git push failed.
   exit /b 1
 )
 
@@ -165,4 +167,68 @@ echo Installer: %INSTALLER_FILE%
 echo ==============================================================
 
 endlocal
+exit /b 0
+
+:validate_release_artifacts
+set "APP_VERSION_VERIFY="
+if exist "VERSION" (
+  set /p APP_VERSION_VERIFY=<"VERSION"
+) else if exist "Version" (
+  set /p APP_VERSION_VERIFY=<"Version"
+)
+
+if not defined APP_VERSION_VERIFY (
+  echo build failed: missing VERSION file after build
+  exit /b 1
+)
+
+if exist "dist_release" (
+  rem continue
+) else (
+  echo build failed: dist_release folder was not created
+  exit /b 1
+)
+
+if not exist "dist_release\Stdytime.exe" (
+  echo build failed: missing dist_release\Stdytime.exe
+  exit /b 1
+)
+if not exist "dist_release\app.py" (
+  echo build failed: missing dist_release\app.py required by launcher fallback
+  exit /b 1
+)
+if not exist "dist_release\launcher.py" (
+  echo build failed: missing dist_release\launcher.py
+  exit /b 1
+)
+if not exist "dist_release\launcher_browser.py" (
+  echo build failed: missing dist_release\launcher_browser.py
+  exit /b 1
+)
+if not exist "dist_release\modules\database.py" (
+  echo build failed: missing dist_release\modules\database.py
+  exit /b 1
+)
+if not exist "dist_release\routes\api.py" (
+  echo build failed: missing dist_release\routes\api.py
+  exit /b 1
+)
+if not exist "dist_release\VERSION" (
+  echo build failed: missing dist_release\VERSION
+  exit /b 1
+)
+
+set "RELEASE_VERSION="
+set /p RELEASE_VERSION=<"dist_release\VERSION"
+if /I not "%RELEASE_VERSION%"=="%APP_VERSION_VERIFY%" (
+  echo build failed: dist_release VERSION mismatch (%RELEASE_VERSION% vs %APP_VERSION_VERIFY%)
+  exit /b 1
+)
+
+set "APP_VERSION_SAFE_VERIFY=%APP_VERSION_VERIFY:.=_%"
+if not exist "stdytime_installer_v%APP_VERSION_SAFE_VERIFY%.exe" (
+  echo build failed: missing installer stdytime_installer_v%APP_VERSION_SAFE_VERIFY%.exe
+  exit /b 1
+)
+
 exit /b 0

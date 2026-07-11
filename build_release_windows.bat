@@ -22,6 +22,9 @@ if errorlevel 1 exit /b 1
 REM Copy release files
 mkdir %RELEASE_DIR%
 copy %DIST_DIR%\Stdytime.exe %RELEASE_DIR%\
+copy app.py %RELEASE_DIR%\
+copy launcher.py %RELEASE_DIR%\
+copy launcher_browser.py %RELEASE_DIR%\
 copy .env %RELEASE_DIR%\
 copy db_config.json.example %RELEASE_DIR%\
 copy INSTALL_README_WINDOWS.txt %RELEASE_DIR%\
@@ -34,13 +37,70 @@ REM Copy folders
 xcopy templates %RELEASE_DIR%\templates /E /I /Y
 xcopy static %RELEASE_DIR%\static /E /I /Y
 xcopy assets %RELEASE_DIR%\assets /E /I /Y
+xcopy modules %RELEASE_DIR%\modules /E /I /Y
+xcopy routes %RELEASE_DIR%\routes /E /I /Y
 
 REM Copy only static data assets (exclude runtime DB, backups, WAL/SHM, temp files)
 mkdir %RELEASE_DIR%\data
 if exist data\award_rules.json copy data\award_rules.json %RELEASE_DIR%\data\
 if exist data\grade_level_criteria.json copy data\grade_level_criteria.json %RELEASE_DIR%\data\
 
+call :validate_release_payload
+if errorlevel 1 exit /b 1
+
 REM Done
 @echo.
 @echo Release build complete! Artifacts in %RELEASE_DIR%\
 endlocal
+goto :eof
+
+:validate_release_payload
+if not exist %RELEASE_DIR%\Stdytime.exe (
+	echo [ERROR] Missing %RELEASE_DIR%\Stdytime.exe
+	exit /b 1
+)
+if not exist %RELEASE_DIR%\templates (
+	echo [ERROR] Missing %RELEASE_DIR%\templates folder
+	exit /b 1
+)
+if not exist %RELEASE_DIR%\static (
+	echo [ERROR] Missing %RELEASE_DIR%\static folder
+	exit /b 1
+)
+if not exist %RELEASE_DIR%\assets (
+	echo [ERROR] Missing %RELEASE_DIR%\assets folder
+	exit /b 1
+)
+if not exist %RELEASE_DIR%\modules (
+	echo [ERROR] Missing %RELEASE_DIR%\modules folder
+	exit /b 1
+)
+if not exist %RELEASE_DIR%\routes (
+	echo [ERROR] Missing %RELEASE_DIR%\routes folder
+	exit /b 1
+)
+if not exist %RELEASE_DIR%\app.py (
+	echo [ERROR] Missing %RELEASE_DIR%\app.py
+	exit /b 1
+)
+if not exist %RELEASE_DIR%\launcher.py (
+	echo [ERROR] Missing %RELEASE_DIR%\launcher.py
+	exit /b 1
+)
+if not exist %RELEASE_DIR%\launcher_browser.py (
+	echo [ERROR] Missing %RELEASE_DIR%\launcher_browser.py
+	exit /b 1
+)
+if not exist %RELEASE_DIR%\modules\database.py (
+	echo [ERROR] Missing %RELEASE_DIR%\modules\database.py
+	exit /b 1
+)
+if not exist %RELEASE_DIR%\routes\api.py (
+	echo [ERROR] Missing %RELEASE_DIR%\routes\api.py
+	exit /b 1
+)
+if not exist %RELEASE_DIR%\VERSION (
+	echo [ERROR] Missing %RELEASE_DIR%\VERSION
+	exit /b 1
+)
+exit /b 0
