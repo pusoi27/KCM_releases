@@ -86,14 +86,6 @@ if errorlevel 1 (
 
 call :validate_release_artifacts || exit /b 1
 
-echo.
-echo [6/6] Pushing to GitHub...
-git push
-if errorlevel 1 (
-  echo [ERROR] git push failed.
-  exit /b 1
-)
-
 set "APP_VERSION="
 if exist "VERSION" (
   set /p APP_VERSION=<"VERSION"
@@ -103,8 +95,8 @@ if not defined APP_VERSION if exist "Version" (
 )
 
 if "%APP_VERSION%"=="" (
-  echo [WARNING] Could not read VERSION for checksum generation.
-  goto :done
+  echo [WARNING] Could not read VERSION for output copy.
+  goto :skip_output_copy
 )
 
 set "APP_VERSION_SAFE=%APP_VERSION:.=_%"
@@ -114,8 +106,8 @@ set "LOCAL_INSTALLER_OUTPUT=%CD%\%INSTALLER_FILE%"
 set "SECONDARY_INSTALLER_DIR=C:\Users\octav\OneDrive\ADOCTA TECH LLC\StdyTime"
 
 if not exist "%INSTALLER_FILE%" (
-  echo [WARNING] Installer file not found for checksum: %INSTALLER_FILE%
-  goto :done
+  echo [WARNING] Installer file not found for copy: %INSTALLER_FILE%
+  goto :skip_output_copy
 )
 
 if not exist "%SECONDARY_INSTALLER_DIR%" (
@@ -131,6 +123,26 @@ if exist "%SECONDARY_INSTALLER_DIR%" (
   )
 ) else (
   echo [WARNING] Secondary installer directory is unavailable: %SECONDARY_INSTALLER_DIR%
+)
+
+:skip_output_copy
+
+echo.
+echo [6/6] Pushing to GitHub...
+git push
+if errorlevel 1 (
+  echo [ERROR] git push failed.
+  exit /b 1
+)
+
+if not defined APP_VERSION (
+  echo [WARNING] Could not read VERSION for checksum generation.
+  goto :done
+)
+
+if not exist "%INSTALLER_FILE%" (
+  echo [WARNING] Installer file not found for checksum: %INSTALLER_FILE%
+  goto :done
 )
 
 set "SHA_HASH="
