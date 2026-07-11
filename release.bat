@@ -110,6 +110,7 @@ if "%APP_VERSION%"=="" (
 set "APP_VERSION_SAFE=%APP_VERSION:.=_%"
 set "INSTALLER_FILE=stdytime_installer_v%APP_VERSION_SAFE%.exe"
 set "SHA_FILE=%INSTALLER_FILE%.sha256"
+set "LOCAL_INSTALLER_OUTPUT=%CD%\%INSTALLER_FILE%"
 set "SECONDARY_INSTALLER_DIR=C:\Users\octav\OneDrive\ADOCTA TECH LLC\StdyTime"
 
 if not exist "%INSTALLER_FILE%" (
@@ -126,7 +127,7 @@ if exist "%SECONDARY_INSTALLER_DIR%" (
   if errorlevel 1 (
     echo [WARNING] Failed copying installer to: %SECONDARY_INSTALLER_DIR%
   ) else (
-    echo [INFO] Installer copied to: %SECONDARY_INSTALLER_DIR%
+    echo [INFO] Installer copied to: %SECONDARY_INSTALLER_DIR%\%INSTALLER_FILE%
   )
 ) else (
   echo [WARNING] Secondary installer directory is unavailable: %SECONDARY_INSTALLER_DIR%
@@ -154,6 +155,8 @@ echo [INFO] SHA256 written: %SHA_FILE%
 echo.
 echo ==============================================================
 echo Completed successfully.
+echo Local Output: %LOCAL_INSTALLER_OUTPUT%
+echo OneDrive Output: %SECONDARY_INSTALLER_DIR%\%INSTALLER_FILE%
 echo Installer: %INSTALLER_FILE%
 echo ==============================================================
 
