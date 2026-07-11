@@ -150,15 +150,6 @@ if errorlevel 1 (
 
 echo [INFO] SHA256 written: %SHA_FILE%
 
-if exist "%SECONDARY_INSTALLER_DIR%" (
-  copy /Y "%SHA_FILE%" "%SECONDARY_INSTALLER_DIR%\%SHA_FILE%" >nul
-  if errorlevel 1 (
-    echo [WARNING] Failed copying SHA256 file to: %SECONDARY_INSTALLER_DIR%
-  ) else (
-    echo [INFO] SHA256 copied to: %SECONDARY_INSTALLER_DIR%
-  )
-)
-
 :done
 echo.
 echo ==============================================================
