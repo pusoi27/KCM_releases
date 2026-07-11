@@ -100,29 +100,22 @@ if "%APP_VERSION%"=="" (
 )
 
 set "APP_VERSION_SAFE=%APP_VERSION:.=_%"
-set "INSTALLER_FILE=stdytime_installer_v%APP_VERSION_SAFE%.exe"
-set "SHA_FILE=%INSTALLER_FILE%.sha256"
-set "LOCAL_INSTALLER_OUTPUT=%CD%\%INSTALLER_FILE%"
 set "SECONDARY_INSTALLER_DIR=C:\Users\octav\OneDrive\ADOCTA TECH LLC\StdyTime"
 
-if not exist "%INSTALLER_FILE%" (
-  echo [WARNING] Installer file not found for copy: %INSTALLER_FILE%
+for /f "delims=" %%I in ('powershell -NoProfile -Command "$latest = Get-ChildItem -LiteralPath '%CD%' -Filter 'stdytime_installer_v*.exe' ^| Sort-Object LastWriteTime -Descending ^| Select-Object -First 1; if ($latest) { $latest.Name }"') do set "LATEST_INSTALLER=%%I"
+
+if not defined LATEST_INSTALLER (
+  echo [WARNING] Installer file not found for copy in: %CD%
   goto :skip_output_copy
 )
 
-if not exist "%SECONDARY_INSTALLER_DIR%" (
-  mkdir "%SECONDARY_INSTALLER_DIR%" >nul 2>nul
-)
+set "INSTALLER_FILE=%LATEST_INSTALLER%"
+set "SHA_FILE=%INSTALLER_FILE%.sha256"
+set "LOCAL_INSTALLER_OUTPUT=%CD%\%INSTALLER_FILE%"
 
-if exist "%SECONDARY_INSTALLER_DIR%" (
-  copy /Y "%INSTALLER_FILE%" "%SECONDARY_INSTALLER_DIR%\%INSTALLER_FILE%" >nul
-  if errorlevel 1 (
-    echo [WARNING] Failed copying installer to: %SECONDARY_INSTALLER_DIR%
-  ) else (
-    echo [INFO] Installer copied to: %SECONDARY_INSTALLER_DIR%\%INSTALLER_FILE%
-  )
-) else (
-  echo [WARNING] Secondary installer directory is unavailable: %SECONDARY_INSTALLER_DIR%
+powershell -NoProfile -Command "$ErrorActionPreference='Stop'; $destDir = '%SECONDARY_INSTALLER_DIR%'; $src = Join-Path '%CD%' '%LATEST_INSTALLER%'; if (-not (Test-Path -LiteralPath $src)) { throw ('Installer not found: ' + $src) }; New-Item -ItemType Directory -Force -Path $destDir | Out-Null; $dest = Join-Path $destDir '%LATEST_INSTALLER%'; Copy-Item -LiteralPath $src -Destination $dest -Force; if (-not (Test-Path -LiteralPath $dest)) { throw ('Copy verification failed: ' + $dest) }; Write-Host ('[INFO] Installer copied to: ' + $dest)"
+if errorlevel 1 (
+  echo [WARNING] Failed copying installer to: %SECONDARY_INSTALLER_DIR%
 )
 
 :skip_output_copy
