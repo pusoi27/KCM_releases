@@ -71,4 +71,20 @@ echo.
 echo NSIS installer build complete.
 echo Output: %CD%\stdytime_installer_v%APP_VERSION_SAFE%.exe
 
+set SECONDARY_INSTALLER_DIR=C:\Users\octav\OneDrive\ADOCTA TECH LLC\StdyTime
+if not exist "%SECONDARY_INSTALLER_DIR%" (
+  mkdir "%SECONDARY_INSTALLER_DIR%" >nul 2>nul
+)
+
+if exist "%SECONDARY_INSTALLER_DIR%" (
+  copy /Y "stdytime_installer_v%APP_VERSION_SAFE%.exe" "%SECONDARY_INSTALLER_DIR%\stdytime_installer_v%APP_VERSION_SAFE%.exe" >nul
+  if exist "%SECONDARY_INSTALLER_DIR%\stdytime_installer_v%APP_VERSION_SAFE%.exe" (
+    echo [INFO] Installer copied to: %SECONDARY_INSTALLER_DIR%\stdytime_installer_v%APP_VERSION_SAFE%.exe
+  ) else (
+    echo [WARNING] Failed copying installer to: %SECONDARY_INSTALLER_DIR%
+  )
+) else (
+  echo [WARNING] Secondary installer directory is unavailable: %SECONDARY_INSTALLER_DIR%
+)
+
 endlocal

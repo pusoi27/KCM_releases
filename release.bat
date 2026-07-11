@@ -102,7 +102,10 @@ if "%APP_VERSION%"=="" (
 set "APP_VERSION_SAFE=%APP_VERSION:.=_%"
 set "SECONDARY_INSTALLER_DIR=C:\Users\octav\OneDrive\ADOCTA TECH LLC\StdyTime"
 
-for /f "delims=" %%I in ('powershell -NoProfile -Command "$latest = Get-ChildItem -LiteralPath '%CD%' -Filter 'stdytime_installer_v*.exe' ^| Sort-Object LastWriteTime -Descending ^| Select-Object -First 1; if ($latest) { $latest.Name }"') do set "LATEST_INSTALLER=%%I"
+set "LATEST_INSTALLER="
+for /f "delims=" %%I in ('dir /b /a:-d /o-d "stdytime_installer_v*.exe"') do (
+  if not defined LATEST_INSTALLER set "LATEST_INSTALLER=%%I"
+)
 
 if not defined LATEST_INSTALLER (
   echo [WARNING] Installer file not found for copy in: %CD%
@@ -113,9 +116,19 @@ set "INSTALLER_FILE=%LATEST_INSTALLER%"
 set "SHA_FILE=%INSTALLER_FILE%.sha256"
 set "LOCAL_INSTALLER_OUTPUT=%CD%\%INSTALLER_FILE%"
 
-powershell -NoProfile -Command "$ErrorActionPreference='Stop'; $destDir = '%SECONDARY_INSTALLER_DIR%'; $src = Join-Path '%CD%' '%LATEST_INSTALLER%'; if (-not (Test-Path -LiteralPath $src)) { throw ('Installer not found: ' + $src) }; New-Item -ItemType Directory -Force -Path $destDir | Out-Null; $dest = Join-Path $destDir '%LATEST_INSTALLER%'; Copy-Item -LiteralPath $src -Destination $dest -Force; if (-not (Test-Path -LiteralPath $dest)) { throw ('Copy verification failed: ' + $dest) }; Write-Host ('[INFO] Installer copied to: ' + $dest)"
-if errorlevel 1 (
-  echo [WARNING] Failed copying installer to: %SECONDARY_INSTALLER_DIR%
+if not exist "%SECONDARY_INSTALLER_DIR%" (
+  mkdir "%SECONDARY_INSTALLER_DIR%" >nul 2>nul
+)
+
+if exist "%SECONDARY_INSTALLER_DIR%" (
+  copy /Y "%INSTALLER_FILE%" "%SECONDARY_INSTALLER_DIR%\%INSTALLER_FILE%" >nul
+  if exist "%SECONDARY_INSTALLER_DIR%\%INSTALLER_FILE%" (
+    echo [INFO] Installer copied to: %SECONDARY_INSTALLER_DIR%\%INSTALLER_FILE%
+  ) else (
+    echo [WARNING] Failed copying installer to: %SECONDARY_INSTALLER_DIR%
+  )
+) else (
+  echo [WARNING] Secondary installer directory is unavailable: %SECONDARY_INSTALLER_DIR%
 )
 
 :skip_output_copy
