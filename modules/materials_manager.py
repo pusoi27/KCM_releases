@@ -7,6 +7,16 @@ from modules.database import DB_PATH, issue_unique_qr_token, qr_token_exists, re
 from modules import qr_generator
 
 
+SQLITE_TIMEOUT_SECONDS = 30
+SQLITE_BUSY_TIMEOUT_MS = 12000
+
+
+def _connect() -> sqlite3.Connection:
+    conn = sqlite3.connect(DB_PATH, timeout=SQLITE_TIMEOUT_SECONDS)
+    conn.execute(f"PRAGMA busy_timeout={SQLITE_BUSY_TIMEOUT_MS}")
+    return conn
+
+
 def _safe_non_negative_int(value, default=0) -> int:
     try:
         parsed = int(value)
@@ -36,7 +46,7 @@ def _sync_material_availability(cursor, material_id: int):
 
 
 def ensure_material_loans_table():
-    with sqlite3.connect(DB_PATH) as conn:
+    with _connect() as conn:
         c = conn.cursor()
         c.execute(
             """
@@ -85,7 +95,7 @@ def _ensure_material_qr_image(material_id: int, title: str, qr_code: str, cursor
 
 def set_material_qr_code_blob(material_id: int, qr_blob):
     """Store a material's QR code as BLOB in database."""
-    with sqlite3.connect(DB_PATH) as conn:
+    with _connect() as conn:
         conn.execute(
             "UPDATE materials SET qr_code_blob=? WHERE id=?",
             (sqlite3.Binary(qr_blob) if qr_blob else None, material_id),
@@ -95,7 +105,7 @@ def set_material_qr_code_blob(material_id: int, qr_blob):
 
 def get_material_qr_code_blob(material_id: int):
     """Retrieve a material's QR code blob from database."""
-    with sqlite3.connect(DB_PATH) as conn:
+    with _connect() as conn:
         conn.row_factory = sqlite3.Row
         row = conn.execute(
             "SELECT qr_code_blob FROM materials WHERE id=?",
@@ -107,7 +117,7 @@ def get_material_qr_code_blob(material_id: int):
 
 
 def get_materials():
-    with sqlite3.connect(DB_PATH) as conn:
+    with _connect() as conn:
         c = conn.cursor()
         c.execute(
             """
@@ -120,7 +130,7 @@ def get_materials():
 
 
 def get_material(material_id: int):
-    with sqlite3.connect(DB_PATH) as conn:
+    with _connect() as conn:
         c = conn.cursor()
         c.execute(
             """
@@ -142,7 +152,7 @@ def add_material(title, author, publisher, qr_code=None, available=1, reading_le
         qr_code = None
     available = 1 if (copies > 0 and _has_qr_code(qr_code)) else 0
 
-    with sqlite3.connect(DB_PATH) as conn:
+    with _connect() as conn:
         c = conn.cursor()
         c.execute(
             """
@@ -153,8 +163,12 @@ def add_material(title, author, publisher, qr_code=None, available=1, reading_le
         )
         material_id = c.lastrowid
 
-        # Only generate QR code if not already present
-        existing_qr = get_material_qr_code_blob(material_id)
+        # Only generate QR code if not already present (same connection to avoid write-lock races)
+        existing_qr_row = c.execute(
+            "SELECT qr_code_blob FROM materials WHERE id = ?",
+            (material_id,),
+        ).fetchone()
+        existing_qr = _coerce_blob(existing_qr_row[0]) if existing_qr_row else None
         if not existing_qr:
             if not qr_code:
                 qr_code = _build_material_qr_code(material_id)
@@ -183,7 +197,7 @@ def update_material(material_id, title=None, author=None, publisher=None, qr_cod
     if qr_code is not None:
         qr_candidate = str(qr_code or '').strip()
         if qr_candidate:
-            with sqlite3.connect(DB_PATH) as _conn:
+        with _connect() as _conn:
                 _cur = _conn.cursor()
                 existing_row = _cur.execute("SELECT qr_code FROM materials WHERE id = ?", (material_id,)).fetchone()
                 existing_qr_value = str((existing_row[0] if existing_row else '') or '').strip()
@@ -210,7 +224,7 @@ def update_material(material_id, title=None, author=None, publisher=None, qr_cod
     params.append(material_id)
     query = f"UPDATE materials SET {', '.join(updates)} WHERE id = ?"
 
-    with sqlite3.connect(DB_PATH) as conn:
+    with _connect() as conn:
         c = conn.cursor()
         c.execute(query, params)
 
@@ -230,7 +244,7 @@ def update_material(material_id, title=None, author=None, publisher=None, qr_cod
 
 
 def delete_material(material_id):
-    with sqlite3.connect(DB_PATH) as conn:
+    with _connect() as conn:
         c = conn.cursor()
         c.execute("DELETE FROM materials WHERE id = ?", (material_id,))
         conn.commit()
@@ -238,7 +252,7 @@ def delete_material(material_id):
 
 
 def enforce_qr_availability_rule():
-    with sqlite3.connect(DB_PATH) as conn:
+    with _connect() as conn:
         c = conn.cursor()
         c.execute(
             """
@@ -271,7 +285,7 @@ def enforce_qr_availability_rule():
 def find_material_by_title(title: str):
     if not title:
         return None
-    with sqlite3.connect(DB_PATH) as conn:
+    with _connect() as conn:
         c = conn.cursor()
         c.execute(
             """
@@ -288,7 +302,7 @@ def find_material_by_title(title: str):
 def find_material_by_qr_code(qr_code: str):
     if not qr_code:
         return None
-    with sqlite3.connect(DB_PATH) as conn:
+    with _connect() as conn:
         c = conn.cursor()
         c.execute(
             """
@@ -306,7 +320,7 @@ def loan_material(material_id: int, student_id: int):
     ensure_material_loans_table()
     checkout_date = datetime.utcnow().isoformat()
 
-    with sqlite3.connect(DB_PATH) as conn:
+    with _connect() as conn:
         c = conn.cursor()
         student_exists = c.execute("SELECT id FROM students WHERE id = ?", (student_id,)).fetchone()
         if not student_exists:
@@ -332,7 +346,7 @@ def return_material(material_id: int):
     ensure_material_loans_table()
     return_date = datetime.utcnow().isoformat()
 
-    with sqlite3.connect(DB_PATH) as conn:
+    with _connect() as conn:
         c = conn.cursor()
         borrower_row = c.execute("SELECT borrower_id FROM materials WHERE id = ?", (material_id,)).fetchone()
         borrower_id = borrower_row[0] if borrower_row else None
@@ -368,7 +382,7 @@ def clear_active_material_loan(material_id: int, student_id: int):
     ensure_material_loans_table()
     return_date = datetime.utcnow().isoformat()
 
-    with sqlite3.connect(DB_PATH) as conn:
+    with _connect() as conn:
         c = conn.cursor()
         open_loan = c.execute(
             """
@@ -399,7 +413,7 @@ def clear_active_material_loan(material_id: int, student_id: int):
 
 def get_loaned_materials_detailed():
     ensure_material_loans_table()
-    with sqlite3.connect(DB_PATH) as conn:
+    with _connect() as conn:
         c = conn.cursor()
         rows = c.execute(
             """
