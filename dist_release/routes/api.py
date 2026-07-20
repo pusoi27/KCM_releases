@@ -25,6 +25,7 @@ import sqlite3
 import json
 import traceback
 import requests
+import time
 from routes.auth import require_login, require_admin, require_feature
 
 
@@ -32,6 +33,8 @@ CHECKOUT_COOLDOWN_SECONDS = 60
 STAFF_DUTY_MAX_DAILY_SECONDS = 6 * 60 * 60
 BRIDGE_GET_TIMEOUT_SECONDS = 4
 BRIDGE_POST_TIMEOUT_SECONDS = 5
+BRIDGE_OFFLINE_COOLDOWN_SECONDS = 20
+_BRIDGE_RETRY_AFTER_MONOTONIC = 0.0
 
 
 def _runtime_station_mode() -> str:
@@ -82,6 +85,8 @@ def _bridge_json_response(response):
 
 
 def _mark_scanner_bridge_offline(reason: str) -> None:
+    global _BRIDGE_RETRY_AFTER_MONOTONIC
+    _BRIDGE_RETRY_AFTER_MONOTONIC = time.monotonic() + max(1, int(BRIDGE_OFFLINE_COOLDOWN_SECONDS))
     try:
         g.scanner_bridge_fallback = True
         g.scanner_bridge_fallback_reason = str(reason or "bridge_unreachable")
@@ -89,8 +94,16 @@ def _mark_scanner_bridge_offline(reason: str) -> None:
         pass
 
 
+def _bridge_is_temporarily_offline() -> bool:
+    return time.monotonic() < float(_BRIDGE_RETRY_AFTER_MONOTONIC)
+
+
 def _bridge_forward_get(path: str):
     if not _scanner_api_client_enabled():
+        return None
+
+    if _bridge_is_temporarily_offline():
+        _mark_scanner_bridge_offline("cooldown")
         return None
 
     url = _bridge_url(path)
@@ -102,12 +115,18 @@ def _bridge_forward_get(path: str):
     except requests.RequestException as exc:
         _mark_scanner_bridge_offline(f"request_error:{exc}")
         return None
+    global _BRIDGE_RETRY_AFTER_MONOTONIC
+    _BRIDGE_RETRY_AFTER_MONOTONIC = 0.0
     body, code = _bridge_json_response(response)
     return jsonify(body), code
 
 
 def _bridge_forward_post(path: str, payload: dict | None = None):
     if not _scanner_api_client_enabled():
+        return None
+
+    if _bridge_is_temporarily_offline():
+        _mark_scanner_bridge_offline("cooldown")
         return None
 
     url = _bridge_url(path)
@@ -119,6 +138,8 @@ def _bridge_forward_post(path: str, payload: dict | None = None):
     except requests.RequestException as exc:
         _mark_scanner_bridge_offline(f"request_error:{exc}")
         return None
+    global _BRIDGE_RETRY_AFTER_MONOTONIC
+    _BRIDGE_RETRY_AFTER_MONOTONIC = 0.0
     body, code = _bridge_json_response(response)
     return jsonify(body), code
 

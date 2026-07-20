@@ -197,7 +197,7 @@ def update_material(material_id, title=None, author=None, publisher=None, qr_cod
     if qr_code is not None:
         qr_candidate = str(qr_code or '').strip()
         if qr_candidate:
-        with _connect() as _conn:
+            with _connect() as _conn:
                 _cur = _conn.cursor()
                 existing_row = _cur.execute("SELECT qr_code FROM materials WHERE id = ?", (material_id,)).fetchone()
                 existing_qr_value = str((existing_row[0] if existing_row else '') or '').strip()

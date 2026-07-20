@@ -134,8 +134,8 @@ _server = None
 _server_thread = None
 _tray_icon = None
 _browser_process = None
-_browser_monitor_started = False
 _is_quitting = False
+_browser_shutdown_timer = None
 
 
 def _should_shutdown_on_browser_exit() -> bool:
@@ -145,6 +145,48 @@ def _should_shutdown_on_browser_exit() -> bool:
     processes during startup, which can cause false shutdowns.
     """
     return os.getenv("STDYTIME_SHUTDOWN_ON_BROWSER_EXIT", "false").strip().lower() == "true"
+
+
+def _shutdown_delay_seconds() -> int:
+    raw = str(os.getenv("STDYTIME_SHUTDOWN_AFTER_BROWSER_CLOSE_SECONDS", "300") or "300").strip()
+    try:
+        return max(0, int(raw))
+    except (TypeError, ValueError):
+        return 300
+
+
+def _cancel_browser_shutdown_timer() -> None:
+    global _browser_shutdown_timer
+    timer = _browser_shutdown_timer
+    if timer is None:
+        return
+    try:
+        timer.cancel()
+    except Exception:
+        pass
+    _browser_shutdown_timer = None
+
+
+def _schedule_shutdown_after_browser_close() -> None:
+    global _browser_shutdown_timer
+    _cancel_browser_shutdown_timer()
+
+    delay = _shutdown_delay_seconds()
+
+    def _delayed_shutdown() -> None:
+        # If browser was re-opened during the grace period, do not stop backend.
+        proc = _browser_process
+        if proc and proc.poll() is None:
+            return
+        if _is_quitting:
+            return
+        log.info("Browser remained closed for %ss. Stopping Stdytime backend.", delay)
+        quit_app(_tray_icon)
+
+    _browser_shutdown_timer = threading.Timer(float(delay), _delayed_shutdown)
+    _browser_shutdown_timer.daemon = True
+    _browser_shutdown_timer.start()
+    log.info("Browser closed. Scheduling backend shutdown in %ss.", delay)
 
 
 def _build_icon_image():
@@ -315,18 +357,19 @@ def _launch_browser(url):
         return None
 
 
-def _monitor_browser_exit():
+def _monitor_browser_exit(proc):
     """Shut down the app when the dedicated browser process exits."""
     global _browser_process
-    proc = _browser_process
     if not proc:
         return
 
     try:
         proc.wait()
+        if _browser_process is proc:
+            # Keep a clear source of truth for re-open checks.
+            _browser_process = None
         if not _is_quitting and _should_shutdown_on_browser_exit():
-            log.info("Browser closed. Stopping Stdytime backend.")
-            quit_app(_tray_icon)
+            _schedule_shutdown_after_browser_close()
         elif not _is_quitting:
             log.info("Browser process exited; backend remains running.")
     except Exception as exc:
@@ -334,16 +377,22 @@ def _monitor_browser_exit():
 
 
 def open_browser():
-    global _browser_process, _browser_monitor_started
+    global _browser_process
+
+    _cancel_browser_shutdown_timer()
 
     # If a dedicated browser instance is still alive, do not spawn a duplicate.
     if _browser_process and _browser_process.poll() is None:
         return
 
     _browser_process = _launch_browser(URL)
-    if _browser_process and not _browser_monitor_started and _should_shutdown_on_browser_exit():
-        _browser_monitor_started = True
-        threading.Thread(target=_monitor_browser_exit, daemon=True, name="browser-monitor").start()
+    if _browser_process:
+        threading.Thread(
+            target=_monitor_browser_exit,
+            args=(_browser_process,),
+            daemon=True,
+            name="browser-monitor",
+        ).start()
 
 
 def quit_app(icon, item=None):
@@ -351,6 +400,7 @@ def quit_app(icon, item=None):
     if _is_quitting:
         return
     _is_quitting = True
+    _cancel_browser_shutdown_timer()
 
     log.info("Shutting down...")
     if icon:
@@ -366,7 +416,9 @@ def quit_app(icon, item=None):
 def main():
     global _server_thread, _tray_icon
 
-    if _is_port_open(HOST, PORT):
+    probe_host = '127.0.0.1' if HOST in {'0.0.0.0', '::'} else HOST
+
+    if _is_port_open(probe_host, PORT):
         log.info("Instance already running on %s:%s; opening existing browser session.", HOST, PORT)
         _show_already_running_notice(URL)
         open_browser()
