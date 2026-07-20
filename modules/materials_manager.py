@@ -152,6 +152,8 @@ def add_material(title, author, publisher, qr_code=None, available=1, reading_le
         qr_code = None
     available = 1 if (copies > 0 and _has_qr_code(qr_code)) else 0
 
+    needs_qr_finalize = False
+
     with _connect() as conn:
         c = conn.cursor()
         c.execute(
@@ -169,16 +171,26 @@ def add_material(title, author, publisher, qr_code=None, available=1, reading_le
             (material_id,),
         ).fetchone()
         existing_qr = _coerce_blob(existing_qr_row[0]) if existing_qr_row else None
-        if not existing_qr:
-            if not qr_code:
-                qr_code = _build_material_qr_code(material_id)
-                c.execute("UPDATE materials SET qr_code = ? WHERE id = ?", (qr_code, material_id))
-            _ensure_material_qr_image(material_id, title, qr_code, cursor=c)
-            if qr_code:
-                register_qr_token(qr_code, "material", material_id, retired=0)
+        needs_qr_finalize = not bool(existing_qr)
         _sync_material_availability(c, material_id)
         conn.commit()
-        return material_id
+
+    if needs_qr_finalize:
+        if not qr_code:
+            qr_code = _build_material_qr_code(material_id)
+
+        with _connect() as conn:
+            c = conn.cursor()
+            if qr_code:
+                c.execute("UPDATE materials SET qr_code = ? WHERE id = ?", (qr_code, material_id))
+                _ensure_material_qr_image(material_id, title, qr_code, cursor=c)
+            _sync_material_availability(c, material_id)
+            conn.commit()
+
+        if qr_code:
+            register_qr_token(qr_code, "material", material_id, retired=0)
+
+    return material_id
 
 
 def update_material(material_id, title=None, author=None, publisher=None, qr_code=None, available=None, reading_level=None, copies=None, borrower_id=None):
@@ -224,23 +236,45 @@ def update_material(material_id, title=None, author=None, publisher=None, qr_cod
     params.append(material_id)
     query = f"UPDATE materials SET {', '.join(updates)} WHERE id = ?"
 
+    needs_generated_qr = False
+    generated_qr = None
+    token_to_register = None
+
     with _connect() as conn:
         c = conn.cursor()
         c.execute(query, params)
+        updated_rows = c.rowcount
 
         row = c.execute("SELECT title, qr_code, copies FROM materials WHERE id = ?", (material_id,)).fetchone()
         if row:
             title_value, qr_code_value, _ = row
             if not _has_qr_code(qr_code_value):
-                qr_code_value = _build_material_qr_code(material_id)
-                c.execute("UPDATE materials SET qr_code = ? WHERE id = ?", (qr_code_value, material_id))
-            _ensure_material_qr_image(material_id, title_value or '', qr_code_value, cursor=c)
+                needs_generated_qr = True
+            else:
+                _ensure_material_qr_image(material_id, title_value or '', qr_code_value, cursor=c)
+                token_to_register = str(qr_code_value).strip()
             if qr_code_value:
-                register_qr_token(str(qr_code_value).strip(), "material", material_id, retired=0)
+                token_to_register = str(qr_code_value).strip()
             _sync_material_availability(c, material_id)
 
         conn.commit()
-        return c.rowcount > 0
+
+    if needs_generated_qr:
+        generated_qr = _build_material_qr_code(material_id)
+        with _connect() as conn:
+            c = conn.cursor()
+            row = c.execute("SELECT title FROM materials WHERE id = ?", (material_id,)).fetchone()
+            title_value = str((row[0] if row else '') or '')
+            c.execute("UPDATE materials SET qr_code = ? WHERE id = ?", (generated_qr, material_id))
+            _ensure_material_qr_image(material_id, title_value, generated_qr, cursor=c)
+            _sync_material_availability(c, material_id)
+            conn.commit()
+        token_to_register = generated_qr
+
+    if token_to_register:
+        register_qr_token(token_to_register, "material", material_id, retired=0)
+
+    return updated_rows > 0
 
 
 def delete_material(material_id):
