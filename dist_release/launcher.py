@@ -14,6 +14,7 @@ The tray icon provides:
 import sys
 import os
 import threading
+import time
 import webbrowser
 import logging
 import subprocess
@@ -22,6 +23,8 @@ import shutil
 import socket
 import ctypes
 import importlib.util
+import urllib.request
+import urllib.error
 from pathlib import Path
 from dotenv import load_dotenv
 
@@ -104,8 +107,36 @@ def _browser_host_for(listen_host: str) -> str:
         preferred = str(os.getenv('LAUNCH_HOST', '') or '').strip()
         if preferred:
             return preferred
-        return _detect_lan_ip()
+        use_lan = str(os.getenv('STDYTIME_LAUNCH_USE_LAN', 'false') or '').strip().lower() == 'true'
+        if use_lan:
+            return _detect_lan_ip()
+        # Default to loopback to avoid "can't reach page" races on LAN IP self-routing.
+        return '127.0.0.1'
     return listen_host
+
+
+def _startup_wait_timeout_seconds() -> int:
+    raw = str(os.getenv('STDYTIME_STARTUP_WAIT_SECONDS', '90') or '90').strip()
+    try:
+        return max(5, int(raw))
+    except (TypeError, ValueError):
+        return 90
+
+
+def _wait_for_server_ready(probe_host: str, port: int, timeout_seconds: int) -> bool:
+    """Poll local health endpoint until server responds or timeout elapses."""
+    deadline = time.monotonic() + max(1, int(timeout_seconds or 1))
+    probe_url = f"http://{probe_host}:{port}/healthz"
+    while time.monotonic() < deadline:
+        try:
+            req = urllib.request.Request(probe_url, method='GET')
+            with urllib.request.urlopen(req, timeout=1.5) as resp:
+                if int(getattr(resp, 'status', 200) or 200) < 500:
+                    return True
+        except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError, OSError):
+            pass
+        time.sleep(0.35)
+    return False
 
 
 _load_local_env()
@@ -144,7 +175,7 @@ def _should_shutdown_on_browser_exit() -> bool:
     Default is disabled because some browsers spawn short-lived launcher
     processes during startup, which can cause false shutdowns.
     """
-    return os.getenv("STDYTIME_SHUTDOWN_ON_BROWSER_EXIT", "false").strip().lower() == "true"
+    return os.getenv("STDYTIME_SHUTDOWN_ON_BROWSER_EXIT", "true").strip().lower() == "true"
 
 
 def _shutdown_delay_seconds() -> int:
@@ -429,8 +460,19 @@ def main():
     _server_thread.start()
     log.info("Stdytime running at %s", URL)
 
-    # Open browser after a longer delay on startup to reduce first-run races.
-    threading.Timer(4.0, open_browser).start()
+    # Open browser only after local health endpoint responds to avoid
+    # initial "can't reach this page" confusion during warm startup.
+    def _open_browser_when_ready() -> None:
+        timeout_seconds = _startup_wait_timeout_seconds()
+        ready = _wait_for_server_ready(probe_host, PORT, timeout_seconds)
+        if not ready:
+            log.warning(
+                "Server readiness check timed out after %ss; opening browser anyway.",
+                timeout_seconds,
+            )
+        open_browser()
+
+    threading.Thread(target=_open_browser_when_ready, daemon=True, name="startup-browser-open").start()
 
     # System tray icon
     try:

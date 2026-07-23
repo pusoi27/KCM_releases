@@ -13,6 +13,8 @@ import shutil
 import tempfile
 import socket
 import ctypes
+import urllib.request
+import urllib.error
 from pathlib import Path
 from dotenv import load_dotenv
 
@@ -53,8 +55,35 @@ def _browser_host_for(listen_host: str) -> str:
         preferred = str(os.getenv('LAUNCH_HOST', '') or '').strip()
         if preferred:
             return preferred
-        return _detect_lan_ip()
+        use_lan = str(os.getenv('STDYTIME_LAUNCH_USE_LAN', 'false') or '').strip().lower() == 'true'
+        if use_lan:
+            return _detect_lan_ip()
+        return '127.0.0.1'
     return listen_host
+
+
+def _startup_wait_timeout_seconds() -> int:
+    raw = str(os.getenv('STDYTIME_STARTUP_WAIT_SECONDS', '90') or '90').strip()
+    try:
+        return max(5, int(raw))
+    except (TypeError, ValueError):
+        return 90
+
+
+def _wait_for_server_ready(probe_host: str, port: int, timeout_seconds: int) -> bool:
+    """Poll local health endpoint until server responds or timeout elapses."""
+    deadline = time.monotonic() + max(1, int(timeout_seconds or 1))
+    probe_url = f"http://{probe_host}:{port}/healthz"
+    while time.monotonic() < deadline:
+        try:
+            req = urllib.request.Request(probe_url, method='GET')
+            with urllib.request.urlopen(req, timeout=1.5) as resp:
+                if int(getattr(resp, 'status', 200) or 200) < 500:
+                    return True
+        except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError, OSError):
+            pass
+        time.sleep(0.35)
+    return False
 
 
 def _find_browser_executable():
@@ -123,6 +152,40 @@ def _show_already_running_notice(url):
     except Exception:
         pass
 
+
+def _should_shutdown_on_browser_exit() -> bool:
+    """Whether backend should auto-stop after browser closes.
+
+    Enabled by default for consistent launcher behavior.
+    """
+    return os.getenv("STDYTIME_SHUTDOWN_ON_BROWSER_EXIT", "true").strip().lower() == "true"
+
+
+def _shutdown_delay_seconds() -> int:
+    raw = str(os.getenv("STDYTIME_SHUTDOWN_AFTER_BROWSER_CLOSE_SECONDS", "300") or "300").strip()
+    try:
+        return max(0, int(raw))
+    except (TypeError, ValueError):
+        return 300
+
+
+def _stop_backend_process(proc: subprocess.Popen | None) -> None:
+    """Best-effort graceful stop of backend process started by this launcher."""
+    if not proc:
+        return
+    if proc.poll() is not None:
+        return
+    try:
+        proc.terminate()
+        proc.wait(timeout=8)
+        return
+    except Exception:
+        pass
+    try:
+        proc.kill()
+    except Exception:
+        pass
+
 def main():
     _load_local_env()
 
@@ -164,32 +227,19 @@ def main():
     # Launch the app
     try:
         # Run Stdytime.exe or app.py depending on context
+        backend_proc = None
         exe_path = os.path.join(app_dir, 'Stdytime.exe')
         if os.path.exists(exe_path):
-            # Running packaged version - start the subprocess in a way that
-            # doesn't block this script
-            import threading
-            thread = threading.Thread(
-                target=subprocess.run,
-                args=([exe_path],),
-                kwargs={'capture_output': False},
-                daemon=True
-            )
-            thread.start()
+            # Running packaged version
+            backend_proc = subprocess.Popen([exe_path])
         else:
             # Fall back to running app.py directly
-            import threading
-            thread = threading.Thread(
-                target=subprocess.run,
-                args=([sys.executable, os.path.join(app_dir, 'app.py')],),
-                kwargs={'capture_output': False},
-                daemon=True
-            )
-            thread.start()
+            backend_proc = subprocess.Popen([sys.executable, os.path.join(app_dir, 'app.py')])
         
-        # Wait for app to start
-        print("Waiting for server to start...")
-        time.sleep(2)
+        # Wait for app to become reachable before opening browser.
+        wait_seconds = _startup_wait_timeout_seconds()
+        print(f"Waiting for server to start (up to {wait_seconds}s)...")
+        _wait_for_server_ready(probe_host, port, wait_seconds)
         
         # Open browser
 
@@ -240,12 +290,27 @@ def main():
         try:
             if browser_proc:
                 browser_proc.wait()
+                if _should_shutdown_on_browser_exit():
+                    delay = _shutdown_delay_seconds()
+                    if delay > 0:
+                        print(f"\nBrowser closed. Stopping backend in {delay} seconds unless browser is reopened.")
+                        deadline = time.monotonic() + delay
+                        while time.monotonic() < deadline:
+                            # If user re-opens and a tracked dedicated browser process is alive,
+                            # cancel pending shutdown.
+                            if browser_proc.poll() is None:
+                                break
+                            time.sleep(0.5)
+                    if browser_proc.poll() is not None:
+                        _stop_backend_process(backend_proc)
             else:
                 while True:
                     time.sleep(1)
         except KeyboardInterrupt:
             print("\nShutting down...")
+            _stop_backend_process(backend_proc)
         finally:
+            _stop_backend_process(backend_proc)
             sys.exit(0)
             
     except Exception as e:

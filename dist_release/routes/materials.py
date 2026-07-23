@@ -170,6 +170,26 @@ def _normalize_qr_value(value: str | None) -> str | None:
     return raw.upper()
 
 
+def _extract_material_id_from_scan(value: str | None) -> int | None:
+    raw = str(value or '').strip()
+    if not raw:
+        return None
+    match = re.search(r'\bMAT\s*:\s*(\d+)\b', raw, flags=re.IGNORECASE)
+    if match:
+        try:
+            parsed = int(match.group(1))
+            return parsed if parsed > 0 else None
+        except (TypeError, ValueError):
+            return None
+    if raw.isdigit():
+        try:
+            parsed = int(raw)
+            return parsed if parsed > 0 else None
+        except (TypeError, ValueError):
+            return None
+    return None
+
+
 def _material_row_to_dict(row):
     if not row:
         return None
@@ -231,13 +251,45 @@ def register_material_routes(app):
         if not _bridge_request_is_pairing_authorized():
             return _bridge_pairing_auth_error()
 
-        query = request.args.get('q', '').strip().lower()
+        query_raw = request.args.get('q', '').strip()
+        query = query_raw.lower()
         level = request.args.get('level', '').strip()
+        normalized_qr = _normalize_qr_value(query_raw)
+        scanned_material_id = _extract_material_id_from_scan(query_raw)
 
         try:
             enforce_qr_availability_rule()
             with sqlite3.connect(DB_PATH, timeout=10) as conn:
                 c = conn.cursor()
+
+                # Fast path for scanner payloads: MAT:8, MAT-000008, or full multiline QR payload.
+                if scanned_material_id:
+                    row = c.execute(
+                        """
+                        SELECT id, title, author, available, reading_level, qr_code, publisher, copies, borrower_id
+                        FROM materials
+                        WHERE id = ?
+                        LIMIT 1
+                        """,
+                        (int(scanned_material_id),),
+                    ).fetchone()
+                    if row:
+                        return jsonify({'materials': [_material_row_to_dict(row)], 'count': 1})
+
+                if normalized_qr:
+                    row = c.execute(
+                        """
+                        SELECT id, title, author, available, reading_level, qr_code, publisher, copies, borrower_id
+                        FROM materials
+                        WHERE UPPER(COALESCE(qr_code, '')) = ?
+                           OR UPPER(COALESCE(qr_code, '')) LIKE ?
+                        ORDER BY id DESC
+                        LIMIT 1
+                        """,
+                        (normalized_qr, f"%{normalized_qr}%"),
+                    ).fetchone()
+                    if row:
+                        return jsonify({'materials': [_material_row_to_dict(row)], 'count': 1})
 
                 sql = "SELECT id, title, author, available, reading_level, qr_code, publisher, copies, borrower_id FROM materials WHERE 1=1"
                 params = []
@@ -579,13 +631,45 @@ def register_material_routes(app):
         if forwarded is not None:
             return forwarded
 
-        query = request.args.get('q', '').strip().lower()
+        query_raw = request.args.get('q', '').strip()
+        query = query_raw.lower()
         level = request.args.get('level', '').strip()
+        normalized_qr = _normalize_qr_value(query_raw)
+        scanned_material_id = _extract_material_id_from_scan(query_raw)
 
         try:
             enforce_qr_availability_rule()
             with sqlite3.connect(DB_PATH, timeout=10) as conn:
                 c = conn.cursor()
+
+                # Fast path for scanner payloads: MAT:8, MAT-000008, or full multiline QR payload.
+                if scanned_material_id:
+                    row = c.execute(
+                        """
+                        SELECT id, title, author, available, reading_level, qr_code, publisher, copies, borrower_id
+                        FROM materials
+                        WHERE id = ?
+                        LIMIT 1
+                        """,
+                        (int(scanned_material_id),),
+                    ).fetchone()
+                    if row:
+                        return jsonify({'materials': [_material_row_to_dict(row)], 'count': 1})
+
+                if normalized_qr:
+                    row = c.execute(
+                        """
+                        SELECT id, title, author, available, reading_level, qr_code, publisher, copies, borrower_id
+                        FROM materials
+                        WHERE UPPER(COALESCE(qr_code, '')) = ?
+                           OR UPPER(COALESCE(qr_code, '')) LIKE ?
+                        ORDER BY id DESC
+                        LIMIT 1
+                        """,
+                        (normalized_qr, f"%{normalized_qr}%"),
+                    ).fetchone()
+                    if row:
+                        return jsonify({'materials': [_material_row_to_dict(row)], 'count': 1})
 
                 sql = "SELECT id, title, author, available, reading_level, qr_code, publisher, copies, borrower_id FROM materials WHERE 1=1"
                 params = []
