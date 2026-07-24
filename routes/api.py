@@ -115,6 +115,9 @@ def _bridge_forward_get(path: str):
     except requests.RequestException as exc:
         _mark_scanner_bridge_offline(f"request_error:{exc}")
         return None
+    if int(response.status_code) >= 500:
+        _mark_scanner_bridge_offline(f"upstream_http_{int(response.status_code)}")
+        return None
     global _BRIDGE_RETRY_AFTER_MONOTONIC
     _BRIDGE_RETRY_AFTER_MONOTONIC = 0.0
     body, code = _bridge_json_response(response)
@@ -137,6 +140,9 @@ def _bridge_forward_post(path: str, payload: dict | None = None):
         response = requests.post(url, headers=_build_bridge_headers(), json=(payload or {}), timeout=(2, BRIDGE_POST_TIMEOUT_SECONDS))
     except requests.RequestException as exc:
         _mark_scanner_bridge_offline(f"request_error:{exc}")
+        return None
+    if int(response.status_code) >= 500:
+        _mark_scanner_bridge_offline(f"upstream_http_{int(response.status_code)}")
         return None
     global _BRIDGE_RETRY_AFTER_MONOTONIC
     _BRIDGE_RETRY_AFTER_MONOTONIC = 0.0

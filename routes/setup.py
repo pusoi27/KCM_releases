@@ -10,6 +10,7 @@ from modules.database import sync_to_gdrive_now, sync_from_gdrive_now, get_last_
 from modules.database import get_database_health_report, backup_database_now, restore_database_now
 from modules.database import run_manual_wal_checkpoint
 from modules import instructor_profile_manager
+from modules import scanner_sync
 from routes.auth import require_login
 
 
@@ -608,6 +609,7 @@ def register_setup_routes(app):
     @app.route('/api/station/connection-status', methods=['GET'])
     @require_login
     def api_station_connection_status():
+        sync_observability = scanner_sync.get_queue_observability()
         runtime = get_station_runtime_config()
         station_mode = str(runtime.get('station_mode') or '').strip().lower()
 
@@ -618,6 +620,7 @@ def register_setup_routes(app):
                 'tone': 'secondary',
                 'label': 'Station Link: n/a',
                 'tooltip': 'Connection badge is only used on Scanner API Client mode.',
+                'sync_observability': sync_observability,
             }), 200
 
         base_url = str(runtime.get('instructor_api_base_url') or '').strip().rstrip('/')
@@ -629,6 +632,7 @@ def register_setup_routes(app):
                 'tone': 'warning',
                 'label': 'Station Link: setup',
                 'tooltip': 'Instructor API URL is not configured.',
+                'sync_observability': sync_observability,
             }), 200
         if not token:
             return jsonify({
@@ -637,6 +641,7 @@ def register_setup_routes(app):
                 'tone': 'warning',
                 'label': 'Station Link: token',
                 'tooltip': 'Pairing token is not configured.',
+                'sync_observability': sync_observability,
             }), 200
 
         ping_url = f"{base_url}/api/station/pairing/ping"
@@ -654,6 +659,7 @@ def register_setup_routes(app):
                     'tone': 'success',
                     'label': 'Station Link: connected',
                     'tooltip': f'Scanner linked to Instructor API at {base_url}.',
+                    'sync_observability': sync_observability,
                 }), 200
 
             reason = payload.get('error') or f'HTTP {resp.status_code}'
@@ -663,6 +669,7 @@ def register_setup_routes(app):
                 'tone': 'danger',
                 'label': 'Station Link: disconnected',
                 'tooltip': f'Pairing check failed: {reason}',
+                'sync_observability': sync_observability,
             }), 200
         except requests.RequestException as exc:
             return jsonify({
@@ -671,7 +678,14 @@ def register_setup_routes(app):
                 'tone': 'danger',
                 'label': 'Station Link: offline',
                 'tooltip': f'Cannot reach Instructor API: {exc}',
+                'sync_observability': sync_observability,
             }), 200
+
+    @app.route('/api/station/sync-status', methods=['GET'])
+    @require_login
+    def api_station_sync_status():
+        """Return scanner offline queue + reconcile telemetry for observability."""
+        return jsonify(scanner_sync.get_queue_observability()), 200
 
     @app.route('/setup/storage/push-backup', methods=['POST'])
     @require_login

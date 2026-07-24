@@ -14,6 +14,9 @@ let overflowTimers = new Map(); // student_id -> timerId  (for students beyond S
 let dashboardFetchInFlight = false;
 let dashboardRefreshQueued = false;
 let dashboardPollTimer = null;
+let dashboardDataDegraded = false;
+let dashboardDataDegradedReason = '';
+let dashboardLastGoodSyncAt = 0;
 const DASHBOARD_POLL_MS = 12000;
 const CARD_TIMER_TICK_MS = 15000;
 const IS_INSTRUCTOR_STATION = {{ 'true' if subscription_access and subscription_access.is_instructor_station else 'false' }};
@@ -254,6 +257,68 @@ function persistCheckedEmailSentMap(){
   }
 }
 
+function ensureDashboardSyncHealthBanner(){
+  let el = document.getElementById('dashboardSyncHealthBanner');
+  if(el) return el;
+
+  el = document.createElement('div');
+  el.id = 'dashboardSyncHealthBanner';
+  el.style.position = 'fixed';
+  el.style.left = '12px';
+  el.style.bottom = '12px';
+  el.style.zIndex = '2100';
+  el.style.maxWidth = '420px';
+  el.style.display = 'none';
+  document.body.appendChild(el);
+  return el;
+}
+
+function setDashboardSyncHealth(isHealthy, reason = ''){
+  const banner = ensureDashboardSyncHealthBanner();
+  if(isHealthy){
+    banner.style.display = 'none';
+    banner.innerHTML = '';
+    return;
+  }
+
+  const stamped = dashboardLastGoodSyncAt > 0
+    ? new Date(dashboardLastGoodSyncAt).toLocaleTimeString()
+    : 'never';
+
+  banner.style.display = 'block';
+  banner.innerHTML = `
+    <div class="alert alert-warning shadow-sm py-2 px-3 mb-0" role="status">
+      <div class="fw-semibold"><i class="bi bi-wifi-off me-1"></i>Instructor link unstable</div>
+      <div class="small">Showing last known class state. Last successful sync: ${escapeHtmlAttr(stamped)}.</div>
+      <div class="small text-muted">${escapeHtmlAttr(String(reason || 'Live refresh failed temporarily.'))}</div>
+    </div>`;
+}
+
+async function fetchJsonWithMeta(url){
+  const res = await fetch(url, { cache: 'no-store' });
+  const payload = await res.json().catch(() => null);
+  return { res, payload, url };
+}
+
+function resolveApiErrorMessage(label, bundle){
+  const res = bundle && bundle.res;
+  const payload = bundle && bundle.payload;
+
+  if(!res){
+    return `${label}: no response`;
+  }
+  if(!res.ok){
+    const remoteMessage = payload && typeof payload === 'object' && payload.error
+      ? String(payload.error)
+      : `HTTP ${res.status}`;
+    return `${label}: ${remoteMessage}`;
+  }
+  if(!Array.isArray(payload)){
+    return `${label}: unexpected payload format`;
+  }
+  return '';
+}
+
 function renderDashboardFromState(){
   const students = Array.isArray(dashboardState.students) ? dashboardState.students : [];
   const sessions = Array.isArray(dashboardState.sessions) ? dashboardState.sessions : [];
@@ -372,23 +437,80 @@ async function fetchDashboardData(options = {}){
   dashboardFetchInFlight = true;
   const refreshToken = ++dashboardRefreshToken;
   try {
-    const resAll=await fetch('/api/students/list', { cache: 'no-store' });
-    const students=await resAll.json();
-    const resSess=await fetch('/api/sessions/active', { cache: 'no-store' });
-    const sessions=await resSess.json();
-    const resAssist=await fetch('/api/assistants/list', { cache: 'no-store' });
-    const assistants=await resAssist.json();
+    const [studentsBundle, sessionsBundle, assistantsBundle] = await Promise.all([
+      fetchJsonWithMeta('/api/students/list'),
+      fetchJsonWithMeta('/api/sessions/active'),
+      fetchJsonWithMeta('/api/assistants/list'),
+    ]);
+
     if (refreshToken !== dashboardRefreshToken) {
       return;
     }
-    if (Array.isArray(assistants)) {
-      lastAssistantsSnapshot = assistants;
+
+    const nextState = {
+      students: Array.isArray(dashboardState.students) ? dashboardState.students : [],
+      sessions: Array.isArray(dashboardState.sessions) ? dashboardState.sessions : [],
+      assistants: Array.isArray(dashboardState.assistants) ? dashboardState.assistants : [],
+    };
+
+    const failureMessages = [];
+
+    const studentsError = resolveApiErrorMessage('Students', studentsBundle);
+    if(studentsError){
+      failureMessages.push(studentsError);
+    } else {
+      nextState.students = studentsBundle.payload;
     }
 
-    dashboardState.students = Array.isArray(students) ? students : [];
-    dashboardState.sessions = Array.isArray(sessions) ? sessions : [];
-    dashboardState.assistants = Array.isArray(assistants) ? assistants : [];
+    const sessionsError = resolveApiErrorMessage('Active sessions', sessionsBundle);
+    if(sessionsError){
+      failureMessages.push(sessionsError);
+    } else {
+      nextState.sessions = sessionsBundle.payload;
+    }
+
+    const assistantsError = resolveApiErrorMessage('Assistants', assistantsBundle);
+    if(assistantsError){
+      failureMessages.push(assistantsError);
+    } else {
+      nextState.assistants = assistantsBundle.payload;
+      lastAssistantsSnapshot = assistantsBundle.payload;
+    }
+
+    dashboardState.students = nextState.students;
+    dashboardState.sessions = nextState.sessions;
+    dashboardState.assistants = nextState.assistants;
     renderDashboardFromState();
+
+    if(failureMessages.length > 0){
+      dashboardDataDegraded = true;
+      dashboardDataDegradedReason = failureMessages.join(' | ');
+      setDashboardSyncHealth(false, dashboardDataDegradedReason);
+      console.warn('[dashboard] partial refresh degraded:', dashboardDataDegradedReason);
+      if(priority && typeof window.showQuickToast === 'function'){
+        window.showQuickToast('Live sync delayed. Showing last known class state.', true);
+      }
+    } else {
+      const wasDegraded = dashboardDataDegraded;
+      dashboardDataDegraded = false;
+      dashboardDataDegradedReason = '';
+      dashboardLastGoodSyncAt = Date.now();
+      setDashboardSyncHealth(true);
+      if(wasDegraded && typeof window.showQuickToast === 'function'){
+        window.showQuickToast('Instructor link restored. Live class sync resumed.');
+      }
+    }
+  } catch (err) {
+    if (refreshToken !== dashboardRefreshToken) {
+      return;
+    }
+    dashboardDataDegraded = true;
+    dashboardDataDegradedReason = String((err && err.message) || err || 'Unknown dashboard refresh error');
+    setDashboardSyncHealth(false, dashboardDataDegradedReason);
+    console.warn('[dashboard] refresh failed, preserving current state:', err);
+    if(priority && typeof window.showQuickToast === 'function'){
+      window.showQuickToast('Live sync failed temporarily. Keeping current class view.', true);
+    }
   } finally {
     dashboardFetchInFlight = false;
     if(dashboardRefreshQueued){

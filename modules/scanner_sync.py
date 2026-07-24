@@ -1,4 +1,5 @@
 import json
+import random
 import sqlite3
 import threading
 import time
@@ -16,6 +17,21 @@ from modules.materials_manager import loan_material, return_material, clear_acti
 _RECONCILER_THREAD: threading.Thread | None = None
 _RECONCILER_STOP = threading.Event()
 _RECONCILER_LOCK = threading.Lock()
+_RECONCILE_STATE_LOCK = threading.Lock()
+_RECONCILE_STATE = {
+    "last_run_started_at": "",
+    "last_run_finished_at": "",
+    "last_run_processed": 0,
+    "last_run_sent": 0,
+    "last_run_skipped": False,
+    "last_run_reason": "never_run",
+    "last_error": "",
+}
+
+_RETRY_BASE_SECONDS = 5
+_RETRY_MAX_SECONDS = 300
+_RETRY_JITTER_MIN = 0.80
+_RETRY_JITTER_MAX = 1.20
 
 
 def _now_iso() -> str:
@@ -51,6 +67,7 @@ def _ensure_tables() -> None:
                 status TEXT NOT NULL DEFAULT 'pending',
                 attempts INTEGER NOT NULL DEFAULT 0,
                 last_error TEXT DEFAULT '',
+                next_retry_at TEXT,
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL
             )
@@ -65,7 +82,26 @@ def _ensure_tables() -> None:
             )
             """
         )
+
+        # Lightweight schema migration for existing installs.
+        table_info = cur.execute("PRAGMA table_info(scanner_mutation_queue)").fetchall()
+        existing_cols = {str(row[1] or "").strip().lower() for row in table_info}
+        if "next_retry_at" not in existing_cols:
+            cur.execute("ALTER TABLE scanner_mutation_queue ADD COLUMN next_retry_at TEXT")
         conn.commit()
+
+
+def _compute_retry_delay_seconds(next_attempt_number: int) -> int:
+    attempt = max(1, int(next_attempt_number or 1))
+    raw = _RETRY_BASE_SECONDS * (2 ** (attempt - 1))
+    bounded = min(_RETRY_MAX_SECONDS, raw)
+    jitter = random.uniform(_RETRY_JITTER_MIN, _RETRY_JITTER_MAX)
+    return max(1, int(round(float(bounded) * float(jitter))))
+
+
+def _set_reconcile_state(**fields) -> None:
+    with _RECONCILE_STATE_LOCK:
+        _RECONCILE_STATE.update(fields)
 
 
 def enqueue_mutation(op_type: str, payload: dict, op_id: str | None = None) -> str:
@@ -79,10 +115,10 @@ def enqueue_mutation(op_type: str, payload: dict, op_id: str | None = None) -> s
         cur.execute(
             """
             INSERT OR IGNORE INTO scanner_mutation_queue
-            (op_id, op_type, payload_json, status, attempts, last_error, created_at, updated_at)
-            VALUES (?, ?, ?, 'pending', 0, '', ?, ?)
+            (op_id, op_type, payload_json, status, attempts, last_error, next_retry_at, created_at, updated_at)
+            VALUES (?, ?, ?, 'pending', 0, '', ?, ?, ?)
             """,
-            (resolved_op_id, str(op_type or "").strip(), payload_json, now, now),
+            (resolved_op_id, str(op_type or "").strip(), payload_json, now, now, now),
         )
         conn.commit()
 
@@ -92,18 +128,24 @@ def enqueue_mutation(op_type: str, payload: dict, op_id: str | None = None) -> s
 def _pending_mutations(limit: int = 60) -> list[dict]:
     _ensure_tables()
     out: list[dict] = []
+    now = _now_iso()
     with sqlite3.connect(DB_PATH) as conn:
         conn.row_factory = sqlite3.Row
         cur = conn.cursor()
         rows = cur.execute(
             """
-            SELECT op_id, op_type, payload_json, attempts
+            SELECT op_id, op_type, payload_json, attempts, next_retry_at
             FROM scanner_mutation_queue
             WHERE status = 'pending'
+              AND (
+                    next_retry_at IS NULL
+                    OR TRIM(COALESCE(next_retry_at, '')) = ''
+                    OR next_retry_at <= ?
+                  )
             ORDER BY id ASC
             LIMIT ?
             """,
-            (int(max(1, limit)),),
+            (now, int(max(1, limit))),
         ).fetchall()
         for row in rows:
             try:
@@ -116,6 +158,7 @@ def _pending_mutations(limit: int = 60) -> list[dict]:
                     "op_type": str(row["op_type"] or "").strip(),
                     "payload": payload,
                     "attempts": int(row["attempts"] or 0),
+                    "next_retry_at": str(row["next_retry_at"] or "").strip(),
                 }
             )
     return out
@@ -128,7 +171,7 @@ def _mark_mutation_sent(op_id: str) -> None:
         cur.execute(
             """
             UPDATE scanner_mutation_queue
-            SET status = 'sent', updated_at = ?, last_error = ''
+            SET status = 'sent', updated_at = ?, last_error = '', next_retry_at = NULL
             WHERE op_id = ?
             """,
             (now, str(op_id or "").strip()),
@@ -140,15 +183,24 @@ def _mark_mutation_error(op_id: str, error: str) -> None:
     now = _now_iso()
     with sqlite3.connect(DB_PATH) as conn:
         cur = conn.cursor()
+        row = cur.execute(
+            "SELECT attempts FROM scanner_mutation_queue WHERE op_id = ? LIMIT 1",
+            (str(op_id or "").strip(),),
+        ).fetchone()
+        current_attempts = int((row[0] if row else 0) or 0)
+        next_attempt = current_attempts + 1
+        delay_seconds = _compute_retry_delay_seconds(next_attempt)
+        retry_at_iso = datetime.fromtimestamp(time.time() + delay_seconds).isoformat()
         cur.execute(
             """
             UPDATE scanner_mutation_queue
             SET attempts = COALESCE(attempts, 0) + 1,
                 updated_at = ?,
-                last_error = ?
+                last_error = ?,
+                next_retry_at = ?
             WHERE op_id = ?
             """,
-            (now, str(error or "")[:500], str(op_id or "").strip()),
+            (now, str(error or "")[:500], retry_at_iso, str(op_id or "").strip()),
         )
         conn.commit()
 
@@ -162,17 +214,46 @@ def _bridge_headers() -> dict:
 
 
 def reconcile_pending_once(limit: int = 50) -> dict:
+    started_at = _now_iso()
+
     if not _scanner_api_client_enabled():
-        return {"processed": 0, "sent": 0, "skipped": True, "reason": "not_scanner_api_client"}
+        result = {"processed": 0, "sent": 0, "skipped": True, "reason": "not_scanner_api_client"}
+        _set_reconcile_state(
+            last_run_started_at=started_at,
+            last_run_finished_at=_now_iso(),
+            last_run_processed=0,
+            last_run_sent=0,
+            last_run_skipped=True,
+            last_run_reason="not_scanner_api_client",
+        )
+        return result
 
     base = _runtime_instructor_api_base()
     if not base.startswith("http"):
-        return {"processed": 0, "sent": 0, "skipped": True, "reason": "missing_instructor_api_base_url"}
+        result = {"processed": 0, "sent": 0, "skipped": True, "reason": "missing_instructor_api_base_url"}
+        _set_reconcile_state(
+            last_run_started_at=started_at,
+            last_run_finished_at=_now_iso(),
+            last_run_processed=0,
+            last_run_sent=0,
+            last_run_skipped=True,
+            last_run_reason="missing_instructor_api_base_url",
+        )
+        return result
 
     url = f"{base}/api/bridge/reconcile/apply"
     pending = _pending_mutations(limit=limit)
     if not pending:
-        return {"processed": 0, "sent": 0, "skipped": False}
+        result = {"processed": 0, "sent": 0, "skipped": False}
+        _set_reconcile_state(
+            last_run_started_at=started_at,
+            last_run_finished_at=_now_iso(),
+            last_run_processed=0,
+            last_run_sent=0,
+            last_run_skipped=False,
+            last_run_reason="ok",
+        )
+        return result
 
     processed = 0
     sent = 0
@@ -188,7 +269,9 @@ def reconcile_pending_once(limit: int = 50) -> dict:
         try:
             resp = requests.post(url, headers=_bridge_headers(), json=payload, timeout=12)
         except requests.RequestException as exc:
-            _mark_mutation_error(op_id, f"network: {exc}")
+            message = f"network: {exc}"
+            _mark_mutation_error(op_id, message)
+            _set_reconcile_state(last_error=message)
             break
 
         body = {}
@@ -209,10 +292,101 @@ def reconcile_pending_once(limit: int = 50) -> dict:
             continue
 
         _mark_mutation_error(op_id, body.get("error") or f"http {resp.status_code}")
+        _set_reconcile_state(last_error=(body.get("error") or f"http {resp.status_code}"))
         if resp.status_code >= 500 or resp.status_code == 409:
             break
 
-    return {"processed": processed, "sent": sent, "skipped": False}
+    result = {"processed": processed, "sent": sent, "skipped": False}
+    _set_reconcile_state(
+        last_run_started_at=started_at,
+        last_run_finished_at=_now_iso(),
+        last_run_processed=int(processed),
+        last_run_sent=int(sent),
+        last_run_skipped=False,
+        last_run_reason="ok",
+    )
+    return result
+
+
+def get_queue_observability() -> dict:
+    _ensure_tables()
+    now = _now_iso()
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.row_factory = sqlite3.Row
+        cur = conn.cursor()
+
+        total_pending = int(
+            (cur.execute("SELECT COUNT(*) FROM scanner_mutation_queue WHERE status='pending'").fetchone() or [0])[0] or 0
+        )
+        total_sent = int(
+            (cur.execute("SELECT COUNT(*) FROM scanner_mutation_queue WHERE status='sent'").fetchone() or [0])[0] or 0
+        )
+        ready_pending = int(
+            (
+                cur.execute(
+                    """
+                    SELECT COUNT(*)
+                    FROM scanner_mutation_queue
+                    WHERE status='pending'
+                      AND (
+                            next_retry_at IS NULL
+                            OR TRIM(COALESCE(next_retry_at, '')) = ''
+                            OR next_retry_at <= ?
+                          )
+                    """,
+                    (now,),
+                ).fetchone()
+                or [0]
+            )[0]
+            or 0
+        )
+        delayed_pending = max(0, total_pending - ready_pending)
+
+        oldest_pending_row = cur.execute(
+            """
+            SELECT created_at
+            FROM scanner_mutation_queue
+            WHERE status='pending'
+            ORDER BY created_at ASC
+            LIMIT 1
+            """
+        ).fetchone()
+        next_retry_row = cur.execute(
+            """
+            SELECT next_retry_at
+            FROM scanner_mutation_queue
+            WHERE status='pending'
+              AND TRIM(COALESCE(next_retry_at, '')) != ''
+            ORDER BY next_retry_at ASC
+            LIMIT 1
+            """
+        ).fetchone()
+        last_error_row = cur.execute(
+            """
+            SELECT last_error
+            FROM scanner_mutation_queue
+            WHERE status='pending'
+              AND TRIM(COALESCE(last_error, '')) != ''
+            ORDER BY updated_at DESC
+            LIMIT 1
+            """
+        ).fetchone()
+
+    with _RECONCILE_STATE_LOCK:
+        reconcile_state = dict(_RECONCILE_STATE)
+
+    return {
+        "mode": _runtime_station_mode(),
+        "is_scanner_api_client": bool(_scanner_api_client_enabled()),
+        "pending_total": total_pending,
+        "pending_ready": ready_pending,
+        "pending_delayed": delayed_pending,
+        "sent_total": total_sent,
+        "oldest_pending_created_at": str((oldest_pending_row[0] if oldest_pending_row else "") or ""),
+        "next_retry_at": str((next_retry_row[0] if next_retry_row else "") or ""),
+        "last_queue_error": str((last_error_row[0] if last_error_row else "") or ""),
+        "reconcile": reconcile_state,
+    }
 
 
 def _already_applied(cur: sqlite3.Cursor, op_id: str) -> bool:

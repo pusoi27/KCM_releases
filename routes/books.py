@@ -90,6 +90,10 @@ def _bridge_forward_get(path: str, params: dict | None = None):
     try:
         response = requests.get(url, headers=_bridge_headers(), params=(params or {}), timeout=(2, BRIDGE_GET_TIMEOUT_SECONDS))
         payload = response.json()
+        if int(response.status_code) >= 500:
+            g.scanner_bridge_fallback = True
+            g.scanner_bridge_fallback_reason = f"upstream_http_{int(response.status_code)}"
+            return None
     except requests.RequestException as exc:
         g.scanner_bridge_fallback = True
         g.scanner_bridge_fallback_reason = f"request_error:{exc}"
@@ -111,6 +115,10 @@ def _bridge_forward_post(path: str, payload: dict | None = None):
     try:
         response = requests.post(url, headers=_bridge_headers(), json=(payload or {}), timeout=(2, BRIDGE_POST_TIMEOUT_SECONDS))
         body = response.json()
+        if int(response.status_code) >= 500:
+            g.scanner_bridge_fallback = True
+            g.scanner_bridge_fallback_reason = f"upstream_http_{int(response.status_code)}"
+            return None
     except requests.RequestException as exc:
         g.scanner_bridge_fallback = True
         g.scanner_bridge_fallback_reason = f"request_error:{exc}"
