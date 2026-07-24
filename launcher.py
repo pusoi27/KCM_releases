@@ -175,7 +175,7 @@ def _should_shutdown_on_browser_exit() -> bool:
     Default is disabled because some browsers spawn short-lived launcher
     processes during startup, which can cause false shutdowns.
     """
-    return os.getenv("STDYTIME_SHUTDOWN_ON_BROWSER_EXIT", "true").strip().lower() == "true"
+    return os.getenv("STDYTIME_SHUTDOWN_ON_BROWSER_EXIT", "false").strip().lower() == "true"
 
 
 def _shutdown_delay_seconds() -> int:

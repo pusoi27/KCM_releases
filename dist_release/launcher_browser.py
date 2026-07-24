@@ -156,9 +156,9 @@ def _show_already_running_notice(url):
 def _should_shutdown_on_browser_exit() -> bool:
     """Whether backend should auto-stop after browser closes.
 
-    Enabled by default for consistent launcher behavior.
+    Disabled by default to avoid false shutdowns caused by browser process handoff.
     """
-    return os.getenv("STDYTIME_SHUTDOWN_ON_BROWSER_EXIT", "true").strip().lower() == "true"
+    return os.getenv("STDYTIME_SHUTDOWN_ON_BROWSER_EXIT", "false").strip().lower() == "true"
 
 
 def _shutdown_delay_seconds() -> int:
