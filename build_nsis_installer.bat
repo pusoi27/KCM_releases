@@ -88,3 +88,4 @@ if exist "%SECONDARY_INSTALLER_DIR%" (
 )
 
 endlocal
+exit /b 0
