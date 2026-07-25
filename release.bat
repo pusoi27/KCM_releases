@@ -102,22 +102,18 @@ if "%APP_VERSION%"=="" (
 set "APP_VERSION_SAFE=%APP_VERSION:.=_%"
 set "SECONDARY_INSTALLER_DIR=C:\Users\octav\OneDrive\ADOCTA TECH LLC\StdyTime"
 
-set "LATEST_INSTALLER="
-for /f "delims=" %%I in ('dir /b /a:-d /o-d "stdytime_installer_v*.exe"') do (
-  if not defined LATEST_INSTALLER set "LATEST_INSTALLER=%%I"
-)
-
-if not defined LATEST_INSTALLER (
-  echo [WARNING] Installer file not found for copy in: %CD%
-  goto :skip_output_copy
-)
-
-set "INSTALLER_FILE=%LATEST_INSTALLER%"
+set "INSTALLER_FILE=stdytime_installer_v%APP_VERSION_SAFE%.exe"
 set "SHA_FILE=%INSTALLER_FILE%.sha256"
 set "ZIP_FILE=%INSTALLER_FILE:.exe=.zip%"
 set "ZIP_SHA_FILE=%ZIP_FILE%.sha256"
 set "LOCAL_INSTALLER_OUTPUT=%CD%\%INSTALLER_FILE%"
 set "LOCAL_ZIP_OUTPUT=%CD%\%ZIP_FILE%"
+set "SECONDARY_ZIP_OUTPUT=%SECONDARY_INSTALLER_DIR%\%ZIP_FILE%"
+
+if not exist "%INSTALLER_FILE%" (
+  echo [WARNING] Expected installer not found: %INSTALLER_FILE%
+  goto :skip_output_copy
+)
 
 if not exist "%SECONDARY_INSTALLER_DIR%" (
   mkdir "%SECONDARY_INSTALLER_DIR%" >nul 2>nul
@@ -181,9 +177,9 @@ if not exist "%ZIP_FILE%" (
 )
 
 if exist "%SECONDARY_INSTALLER_DIR%" (
-  copy /Y "%ZIP_FILE%" "%SECONDARY_INSTALLER_DIR%\%ZIP_FILE%" >nul
-  if exist "%SECONDARY_INSTALLER_DIR%\%ZIP_FILE%" (
-    echo [INFO] ZIP copied to: %SECONDARY_INSTALLER_DIR%\%ZIP_FILE%
+  copy /Y "%ZIP_FILE%" "%SECONDARY_ZIP_OUTPUT%" >nul
+  if exist "%SECONDARY_ZIP_OUTPUT%" (
+    echo [INFO] ZIP copied to: %SECONDARY_ZIP_OUTPUT%
   ) else (
     echo [WARNING] Failed copying ZIP to: %SECONDARY_INSTALLER_DIR%
   )
@@ -222,7 +218,7 @@ echo Completed successfully.
 echo Local Output: %LOCAL_INSTALLER_OUTPUT%
 if defined LOCAL_ZIP_OUTPUT echo Local ZIP Output: %LOCAL_ZIP_OUTPUT%
 echo OneDrive Output: %SECONDARY_INSTALLER_DIR%\%INSTALLER_FILE%
-if defined ZIP_FILE echo OneDrive ZIP Output: %SECONDARY_INSTALLER_DIR%\%ZIP_FILE%
+if defined ZIP_FILE echo OneDrive ZIP Output: %SECONDARY_ZIP_OUTPUT%
 echo Installer: %INSTALLER_FILE%
 if defined ZIP_FILE echo ZIP: %ZIP_FILE%
 echo ==============================================================
