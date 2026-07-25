@@ -90,7 +90,12 @@ if not "%NSIS_BUILD_EXIT%"=="0" (
   exit /b 1
 )
 
-call :validate_release_artifacts || exit /b 1
+echo [TRACE] Validating release artifacts...
+call :validate_release_artifacts
+if errorlevel 1 (
+  echo [ERROR] validate_release_artifacts failed.
+  exit /b 1
+)
 
 set "APP_VERSION="
 if exist "VERSION" (
@@ -397,7 +402,8 @@ exit /b 0
 set "APP_VERSION_VERIFY="
 if exist "VERSION" (
   set /p APP_VERSION_VERIFY=<"VERSION"
-) else if exist "Version" (
+)
+if not defined APP_VERSION_VERIFY if exist "Version" (
   set /p APP_VERSION_VERIFY=<"Version"
 )
 
