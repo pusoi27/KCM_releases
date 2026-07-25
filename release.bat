@@ -266,6 +266,28 @@ if errorlevel 1 (
   exit /b 1
 )
 
+git lfs version >nul 2>nul
+if errorlevel 1 (
+  echo [ERROR] Git LFS is not installed or not available in PATH.
+  echo [ERROR] Install from https://git-lfs.com/ then rerun release.bat.
+  popd >nul
+  exit /b 1
+)
+
+git lfs install --local >nul
+if errorlevel 1 (
+  echo [ERROR] Failed to initialize Git LFS in releases repository.
+  popd >nul
+  exit /b 1
+)
+
+git lfs track "*.zip" >nul
+if errorlevel 1 (
+  echo [ERROR] Failed to configure Git LFS tracking for ZIP files.
+  popd >nul
+  exit /b 1
+)
+
 set "RELEASES_REPO_EMPTY=0"
 git rev-parse --verify HEAD >nul 2>nul
 if errorlevel 1 (
@@ -310,9 +332,9 @@ if not exist "%RELEASES_REPO_DIR%\%ZIP_FILE%" (
   exit /b 1
 )
 
-git add "%ZIP_FILE%"
+git add .gitattributes "%ZIP_FILE%"
 if errorlevel 1 (
-  echo [ERROR] Failed to stage ZIP in releases repository.
+  echo [ERROR] Failed to stage ZIP/.gitattributes in releases repository.
   popd >nul
   exit /b 1
 )
