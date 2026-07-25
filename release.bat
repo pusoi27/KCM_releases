@@ -137,12 +137,7 @@ if exist "%SECONDARY_INSTALLER_DIR%" (
 :skip_output_copy
 
 echo.
-echo [6/6] Pushing to GitHub...
-git push
-if errorlevel 1 (
-  echo [ERROR] git push failed.
-  exit /b 1
-)
+echo [6/7] Generating checksums and ZIP artifacts...
 
 if not defined APP_VERSION (
   echo [WARNING] Could not read VERSION for checksum generation.
@@ -211,6 +206,14 @@ if errorlevel 1 (
 )
 
 echo [INFO] ZIP SHA256 written: %ZIP_SHA_FILE%
+
+echo.
+echo [7/7] Pushing to GitHub...
+git push
+if errorlevel 1 (
+  echo [ERROR] git push failed.
+  exit /b 1
+)
 
 :done
 echo.
