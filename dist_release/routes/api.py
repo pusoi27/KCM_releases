@@ -639,6 +639,49 @@ def _bridge_token_is_valid() -> bool:
     return token == expected
 
 
+def _mirror_local_session_state_after_bridge_action(student_id: int, action: str) -> None:
+    """Mirror successful instructor bridge session toggle into local scanner DB.
+
+    Keeps scanner UI continuity when instructor becomes unavailable right after
+    a successful remote toggle.
+    """
+    sid = int(student_id or 0)
+    normalized_action = str(action or "").strip().lower()
+    if sid <= 0 or normalized_action not in {"started", "checked_out"}:
+        return
+
+    now_iso = time_now()
+    with sqlite3.connect(DB_PATH) as conn:
+        c = conn.cursor()
+        open_row = c.execute(
+            "SELECT id, start_time FROM sessions WHERE student_id=? AND end_time IS NULL ORDER BY id DESC LIMIT 1",
+            (sid,),
+        ).fetchone()
+
+        if normalized_action == "started":
+            if not open_row:
+                c.execute(
+                    "INSERT INTO sessions (student_id, start_time, sync_synced) VALUES (?, ?, 0)",
+                    (sid, now_iso),
+                )
+                conn.commit()
+            return
+
+        # checked_out
+        if not open_row:
+            return
+        sess_id, start_time = open_row
+        try:
+            duration = max(0, int(duration_seconds(str(start_time or ""), now_iso)))
+        except Exception:
+            duration = 0
+        c.execute(
+            "UPDATE sessions SET end_time = ?, duration = ?, sync_synced = 0 WHERE id = ?",
+            (now_iso, duration, int(sess_id)),
+        )
+        conn.commit()
+
+
 def _bridge_student_classification(student_row) -> str:
     if not student_row:
         return ""
@@ -1220,6 +1263,18 @@ def register_api_routes(app):
         for sid, start in active_rows:
             s = students.get(sid)
             if not s:
+                result.append({
+                    "id": sid,
+                    "name": f"Student {sid}",
+                    "subject": "",
+                    "book_loaned": 0,
+                    "device_loaned": 0,
+                    "start_time": start,
+                    "subjects": [],
+                    "total_study_minutes": 30,
+                    "photo_url": '',
+                    "photo_data_uri": '',
+                })
                 continue
             result.append({
                 "id": sid,
@@ -1462,6 +1517,17 @@ def register_api_routes(app):
         if _scanner_api_client_enabled():
             forwarded = _bridge_forward_post('/api/bridge/sessions/toggle', {"student_id": int(sid)})
             if forwarded is not None:
+                try:
+                    response, status_code = forwarded
+                    payload = response.get_json(silent=True) or {}
+                    if 200 <= int(status_code) < 300:
+                        _mirror_local_session_state_after_bridge_action(
+                            int(payload.get("student_id") or sid),
+                            str(payload.get("action") or ""),
+                        )
+                        server_cache.invalidate(_students_list_cache_key())
+                except Exception:
+                    pass
                 return forwarded
 
         student = student_manager.get_student(sid)
@@ -1487,6 +1553,17 @@ def register_api_routes(app):
         if _scanner_api_client_enabled():
             forwarded = _bridge_forward_post('/api/bridge/sessions/toggle', {"student_id": int(sid)})
             if forwarded is not None:
+                try:
+                    response, status_code = forwarded
+                    payload = response.get_json(silent=True) or {}
+                    if 200 <= int(status_code) < 300:
+                        _mirror_local_session_state_after_bridge_action(
+                            int(payload.get("student_id") or sid),
+                            str(payload.get("action") or ""),
+                        )
+                        server_cache.invalidate(_students_list_cache_key())
+                except Exception:
+                    pass
                 return forwarded
 
         student = student_manager.get_student(sid)
@@ -1690,6 +1767,17 @@ def register_api_routes(app):
         """
         forwarded = _bridge_forward_post('/api/bridge/sessions/toggle', request.get_json(silent=True) or {})
         if forwarded is not None:
+            try:
+                response, status_code = forwarded
+                payload = response.get_json(silent=True) or {}
+                if 200 <= int(status_code) < 300:
+                    _mirror_local_session_state_after_bridge_action(
+                        int(payload.get("student_id") or 0),
+                        str(payload.get("action") or ""),
+                    )
+                    server_cache.invalidate(_students_list_cache_key())
+            except Exception:
+                pass
             return forwarded
 
         try:

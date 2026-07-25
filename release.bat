@@ -114,7 +114,10 @@ if not defined LATEST_INSTALLER (
 
 set "INSTALLER_FILE=%LATEST_INSTALLER%"
 set "SHA_FILE=%INSTALLER_FILE%.sha256"
+set "ZIP_FILE=%INSTALLER_FILE:.exe=.zip%"
+set "ZIP_SHA_FILE=%ZIP_FILE%.sha256"
 set "LOCAL_INSTALLER_OUTPUT=%CD%\%INSTALLER_FILE%"
+set "LOCAL_ZIP_OUTPUT=%CD%\%ZIP_FILE%"
 
 if not exist "%SECONDARY_INSTALLER_DIR%" (
   mkdir "%SECONDARY_INSTALLER_DIR%" >nul 2>nul
@@ -169,13 +172,56 @@ if errorlevel 1 (
 
 echo [INFO] SHA256 written: %SHA_FILE%
 
+if exist "%ZIP_FILE%" del /f /q "%ZIP_FILE%" >nul 2>nul
+
+powershell -NoProfile -Command "Compress-Archive -Path '%INSTALLER_FILE%' -DestinationPath '%ZIP_FILE%' -CompressionLevel Optimal -Force"
+if errorlevel 1 (
+  echo [WARNING] Failed to create ZIP archive: %ZIP_FILE%
+  goto :done
+)
+
+if not exist "%ZIP_FILE%" (
+  echo [WARNING] ZIP archive was not created: %ZIP_FILE%
+  goto :done
+)
+
+if exist "%SECONDARY_INSTALLER_DIR%" (
+  copy /Y "%ZIP_FILE%" "%SECONDARY_INSTALLER_DIR%\%ZIP_FILE%" >nul
+  if exist "%SECONDARY_INSTALLER_DIR%\%ZIP_FILE%" (
+    echo [INFO] ZIP copied to: %SECONDARY_INSTALLER_DIR%\%ZIP_FILE%
+  ) else (
+    echo [WARNING] Failed copying ZIP to: %SECONDARY_INSTALLER_DIR%
+  )
+)
+
+set "ZIP_SHA_HASH="
+for /f "tokens=1 delims= " %%H in ('certutil -hashfile "%ZIP_FILE%" SHA256 ^| findstr /R /I "^[0-9a-f][0-9a-f]*$"') do (
+  if not defined ZIP_SHA_HASH set "ZIP_SHA_HASH=%%H"
+)
+
+if not defined ZIP_SHA_HASH (
+  echo [WARNING] Failed to generate SHA256 hash for ZIP: %ZIP_FILE%
+  goto :done
+)
+
+> "%ZIP_SHA_FILE%" echo %ZIP_SHA_HASH%  %ZIP_FILE%
+if errorlevel 1 (
+  echo [WARNING] Failed writing ZIP SHA256 file: %ZIP_SHA_FILE%
+  goto :done
+)
+
+echo [INFO] ZIP SHA256 written: %ZIP_SHA_FILE%
+
 :done
 echo.
 echo ==============================================================
 echo Completed successfully.
 echo Local Output: %LOCAL_INSTALLER_OUTPUT%
+if defined LOCAL_ZIP_OUTPUT echo Local ZIP Output: %LOCAL_ZIP_OUTPUT%
 echo OneDrive Output: %SECONDARY_INSTALLER_DIR%\%INSTALLER_FILE%
+if defined ZIP_FILE echo OneDrive ZIP Output: %SECONDARY_INSTALLER_DIR%\%ZIP_FILE%
 echo Installer: %INSTALLER_FILE%
+if defined ZIP_FILE echo ZIP: %ZIP_FILE%
 echo ==============================================================
 
 endlocal
