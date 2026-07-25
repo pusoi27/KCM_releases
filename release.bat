@@ -204,7 +204,11 @@ if errorlevel 1 (
 echo [INFO] ZIP SHA256 written: %ZIP_SHA_FILE%
 
 echo.
-echo [7/7] Pushing to GitHub...
+echo [7/8] Publishing ZIP to releases repository...
+call :publish_zip_release_repo || exit /b 1
+
+echo.
+echo [8/8] Pushing to GitHub...
 git push
 if errorlevel 1 (
   echo [ERROR] git push failed.
@@ -224,6 +228,101 @@ if defined ZIP_FILE echo ZIP: %ZIP_FILE%
 echo ==============================================================
 
 endlocal
+exit /b 0
+
+:publish_zip_release_repo
+if not defined ZIP_FILE (
+  echo [WARNING] ZIP_FILE is not defined; skipping releases repository publish.
+  exit /b 0
+)
+
+if not exist "%ZIP_FILE%" (
+  echo [WARNING] ZIP file not found; skipping releases repository publish: %ZIP_FILE%
+  exit /b 0
+)
+
+set "RELEASES_REPO_URL=https://github.com/pusoi27/stdytime_releases.git"
+set "RELEASES_REPO_DIR=%ROOT%.release_cache\stdytime_releases"
+
+if not exist "%ROOT%.release_cache" mkdir "%ROOT%.release_cache" >nul 2>nul
+
+if not exist "%RELEASES_REPO_DIR%\.git" (
+  echo [INFO] Cloning releases repository...
+  git clone "%RELEASES_REPO_URL%" "%RELEASES_REPO_DIR%"
+  if errorlevel 1 (
+    echo [ERROR] Failed to clone releases repository: %RELEASES_REPO_URL%
+    exit /b 1
+  )
+)
+
+pushd "%RELEASES_REPO_DIR%" >nul
+if errorlevel 1 (
+  echo [ERROR] Failed to enter releases repository folder: %RELEASES_REPO_DIR%
+  exit /b 1
+)
+
+git fetch origin
+if errorlevel 1 (
+  echo [ERROR] Failed to fetch releases repository updates.
+  popd >nul
+  exit /b 1
+)
+
+git checkout main >nul 2>nul
+if errorlevel 1 (
+  git checkout master >nul 2>nul
+  if errorlevel 1 (
+    echo [ERROR] Could not checkout either main or master in releases repository.
+    popd >nul
+    exit /b 1
+  )
+)
+
+git pull --rebase
+if errorlevel 1 (
+  echo [ERROR] Failed to pull latest changes in releases repository.
+  popd >nul
+  exit /b 1
+)
+
+copy /Y "%ROOT%%ZIP_FILE%" "%RELEASES_REPO_DIR%\%ZIP_FILE%" >nul
+if not exist "%RELEASES_REPO_DIR%\%ZIP_FILE%" (
+  echo [ERROR] Failed to copy ZIP into releases repository.
+  popd >nul
+  exit /b 1
+)
+
+git add "%ZIP_FILE%"
+if errorlevel 1 (
+  echo [ERROR] Failed to stage ZIP in releases repository.
+  popd >nul
+  exit /b 1
+)
+
+git diff --cached --quiet
+if errorlevel 1 goto :release_repo_has_changes
+
+echo [INFO] ZIP already up to date in releases repository; nothing to commit.
+popd >nul
+exit /b 0
+
+:release_repo_has_changes
+git commit -m "Add %ZIP_FILE%"
+if errorlevel 1 (
+  echo [ERROR] Failed to commit ZIP in releases repository.
+  popd >nul
+  exit /b 1
+)
+
+git push origin HEAD
+if errorlevel 1 (
+  echo [ERROR] Failed to push ZIP to releases repository.
+  popd >nul
+  exit /b 1
+)
+
+echo [INFO] ZIP published to releases repository: %RELEASES_REPO_URL%
+popd >nul
 exit /b 0
 
 :validate_release_artifacts
