@@ -399,6 +399,7 @@ popd >nul
 exit /b 0
 
 :validate_release_artifacts
+echo [TRACE] Entered :validate_release_artifacts
 set "APP_VERSION_VERIFY="
 if exist "VERSION" (
   set /p APP_VERSION_VERIFY=<"VERSION"
@@ -461,4 +462,5 @@ if not exist "stdytime_installer_v%APP_VERSION_SAFE_VERIFY%.exe" (
   exit /b 1
 )
 
+echo [TRACE] validate_release_artifacts passed.
 exit /b 0
