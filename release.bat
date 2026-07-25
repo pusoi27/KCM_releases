@@ -123,16 +123,19 @@ if not exist "%SECONDARY_INSTALLER_DIR%" (
   mkdir "%SECONDARY_INSTALLER_DIR%" >nul 2>nul
 )
 
-if exist "%SECONDARY_INSTALLER_DIR%" (
-  copy /Y "%INSTALLER_FILE%" "%SECONDARY_INSTALLER_DIR%\%INSTALLER_FILE%" >nul
-  if exist "%SECONDARY_INSTALLER_DIR%\%INSTALLER_FILE%" (
-    echo [INFO] Installer copied to: %SECONDARY_INSTALLER_DIR%\%INSTALLER_FILE%
-  ) else (
-    echo [WARNING] Failed copying installer to: %SECONDARY_INSTALLER_DIR%
-  )
-) else (
+if not exist "%SECONDARY_INSTALLER_DIR%" (
   echo [WARNING] Secondary installer directory is unavailable: %SECONDARY_INSTALLER_DIR%
+  goto :skip_output_copy
 )
+
+copy /Y "%INSTALLER_FILE%" "%SECONDARY_INSTALLER_DIR%\%INSTALLER_FILE%" >nul
+if exist "%SECONDARY_INSTALLER_DIR%\%INSTALLER_FILE%" (
+  echo [INFO] Installer copied to: %SECONDARY_INSTALLER_DIR%\%INSTALLER_FILE%
+) else (
+  echo [WARNING] Failed copying installer to: %SECONDARY_INSTALLER_DIR%
+)
+
+echo [TRACE] Proceeding to checksum and ZIP publish stages.
 
 :skip_output_copy
 
