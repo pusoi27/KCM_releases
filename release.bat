@@ -99,10 +99,10 @@ if errorlevel 1 (
 
 set "APP_VERSION="
 if exist "VERSION" (
-  set /p APP_VERSION=<"VERSION"
+  for /f "usebackq delims=" %%V in ("VERSION") do set "APP_VERSION=%%V"
 )
 if not defined APP_VERSION if exist "Version" (
-  set /p APP_VERSION=<"Version"
+  for /f "usebackq delims=" %%V in ("Version") do set "APP_VERSION=%%V"
 )
 
 if "%APP_VERSION%"=="" (
@@ -402,10 +402,10 @@ exit /b 0
 echo [TRACE] Entered :validate_release_artifacts
 set "APP_VERSION_VERIFY="
 if exist "VERSION" (
-  set /p APP_VERSION_VERIFY=<"VERSION"
+  for /f "usebackq delims=" %%V in ("VERSION") do set "APP_VERSION_VERIFY=%%V"
 )
 if not defined APP_VERSION_VERIFY if exist "Version" (
-  set /p APP_VERSION_VERIFY=<"Version"
+  for /f "usebackq delims=" %%V in ("Version") do set "APP_VERSION_VERIFY=%%V"
 )
 
 if not defined APP_VERSION_VERIFY (
@@ -450,7 +450,7 @@ if not exist "dist_release\VERSION" (
 )
 
 set "RELEASE_VERSION="
-set /p RELEASE_VERSION=<"dist_release\VERSION"
+for /f "usebackq delims=" %%V in ("dist_release\VERSION") do set "RELEASE_VERSION=%%V"
 if /I not "%RELEASE_VERSION%"=="%APP_VERSION_VERIFY%" (
   echo build failed: dist_release VERSION mismatch (%RELEASE_VERSION% vs %APP_VERSION_VERIFY%)
   exit /b 1
