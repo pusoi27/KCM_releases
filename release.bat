@@ -50,6 +50,10 @@ if errorlevel 1 (
 
 echo.
 echo [2/5] Staging changes...
+if exist ".tmp_release_check\.git" (
+  echo [INFO] Removing temporary clone folder: .tmp_release_check
+  rmdir /s /q ".tmp_release_check"
+)
 git add -A
 if errorlevel 1 (
   echo [ERROR] git add failed.
@@ -242,9 +246,10 @@ if not exist "%ZIP_FILE%" (
 )
 
 set "RELEASES_REPO_URL=https://github.com/pusoi27/stdytime_releases.git"
-set "RELEASES_REPO_DIR=%ROOT%.release_cache\stdytime_releases"
+set "RELEASES_REPO_BASE=%TEMP%stdytime_release_cache"
+set "RELEASES_REPO_DIR=%RELEASES_REPO_BASE%\stdytime_releases"
 
-if not exist "%ROOT%.release_cache" mkdir "%ROOT%.release_cache" >nul 2>nul
+if not exist "%RELEASES_REPO_BASE%" mkdir "%RELEASES_REPO_BASE%" >nul 2>nul
 
 if not exist "%RELEASES_REPO_DIR%\.git" (
   echo [INFO] Cloning releases repository...
@@ -261,28 +266,41 @@ if errorlevel 1 (
   exit /b 1
 )
 
-git fetch origin
+set "RELEASES_REPO_EMPTY=0"
+git rev-parse --verify HEAD >nul 2>nul
 if errorlevel 1 (
-  echo [ERROR] Failed to fetch releases repository updates.
-  popd >nul
-  exit /b 1
-)
-
-git checkout main >nul 2>nul
-if errorlevel 1 (
-  git checkout master >nul 2>nul
+  set "RELEASES_REPO_EMPTY=1"
+  echo [INFO] Releases repository is empty; preparing initial main branch commit.
+  git checkout -B main >nul 2>nul
   if errorlevel 1 (
-    echo [ERROR] Could not checkout either main or master in releases repository.
+    echo [ERROR] Failed to initialize local main branch in releases repository.
     popd >nul
     exit /b 1
   )
-)
+) else (
+  git fetch origin
+  if errorlevel 1 (
+    echo [ERROR] Failed to fetch releases repository updates.
+    popd >nul
+    exit /b 1
+  )
 
-git pull --rebase
-if errorlevel 1 (
-  echo [ERROR] Failed to pull latest changes in releases repository.
-  popd >nul
-  exit /b 1
+  git checkout main >nul 2>nul
+  if errorlevel 1 (
+    git checkout master >nul 2>nul
+    if errorlevel 1 (
+      echo [ERROR] Could not checkout either main or master in releases repository.
+      popd >nul
+      exit /b 1
+    )
+  )
+
+  git pull --rebase
+  if errorlevel 1 (
+    echo [ERROR] Failed to pull latest changes in releases repository.
+    popd >nul
+    exit /b 1
+  )
 )
 
 copy /Y "%ROOT%%ZIP_FILE%" "%RELEASES_REPO_DIR%\%ZIP_FILE%" >nul
@@ -314,11 +332,20 @@ if errorlevel 1 (
   exit /b 1
 )
 
-git push origin HEAD
-if errorlevel 1 (
-  echo [ERROR] Failed to push ZIP to releases repository.
-  popd >nul
-  exit /b 1
+if "%RELEASES_REPO_EMPTY%"=="1" (
+  git push -u origin main
+  if errorlevel 1 (
+    echo [ERROR] Failed to push initial ZIP commit to releases repository.
+    popd >nul
+    exit /b 1
+  )
+) else (
+  git push origin HEAD
+  if errorlevel 1 (
+    echo [ERROR] Failed to push ZIP to releases repository.
+    popd >nul
+    exit /b 1
+  )
 )
 
 echo [INFO] ZIP published to releases repository: %RELEASES_REPO_URL%
