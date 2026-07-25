@@ -208,6 +208,10 @@ if errorlevel 1 (
 echo [INFO] ZIP SHA256 written: %ZIP_SHA_FILE%
 
 echo.
+echo [TRACE] ZIP artifact ready: %ZIP_FILE%
+echo [TRACE] ZIP checksum file: %ZIP_SHA_FILE%
+
+echo.
 echo [7/8] Publishing ZIP to releases repository...
 call :publish_zip_release_repo || exit /b 1
 
@@ -280,6 +284,7 @@ if errorlevel 1 (
   popd >nul
   exit /b 1
 )
+echo [INFO] Git LFS hooks initialized in releases repository.
 
 git lfs track "*.zip" >nul
 if errorlevel 1 (
@@ -287,6 +292,7 @@ if errorlevel 1 (
   popd >nul
   exit /b 1
 )
+echo [INFO] Git LFS tracking rule ensured: *.zip
 
 set "RELEASES_REPO_EMPTY=0"
 git rev-parse --verify HEAD >nul 2>nul
@@ -331,6 +337,7 @@ if not exist "%RELEASES_REPO_DIR%\%ZIP_FILE%" (
   popd >nul
   exit /b 1
 )
+echo [INFO] ZIP copied into releases repository working tree: %ZIP_FILE%
 
 git add .gitattributes "%ZIP_FILE%"
 if errorlevel 1 (
@@ -338,6 +345,7 @@ if errorlevel 1 (
   popd >nul
   exit /b 1
 )
+echo [INFO] Staged .gitattributes and ZIP for releases repository commit.
 
 git diff --cached --quiet
 if errorlevel 1 goto :release_repo_has_changes
@@ -353,6 +361,12 @@ if errorlevel 1 (
   popd >nul
   exit /b 1
 )
+
+for /f "delims=" %%C in ('git rev-parse --short HEAD') do set "RELEASES_COMMIT=%%C"
+if defined RELEASES_COMMIT echo [INFO] Releases repo commit created: %RELEASES_COMMIT%
+
+echo [INFO] Git LFS tracked files in releases repo:
+git lfs ls-files
 
 if "%RELEASES_REPO_EMPTY%"=="1" (
   git push -u origin main
