@@ -82,8 +82,10 @@ if exist "dist" rmdir /s /q "dist"
 
 echo.
 echo [5/6] Building NSIS installer...
-call build_nsis_installer.bat
-if errorlevel 1 (
+call "%ROOT%build_nsis_installer.bat"
+set "NSIS_BUILD_EXIT=%ERRORLEVEL%"
+echo [TRACE] build_nsis_installer.bat exit code: %NSIS_BUILD_EXIT%
+if not "%NSIS_BUILD_EXIT%"=="0" (
   echo [ERROR] Installer build failed.
   exit /b 1
 )
