@@ -3,8 +3,8 @@ REM Stdytime Release Helper
 REM - Bumps VERSION
 REM - Commits and pushes to GitHub
 REM - Builds NSIS installer
-REM - Generates checksum, ZIP, minisign
-REM - Publishes ZIP/SHA/minisig to stdytime_releases repo (purges previous ZIP artifacts)
+REM - Generates SHA256, ZIP, and minisign signature
+REM - Publishes ZIP artifacts to stdytime_releases, purging older ZIP releases first
 
 setlocal
 
@@ -37,7 +37,9 @@ if not exist "build_nsis_installer.bat" (
 )
 
 set "COMMIT_MSG=%*"
-if "%COMMIT_MSG%"=="" set "COMMIT_MSG=release"
+if "%COMMIT_MSG%"=="" (
+  set "COMMIT_MSG=release"
+)
 
 echo.
 echo [1/8] Bumping app version...
@@ -49,6 +51,10 @@ if errorlevel 1 (
 
 echo.
 echo [2/8] Staging changes...
+if exist ".tmp_release_check\.git" (
+  echo [INFO] Removing temporary clone folder: .tmp_release_check
+  rmdir /s /q ".tmp_release_check"
+)
 git add -A
 if errorlevel 1 (
   echo [ERROR] git add failed.
@@ -56,11 +62,12 @@ if errorlevel 1 (
 )
 
 git diff --cached --quiet
-if not errorlevel 1 (
-  echo [ERROR] No staged changes to commit.
-  exit /b 1
-)
+if errorlevel 1 goto :has_changes
 
+echo [ERROR] No staged changes to commit.
+exit /b 1
+
+:has_changes
 echo.
 echo [3/8] Creating commit...
 git commit -m "%COMMIT_MSG%"
@@ -70,21 +77,24 @@ if errorlevel 1 (
 )
 
 echo.
-echo [4/8] Cleaning PyInstaller cache for deterministic build...
+echo [4/8] Cleaning PyInstaller cache for a deterministic installer build...
 if exist "build" rmdir /s /q "build"
 if exist "dist" rmdir /s /q "dist"
 
 echo.
 echo [5/8] Building NSIS installer...
 call "%ROOT%build_nsis_installer.bat"
-if errorlevel 1 (
+set "NSIS_BUILD_EXIT=%ERRORLEVEL%"
+echo [TRACE] build_nsis_installer.bat exit code: %NSIS_BUILD_EXIT%
+if not "%NSIS_BUILD_EXIT%"=="0" (
   echo [ERROR] Installer build failed.
   exit /b 1
 )
 
+echo [TRACE] Validating release artifacts...
 call :validate_release_artifacts
 if errorlevel 1 (
-  echo [WARNING] validate_release_artifacts failed; continuing anyway.
+  echo [WARNING] validate_release_artifacts failed; continuing to checksum and publish steps.
 )
 
 set "APP_VERSION="
@@ -95,19 +105,19 @@ if not defined APP_VERSION if exist "Version" (
   for /f "usebackq delims=" %%V in ("Version") do set "APP_VERSION=%%V"
 )
 
-if not defined APP_VERSION (
-  echo [ERROR] Could not read VERSION file.
+if "%APP_VERSION%"=="" (
+  echo [ERROR] Could not read VERSION for artifact generation.
   exit /b 1
 )
 
 set "APP_VERSION_SAFE=%APP_VERSION:.=_%"
+set "SECONDARY_INSTALLER_DIR=C:\Users\octav\OneDrive\ADOCTA TECH LLC\StdyTime"
+
 set "INSTALLER_FILE=stdytime_installer_v%APP_VERSION_SAFE%.exe"
 set "SHA_FILE=%INSTALLER_FILE%.sha256"
 set "ZIP_FILE=%INSTALLER_FILE:.exe=.zip%"
 set "ZIP_SHA_FILE=%ZIP_FILE%.sha256"
 set "ZIP_MINISIG_FILE=%ZIP_FILE%.minisig"
-
-set "SECONDARY_INSTALLER_DIR=C:\Users\octav\OneDrive\ADOCTA TECH LLC\StdyTime"
 set "LOCAL_INSTALLER_OUTPUT=%CD%\%INSTALLER_FILE%"
 set "LOCAL_ZIP_OUTPUT=%CD%\%ZIP_FILE%"
 set "SECONDARY_ZIP_OUTPUT=%SECONDARY_INSTALLER_DIR%\%ZIP_FILE%"
@@ -119,9 +129,19 @@ if not exist "%INSTALLER_FILE%" (
   exit /b 1
 )
 
-if not exist "%SECONDARY_INSTALLER_DIR%" mkdir "%SECONDARY_INSTALLER_DIR%" >nul 2>nul
+if not exist "%SECONDARY_INSTALLER_DIR%" (
+  mkdir "%SECONDARY_INSTALLER_DIR%" >nul 2>nul
+)
+
 if exist "%SECONDARY_INSTALLER_DIR%" (
   copy /Y "%INSTALLER_FILE%" "%SECONDARY_INSTALLER_DIR%\%INSTALLER_FILE%" >nul
+  if exist "%SECONDARY_INSTALLER_DIR%\%INSTALLER_FILE%" (
+    echo [INFO] Installer copied to: %SECONDARY_INSTALLER_DIR%\%INSTALLER_FILE%
+  ) else (
+    echo [WARNING] Failed copying installer to: %SECONDARY_INSTALLER_DIR%
+  )
+) else (
+  echo [WARNING] Secondary installer directory is unavailable: %SECONDARY_INSTALLER_DIR%
 )
 
 echo.
@@ -132,10 +152,16 @@ for /f "tokens=1 delims= " %%H in ('certutil -hashfile "%INSTALLER_FILE%" SHA256
   if not defined SHA_HASH set "SHA_HASH=%%H"
 )
 if not defined SHA_HASH (
-  echo [ERROR] Failed to generate SHA256 for EXE.
+  echo [ERROR] Failed to generate SHA256 hash for installer.
   exit /b 1
 )
+
 > "%SHA_FILE%" echo %SHA_HASH%  %INSTALLER_FILE%
+if errorlevel 1 (
+  echo [ERROR] Failed writing SHA256 file: %SHA_FILE%
+  exit /b 1
+)
+echo [INFO] SHA256 written: %SHA_FILE%
 
 if exist "%ZIP_FILE%" del /f /q "%ZIP_FILE%" >nul 2>nul
 powershell -NoProfile -Command "Compress-Archive -Path '%INSTALLER_FILE%' -DestinationPath '%ZIP_FILE%' -CompressionLevel Optimal -Force"
@@ -148,15 +174,39 @@ if not exist "%ZIP_FILE%" (
   exit /b 1
 )
 
+if exist "%SECONDARY_INSTALLER_DIR%" (
+  copy /Y "%ZIP_FILE%" "%SECONDARY_ZIP_OUTPUT%" >nul
+  if exist "%SECONDARY_ZIP_OUTPUT%" (
+    echo [INFO] ZIP copied to: %SECONDARY_ZIP_OUTPUT%
+  ) else (
+    echo [WARNING] Failed copying ZIP to: %SECONDARY_INSTALLER_DIR%
+  )
+)
+
 set "ZIP_SHA_HASH="
 for /f "tokens=1 delims= " %%H in ('certutil -hashfile "%ZIP_FILE%" SHA256 ^| findstr /R /I "^[0-9a-f][0-9a-f]*$"') do (
   if not defined ZIP_SHA_HASH set "ZIP_SHA_HASH=%%H"
 )
 if not defined ZIP_SHA_HASH (
-  echo [ERROR] Failed to generate SHA256 for ZIP.
+  echo [ERROR] Failed to generate SHA256 hash for ZIP.
   exit /b 1
 )
+
 > "%ZIP_SHA_FILE%" echo %ZIP_SHA_HASH%  %ZIP_FILE%
+if errorlevel 1 (
+  echo [ERROR] Failed writing ZIP SHA256 file: %ZIP_SHA_FILE%
+  exit /b 1
+)
+echo [INFO] ZIP SHA256 written: %ZIP_SHA_FILE%
+
+if exist "%SECONDARY_INSTALLER_DIR%" (
+  copy /Y "%ZIP_SHA_FILE%" "%SECONDARY_ZIP_SHA_OUTPUT%" >nul
+  if exist "%SECONDARY_ZIP_SHA_OUTPUT%" (
+    echo [INFO] ZIP SHA256 copied to: %SECONDARY_ZIP_SHA_OUTPUT%
+  ) else (
+    echo [WARNING] Failed copying ZIP SHA256 to: %SECONDARY_INSTALLER_DIR%
+  )
+)
 
 call :generate_zip_minisig
 if errorlevel 1 (
@@ -165,11 +215,15 @@ if errorlevel 1 (
 )
 
 if exist "%SECONDARY_INSTALLER_DIR%" (
-  copy /Y "%ZIP_FILE%" "%SECONDARY_ZIP_OUTPUT%" >nul
-  copy /Y "%ZIP_SHA_FILE%" "%SECONDARY_ZIP_SHA_OUTPUT%" >nul
   copy /Y "%ZIP_MINISIG_FILE%" "%SECONDARY_ZIP_MINISIG_OUTPUT%" >nul
+  if exist "%SECONDARY_ZIP_MINISIG_OUTPUT%" (
+    echo [INFO] ZIP minisig copied to: %SECONDARY_ZIP_MINISIG_OUTPUT%
+  ) else (
+    echo [WARNING] Failed copying ZIP minisig to: %SECONDARY_INSTALLER_DIR%
+  )
 )
 
+echo.
 echo [TRACE] ZIP artifact ready: %ZIP_FILE%
 echo [TRACE] ZIP checksum file: %ZIP_SHA_FILE%
 echo [TRACE] ZIP minisig file: %ZIP_MINISIG_FILE%
@@ -180,7 +234,7 @@ call :publish_zip_release_repo
 if errorlevel 1 exit /b 1
 
 echo.
-echo [8/8] Pushing app repository to GitHub...
+echo [8/8] Pushing to GitHub...
 git push
 if errorlevel 1 (
   echo [ERROR] git push failed.
@@ -207,15 +261,15 @@ exit /b 0
 
 :publish_zip_release_repo
 if not exist "%ZIP_FILE%" (
-  echo [ERROR] ZIP file not found; refusing publish: %ZIP_FILE%
+  echo [ERROR] ZIP file not found; refusing to publish: %ZIP_FILE%
   exit /b 1
 )
 if not exist "%ZIP_SHA_FILE%" (
-  echo [ERROR] ZIP checksum file not found; refusing publish: %ZIP_SHA_FILE%
+  echo [ERROR] ZIP checksum file not found; refusing to publish: %ZIP_SHA_FILE%
   exit /b 1
 )
 if not exist "%ZIP_MINISIG_FILE%" (
-  echo [ERROR] ZIP minisig file not found; refusing publish: %ZIP_MINISIG_FILE%
+  echo [ERROR] ZIP minisig file not found; refusing to publish: %ZIP_MINISIG_FILE%
   exit /b 1
 )
 
@@ -224,6 +278,7 @@ set "RELEASES_REPO_BASE=%TEMP%\stdytime_release_cache"
 set "RELEASES_REPO_DIR=%RELEASES_REPO_BASE%\stdytime_releases"
 
 if not exist "%RELEASES_REPO_BASE%" mkdir "%RELEASES_REPO_BASE%" >nul 2>nul
+
 if not exist "%RELEASES_REPO_DIR%\.git" (
   echo [INFO] Cloning releases repository...
   git clone "%RELEASES_REPO_URL%" "%RELEASES_REPO_DIR%"
@@ -252,6 +307,7 @@ if errorlevel 1 (
   popd >nul
   exit /b 1
 )
+echo [INFO] Git LFS hooks initialized in releases repository.
 
 git lfs track "*.zip" >nul
 if errorlevel 1 (
@@ -259,11 +315,13 @@ if errorlevel 1 (
   popd >nul
   exit /b 1
 )
+echo [INFO] Git LFS tracking rule ensured: *.zip
 
 set "RELEASES_REPO_EMPTY=0"
 git rev-parse --verify HEAD >nul 2>nul
 if errorlevel 1 (
   set "RELEASES_REPO_EMPTY=1"
+  echo [INFO] Releases repository is empty; preparing initial main branch commit.
   git checkout -B main >nul 2>nul
   if errorlevel 1 (
     echo [ERROR] Failed to initialize local main branch in releases repository.
@@ -279,7 +337,14 @@ if errorlevel 1 (
   )
 
   git checkout main >nul 2>nul
-  if errorlevel 1 git checkout master >nul 2>nul
+  if errorlevel 1 (
+    git checkout master >nul 2>nul
+    if errorlevel 1 (
+      echo [ERROR] Could not checkout either main or master in releases repository.
+      popd >nul
+      exit /b 1
+    )
+  )
 
   git pull --rebase
   if errorlevel 1 (
@@ -294,6 +359,7 @@ git rm -f --ignore-unmatch "stdytime_installer_v*.zip" "stdytime_installer_v*.zi
 for %%F in ("stdytime_installer_v*.zip" "stdytime_installer_v*.zip.sha256" "stdytime_installer_v*.zip.minisig") do (
   if exist "%%~F" del /f /q "%%~F" >nul 2>nul
 )
+echo [INFO] Previous release ZIP artifacts removed (if any).
 
 copy /Y "%ROOT%%ZIP_FILE%" "%RELEASES_REPO_DIR%\%ZIP_FILE%" >nul
 if not exist "%RELEASES_REPO_DIR%\%ZIP_FILE%" (
@@ -301,33 +367,40 @@ if not exist "%RELEASES_REPO_DIR%\%ZIP_FILE%" (
   popd >nul
   exit /b 1
 )
+echo [INFO] ZIP copied into releases repository working tree: %ZIP_FILE%
+
 copy /Y "%ROOT%%ZIP_SHA_FILE%" "%RELEASES_REPO_DIR%\%ZIP_SHA_FILE%" >nul
 if not exist "%RELEASES_REPO_DIR%\%ZIP_SHA_FILE%" (
   echo [ERROR] Failed to copy ZIP SHA256 into releases repository.
   popd >nul
   exit /b 1
 )
+echo [INFO] ZIP SHA256 copied into releases repository working tree: %ZIP_SHA_FILE%
+
 copy /Y "%ROOT%%ZIP_MINISIG_FILE%" "%RELEASES_REPO_DIR%\%ZIP_MINISIG_FILE%" >nul
 if not exist "%RELEASES_REPO_DIR%\%ZIP_MINISIG_FILE%" (
   echo [ERROR] Failed to copy ZIP minisig into releases repository.
   popd >nul
   exit /b 1
 )
+echo [INFO] ZIP minisig copied into releases repository working tree: %ZIP_MINISIG_FILE%
 
 git add .gitattributes "%ZIP_FILE%" "%ZIP_SHA_FILE%" "%ZIP_MINISIG_FILE%"
 if errorlevel 1 (
-  echo [ERROR] Failed to stage ZIP sidecars in releases repository.
+  echo [ERROR] Failed to stage ZIP sidecars/.gitattributes in releases repository.
   popd >nul
   exit /b 1
 )
+echo [INFO] Staged .gitattributes, ZIP, SHA256, and minisig for releases repository commit.
 
 git diff --cached --quiet
-if not errorlevel 1 (
-  echo [INFO] ZIP already up to date in releases repository; nothing to commit.
-  popd >nul
-  exit /b 0
-)
+if errorlevel 1 goto :release_repo_has_changes
 
+echo [INFO] ZIP already up to date in releases repository; nothing to commit.
+popd >nul
+exit /b 0
+
+:release_repo_has_changes
 git commit -m "Add %ZIP_FILE%"
 if errorlevel 1 (
   echo [ERROR] Failed to commit ZIP artifacts in releases repository.
@@ -335,17 +408,29 @@ if errorlevel 1 (
   exit /b 1
 )
 
+for /f "delims=" %%C in ('git rev-parse --short HEAD') do set "RELEASES_COMMIT=%%C"
+if defined RELEASES_COMMIT echo [INFO] Releases repo commit created: %RELEASES_COMMIT%
+
+echo [INFO] Git LFS tracked files in releases repo:
+git lfs ls-files
+
 if "%RELEASES_REPO_EMPTY%"=="1" (
   git push -u origin main
+  if errorlevel 1 (
+    echo [ERROR] Failed to push initial ZIP commit to releases repository.
+    popd >nul
+    exit /b 1
+  )
 ) else (
   git push origin HEAD
-)
-if errorlevel 1 (
-  echo [ERROR] Failed to push ZIP to releases repository.
-  popd >nul
-  exit /b 1
+  if errorlevel 1 (
+    echo [ERROR] Failed to push ZIP to releases repository.
+    popd >nul
+    exit /b 1
+  )
 )
 
+echo [INFO] ZIP published to releases repository: %RELEASES_REPO_URL%
 popd >nul
 exit /b 0
 
@@ -358,20 +443,22 @@ if /I "%ALLOW_UNSIGNED%"=="yes" goto :unsigned_allowed
 where minisign >nul 2>nul
 if errorlevel 1 goto :minisign_bin_missing
 
-set "MINISIGN_SECRET_KEY=%SW_UPDATE_MINISIGN_SECRET_KEY%"
+set "MINISIGN_SECRET_KEY="
+if exist "%ROOT%.env" (
+  for /f "tokens=1,* delims==" %%A in ('findstr /R /C:"^SW_UPDATE_MINISIGN_SECRET_KEY=" "%ROOT%.env"') do set "MINISIGN_SECRET_KEY=%%B"
+)
+if not defined MINISIGN_SECRET_KEY set "MINISIGN_SECRET_KEY=%SW_UPDATE_MINISIGN_SECRET_KEY%"
 if not defined MINISIGN_SECRET_KEY set "MINISIGN_SECRET_KEY=%SW_UPDATE_MINISIGN_PRIVATE_KEY%"
 if not defined MINISIGN_SECRET_KEY set "MINISIGN_SECRET_KEY=%SW_UPDATE_MINISIGN_SECRET_KEY_FILE%"
 if not defined MINISIGN_SECRET_KEY set "MINISIGN_SECRET_KEY=%SW_UPDATE_MINISIGN_PRIVATE_KEY_FILE%"
-
-if not defined MINISIGN_SECRET_KEY if exist "%ROOT%.env" (
-  for /f "tokens=1,* delims==" %%A in ('findstr /R /C:"^SW_UPDATE_MINISIGN_SECRET_KEY=" "%ROOT%.env"') do set "MINISIGN_SECRET_KEY=%%B"
-)
 
 if defined MINISIGN_SECRET_KEY if "%MINISIGN_SECRET_KEY:~0,1%"=="\" set "MINISIGN_SECRET_KEY=%MINISIGN_SECRET_KEY:~1%"
 if defined MINISIGN_SECRET_KEY if "%MINISIGN_SECRET_KEY:~-1%"=="\" set "MINISIGN_SECRET_KEY=%MINISIGN_SECRET_KEY:~0,-1%"
 
 if not defined MINISIGN_SECRET_KEY goto :minisign_secret_missing
 if not exist "%MINISIGN_SECRET_KEY%" goto :minisign_secret_not_found
+
+echo [INFO] Using minisign secret key: %MINISIGN_SECRET_KEY%
 
 if exist "%ZIP_MINISIG_FILE%" del /f /q "%ZIP_MINISIG_FILE%" >nul 2>nul
 
@@ -385,7 +472,7 @@ exit /b 0
 
 :minisign_secret_missing
 echo [ERROR] Minisign secret key path is not set.
-echo [ERROR] Set SW_UPDATE_MINISIGN_SECRET_KEY (or SW_UPDATE_MINISIGN_PRIVATE_KEY) to your secret key file path.
+echo [ERROR] Set SW_UPDATE_MINISIGN_SECRET_KEY in .env or environment.
 exit /b 1
 
 :minisign_secret_not_found
