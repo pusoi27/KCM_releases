@@ -444,9 +444,7 @@ where minisign >nul 2>nul
 if errorlevel 1 goto :minisign_bin_missing
 
 set "MINISIGN_SECRET_KEY="
-if exist "%ROOT%.env" (
-  for /f "tokens=1,* delims==" %%A in ('findstr /R /C:"^SW_UPDATE_MINISIGN_SECRET_KEY=" "%ROOT%.env"') do set "MINISIGN_SECRET_KEY=%%B"
-)
+for /f "usebackq delims=" %%K in (`powershell -NoProfile -Command "$envFile = Join-Path '%ROOT%' '.env'; if (Test-Path $envFile) { $line = Get-Content $envFile | Where-Object { $_ -match '^SW_UPDATE_MINISIGN_SECRET_KEY=' } | Select-Object -First 1; if ($line) { $line.Substring($line.IndexOf('=') + 1).Trim() } }"`) do set "MINISIGN_SECRET_KEY=%%K"
 if not defined MINISIGN_SECRET_KEY set "MINISIGN_SECRET_KEY=%SW_UPDATE_MINISIGN_SECRET_KEY%"
 if not defined MINISIGN_SECRET_KEY set "MINISIGN_SECRET_KEY=%SW_UPDATE_MINISIGN_PRIVATE_KEY%"
 if not defined MINISIGN_SECRET_KEY set "MINISIGN_SECRET_KEY=%SW_UPDATE_MINISIGN_SECRET_KEY_FILE%"
