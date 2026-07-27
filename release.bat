@@ -382,6 +382,13 @@ if errorlevel 1 (
   )
 )
 
+echo [INFO] Purging previous release ZIP artifacts from releases repository...
+git rm -f --ignore-unmatch "stdytime_installer_v*.zip" "stdytime_installer_v*.zip.sha256" "stdytime_installer_v*.zip.minisig" >nul 2>nul
+for %%F in ("stdytime_installer_v*.zip" "stdytime_installer_v*.zip.sha256" "stdytime_installer_v*.zip.minisig") do (
+  if exist "%%~F" del /f /q "%%~F" >nul 2>nul
+)
+echo [INFO] Previous release ZIP artifacts removed (if any).
+
 copy /Y "%ROOT%%ZIP_FILE%" "%RELEASES_REPO_DIR%\%ZIP_FILE%" >nul
 if not exist "%RELEASES_REPO_DIR%\%ZIP_FILE%" (
   echo [ERROR] Failed to copy ZIP into releases repository.
@@ -473,32 +480,36 @@ if not defined MINISIGN_SECRET_KEY set "MINISIGN_SECRET_KEY=%SW_UPDATE_MINISIGN_
 if not defined MINISIGN_SECRET_KEY set "MINISIGN_SECRET_KEY=%SW_UPDATE_MINISIGN_SECRET_KEY_FILE%"
 if not defined MINISIGN_SECRET_KEY set "MINISIGN_SECRET_KEY=%SW_UPDATE_MINISIGN_PRIVATE_KEY_FILE%"
 
-if not defined MINISIGN_SECRET_KEY (
-  echo [ERROR] Minisign secret key path is not set.
-  echo [ERROR] Set SW_UPDATE_MINISIGN_SECRET_KEY (or SW_UPDATE_MINISIGN_PRIVATE_KEY) to your secret key file path.
-  exit /b 1
-)
+if not defined MINISIGN_SECRET_KEY goto :minisign_secret_missing
 
-if not exist "%MINISIGN_SECRET_KEY%" (
-  echo [ERROR] Minisign secret key file not found: %MINISIGN_SECRET_KEY%
-  exit /b 1
-)
+if not exist "%MINISIGN_SECRET_KEY%" goto :minisign_secret_not_found
 
 if exist "%ZIP_MINISIG_FILE%" del /f /q "%ZIP_MINISIG_FILE%" >nul 2>nul
 
 minisign -S -s "%MINISIGN_SECRET_KEY%" -m "%ZIP_FILE%" -x "%ZIP_MINISIG_FILE%"
-if errorlevel 1 (
-  echo [ERROR] minisign signing failed for %ZIP_FILE%.
-  exit /b 1
-)
+if errorlevel 1 goto :minisign_sign_failed
 
-if not exist "%ZIP_MINISIG_FILE%" (
-  echo [ERROR] minisign did not produce %ZIP_MINISIG_FILE%.
-  exit /b 1
-)
+if not exist "%ZIP_MINISIG_FILE%" goto :minisign_output_missing
 
 echo [INFO] ZIP minisig written: %ZIP_MINISIG_FILE%
 exit /b 0
+
+:minisign_secret_missing
+echo [ERROR] Minisign secret key path is not set.
+echo [ERROR] Set SW_UPDATE_MINISIGN_SECRET_KEY (or SW_UPDATE_MINISIGN_PRIVATE_KEY) to your secret key file path.
+exit /b 1
+
+:minisign_secret_not_found
+echo [ERROR] Minisign secret key file not found: %MINISIGN_SECRET_KEY%
+exit /b 1
+
+:minisign_sign_failed
+echo [ERROR] minisign signing failed for %ZIP_FILE%.
+exit /b 1
+
+:minisign_output_missing
+echo [ERROR] minisign did not produce %ZIP_MINISIG_FILE%.
+exit /b 1
 
 :unsigned_allowed
 echo [WARNING] SW_UPDATE_ALLOW_UNSIGNED_RELEASE is enabled; skipping minisign generation.
