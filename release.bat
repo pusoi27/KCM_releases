@@ -444,7 +444,7 @@ where minisign >nul 2>nul
 if errorlevel 1 goto :minisign_bin_missing
 
 set "MINISIGN_SECRET_KEY="
-for /f "usebackq delims=" %%K in (`".venv\Scripts\python.exe" -c "from pathlib import Path; p = Path(r'%ROOT%') / '.env'; value = ''; lines = p.read_text(encoding='utf-8').splitlines() if p.exists() else []; value = next((line.split('=', 1)[1].strip() for line in lines if line.startswith('SW_UPDATE_MINISIGN_SECRET_KEY=')), ''); print(value)"`) do set "MINISIGN_SECRET_KEY=%%K"
+for /f "tokens=1,* delims==" %%L in ('findstr /B /C:"SW_UPDATE_MINISIGN_SECRET_KEY=" "%ROOT%.env" 2^>nul') do set "MINISIGN_SECRET_KEY=%%M"
 if not defined MINISIGN_SECRET_KEY set "MINISIGN_SECRET_KEY=%SW_UPDATE_MINISIGN_SECRET_KEY%"
 if not defined MINISIGN_SECRET_KEY set "MINISIGN_SECRET_KEY=%SW_UPDATE_MINISIGN_PRIVATE_KEY%"
 if not defined MINISIGN_SECRET_KEY set "MINISIGN_SECRET_KEY=%SW_UPDATE_MINISIGN_SECRET_KEY_FILE%"
