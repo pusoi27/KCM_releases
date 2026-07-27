@@ -478,7 +478,17 @@ def _station_runtime_config_from_cfg(cfg: dict) -> dict:
 def get_station_runtime_config() -> dict:
     """Return station runtime topology config from db_config.json."""
     cfg = _read_db_config()
-    return _station_runtime_config_from_cfg(cfg)
+    runtime = _station_runtime_config_from_cfg(cfg)
+
+    # Single-machine license: always behave as combined local station,
+    # regardless of stale values left in persisted config.
+    activation_limit, _ = _read_station_sync_state()
+    if activation_limit < 2:
+        runtime["station_mode"] = "instructor_server"
+        runtime["instructor_api_base_url"] = ""
+        runtime["station_pairing_token"] = ""
+
+    return runtime
 
 
 def _cloud_label(sync_path: str) -> str:
@@ -606,7 +616,7 @@ def get_db_config_status() -> dict:
     gdrive_sync_path = ""
     onedrive_sync_path = _normalize_path(str(cfg.get("onedrive_sync_path", "") or ""))
     cloud_provider, cloud_sync_path = _resolve_cloud_provider_and_path(cfg)
-    runtime = _station_runtime_config_from_cfg(cfg)
+    runtime = get_station_runtime_config()
     station_mode = runtime["station_mode"]
     backup_mode = runtime["backup_mode"]
     instructor_api_base_url = runtime["instructor_api_base_url"]

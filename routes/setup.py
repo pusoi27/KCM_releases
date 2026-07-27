@@ -239,6 +239,8 @@ def register_setup_routes(app):
             if not is_multi_station_license:
                 # Single-machine license: always run combined functionality on this one station.
                 station_mode = 'instructor_server'
+                instructor_api_base_url = ''
+                station_pairing_token = ''
 
             # Minimize scanner setup friction: auto-fetch token from instructor when URL is provided.
             if is_multi_station_license and station_mode == 'scanner_api_client' and instructor_api_base_url and not station_pairing_token:
@@ -253,13 +255,12 @@ def register_setup_routes(app):
                     flash(f'Auto-connect did not complete: {msg}', 'warning')
 
             # Minimize instructor setup friction: always ensure a token exists.
-            if station_mode == 'instructor_server' and not station_pairing_token:
+            if is_multi_station_license and station_mode == 'instructor_server' and not station_pairing_token:
                 station_pairing_token = secrets.token_urlsafe(24)
-                if is_multi_station_license:
-                    flash('Instructor token auto-generated for scanner pairing.', 'success')
+                flash('Instructor token auto-generated for scanner pairing.', 'success')
 
             # For instructor mode, auto-fill a practical LAN URL when empty.
-            if station_mode == 'instructor_server' and not instructor_api_base_url:
+            if is_multi_station_license and station_mode == 'instructor_server' and not instructor_api_base_url:
                 instructor_api_base_url = _resolve_advertised_instructor_base_url(
                     {'instructor_api_base_url': ''},
                     request.host_url,

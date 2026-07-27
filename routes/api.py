@@ -54,7 +54,12 @@ def _runtime_pairing_token() -> str:
 
 
 def _scanner_api_client_enabled() -> bool:
-    return _runtime_station_mode() == "scanner_api_client"
+    status = g.get("license_status") or {}
+    try:
+        activation_limit = int(status.get("activation_limit") or 0)
+    except (TypeError, ValueError):
+        activation_limit = 0
+    return _runtime_station_mode() == "scanner_api_client" and activation_limit >= 2
 
 
 def _build_bridge_headers() -> dict:
