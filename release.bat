@@ -444,7 +444,11 @@ where minisign >nul 2>nul
 if errorlevel 1 goto :minisign_bin_missing
 
 set "MINISIGN_SECRET_KEY="
-for /f "tokens=1,* delims==" %%L in ('findstr /B /C:"SW_UPDATE_MINISIGN_SECRET_KEY=" "%ROOT%.env" 2^>nul') do set "MINISIGN_SECRET_KEY=%%M"
+if exist "%ROOT%.env" (
+  for /f "usebackq tokens=1,* delims==" %%L in ("%ROOT%.env") do (
+    if /I "%%L"=="SW_UPDATE_MINISIGN_SECRET_KEY" set "MINISIGN_SECRET_KEY=%%M"
+  )
+)
 if not defined MINISIGN_SECRET_KEY set "MINISIGN_SECRET_KEY=%SW_UPDATE_MINISIGN_SECRET_KEY%"
 if not defined MINISIGN_SECRET_KEY set "MINISIGN_SECRET_KEY=%SW_UPDATE_MINISIGN_PRIVATE_KEY%"
 if not defined MINISIGN_SECRET_KEY set "MINISIGN_SECRET_KEY=%SW_UPDATE_MINISIGN_SECRET_KEY_FILE%"
