@@ -627,6 +627,32 @@ def before_request_capture_email():
             if request.path.startswith('/api/'):
                 return jsonify({'error': mismatch, 'setup_url': url_for('email_login')}), 428
             return redirect(url_for('email_login', next=request.path))
+
+        ownership_result = user_identity_manager.enforce_email_owner_signature(active_email)
+        if not ownership_result.get('ok'):
+            ownership_message = ownership_result.get(
+                'message',
+                'Database ownership verification failed. Please sign in again.',
+            )
+            if request.path.startswith('/api/'):
+                return jsonify({'error': ownership_message, 'setup_url': url_for('email_login')}), 503
+            flash(ownership_message, 'warning')
+            return redirect(url_for('email_login', next=request.path))
+
+        if ownership_result.get('action') == 'reinitialized':
+            archived_path = str(ownership_result.get('archived_db_path') or '').strip()
+            if archived_path:
+                flash(
+                    f'Database ownership changed. A fresh database was initialized for this instructor email. '
+                    f'Previous database archived at: {archived_path}',
+                    'info',
+                )
+            else:
+                flash(
+                    'Database ownership changed. A fresh database was initialized for this instructor email.',
+                    'info',
+                )
+
         session['user_email'] = active_email
         session.permanent = True
         user_identity_manager.sync_instructor_profile_email(active_email)
@@ -905,7 +931,7 @@ def inject_subscription_access():
         'station_role': role,
         'station_mode': station_mode,
         'is_checkin_station': False,
-        'is_instructor_station': True,
+        'is_instructor_station': False,
     }
 
     if activation_limit >= 2 and role == 'checkin':
@@ -1182,6 +1208,7 @@ from routes.materials import register_material_routes
 from routes.instructor_profile import register_instructor_profile_routes
 from routes.cancellation import register_cancellation_routes
 from routes.setup import register_setup_routes
+from routes.sw_update import register_sw_update_routes
 
 # Register scanner route
 @app.route('/qr/scanner')
@@ -1219,6 +1246,7 @@ register_book_routes(app)
 register_material_routes(app)
 register_cancellation_routes(app)
 register_setup_routes(app)
+register_sw_update_routes(app, get_app_version, _flush_cloud_before_shutdown_once)
 
 
 

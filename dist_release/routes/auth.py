@@ -53,6 +53,16 @@ def require_feature(feature):
 def register_auth_routes(app):
     """Register local single-user email capture route."""
 
+    def _render_email_login(*, error=None, email='', next_url='/', ownership_warning=None, require_rebind_confirm=False):
+        return render_template(
+            'auth/email_login.html',
+            error=error,
+            email=email,
+            next_url=next_url,
+            ownership_warning=ownership_warning,
+            require_rebind_confirm=require_rebind_confirm,
+        )
+
     @app.route('/login/email', methods=['GET', 'POST'])
     def email_login():
         if not (g.get('license_status') or {}).get('is_valid'):
@@ -64,9 +74,9 @@ def register_auth_routes(app):
 
         if request.method == 'POST':
             email = (request.form.get('email') or '').strip()
+            confirm_db_rebind = str(request.form.get('confirm_db_rebind') or '').strip() == '1'
             if not user_identity_manager.is_valid_email(email):
-                return render_template(
-                    'auth/email_login.html',
+                return _render_email_login(
                     error='Please enter a valid email address.',
                     email=email,
                     next_url=next_url,
@@ -92,10 +102,45 @@ def register_auth_routes(app):
                 correct_email = ls_license.get_license_email() or email
                 if correct_email:
                     session['license_retry_email'] = correct_email
-                return render_template(
-                    'auth/email_login.html',
+                return _render_email_login(
                     error=ls_error,
                     email=correct_email,
+                    next_url=next_url,
+                )
+
+            ownership_status = user_identity_manager.get_email_owner_binding_status(email)
+            if not ownership_status.get('ok'):
+                return _render_email_login(
+                    error=str(ownership_status.get('message') or 'Unable to verify database ownership.'),
+                    email=email,
+                    next_url=next_url,
+                )
+
+            if ownership_status.get('will_reinitialize') and not confirm_db_rebind:
+                prior_owner = str(ownership_status.get('bound_email') or '').strip()
+                if prior_owner:
+                    ownership_warning = (
+                        f"This database is currently bound to '{prior_owner}'. "
+                        "Continuing with this email will archive the current database and create a fresh one."
+                    )
+                else:
+                    ownership_warning = (
+                        "This database is bound to a different instructor email. "
+                        "Continuing will archive the current database and create a fresh one."
+                    )
+
+                return _render_email_login(
+                    email=email,
+                    next_url=next_url,
+                    ownership_warning=ownership_warning,
+                    require_rebind_confirm=True,
+                )
+
+            ownership_apply = user_identity_manager.enforce_email_owner_signature(email)
+            if not ownership_apply.get('ok'):
+                return _render_email_login(
+                    error=str(ownership_apply.get('message') or 'Failed to apply database ownership.'),
+                    email=email,
                     next_url=next_url,
                 )
 
@@ -107,8 +152,7 @@ def register_auth_routes(app):
             return redirect(next_url)
 
         existing = user_identity_manager.resolve_active_email(session.get('user_email')) or ''
-        return render_template(
-            'auth/email_login.html',
+        return _render_email_login(
             error=None,
             email=existing,
             next_url=next_url,

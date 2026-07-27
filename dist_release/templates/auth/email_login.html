@@ -15,12 +15,20 @@
       <div class="alert alert-warning" role="alert">
         <strong>Important:</strong> The same email used for product purchase must be used.
       </div>
+      {% if ownership_warning %}
+      <div class="alert alert-danger" role="alert">
+        <strong>Warning:</strong> {{ ownership_warning }}
+      </div>
+      {% endif %}
       {% if error %}
       <div class="alert alert-danger" role="alert">{{ error }}</div>
       {% endif %}
       <form method="POST" action="{{ url_for('email_login') }}" autocomplete="off">
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
         <input type="hidden" name="next" value="{{ next_url or '/' }}">
+        {% if require_rebind_confirm %}
+        <input type="hidden" name="confirm_db_rebind" value="1">
+        {% endif %}
         <div class="mb-3">
           <label for="email" class="form-label">Email address</label>
           <input
@@ -35,9 +43,15 @@
             autofocus
           >
         </div>
+        {% if require_rebind_confirm %}
+        <button type="submit" class="btn btn-danger w-100">
+          I Understand — Create New Database and Continue
+        </button>
+        {% else %}
         <button type="submit" class="btn btn-primary w-100">
           Continue
         </button>
+        {% endif %}
       </form>
     </div>
   </div>
