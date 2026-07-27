@@ -231,7 +231,7 @@ if exist "%SECONDARY_INSTALLER_DIR%" (
 call :generate_zip_minisig
 if errorlevel 1 (
   echo [ERROR] Failed to generate minisign signature for ZIP.
-  goto :done
+  exit /b 1
 )
 
 if exist "%SECONDARY_INSTALLER_DIR%" (
@@ -301,7 +301,7 @@ if not exist "%ZIP_MINISIG_FILE%" (
 )
 
 set "RELEASES_REPO_URL=https://github.com/pusoi27/stdytime_releases.git"
-set "RELEASES_REPO_BASE=%TEMP%stdytime_release_cache"
+set "RELEASES_REPO_BASE=%TEMP%\stdytime_release_cache"
 set "RELEASES_REPO_DIR=%RELEASES_REPO_BASE%\stdytime_releases"
 
 if not exist "%RELEASES_REPO_BASE%" mkdir "%RELEASES_REPO_BASE%" >nul 2>nul
