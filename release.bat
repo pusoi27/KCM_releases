@@ -469,11 +469,7 @@ if /I "%ALLOW_UNSIGNED%"=="true" goto :unsigned_allowed
 if /I "%ALLOW_UNSIGNED%"=="yes" goto :unsigned_allowed
 
 where minisign >nul 2>nul
-if errorlevel 1 (
-  echo [ERROR] minisign is not installed or not in PATH.
-  echo [ERROR] Install minisign or set SW_UPDATE_ALLOW_UNSIGNED_RELEASE=true to bypass (not recommended).
-  exit /b 1
-)
+if errorlevel 1 goto :minisign_bin_missing
 
 set "MINISIGN_SECRET_KEY=%SW_UPDATE_MINISIGN_SECRET_KEY%"
 if not defined MINISIGN_SECRET_KEY set "MINISIGN_SECRET_KEY=%SW_UPDATE_MINISIGN_PRIVATE_KEY%"
@@ -513,13 +509,19 @@ exit /b 1
 
 :unsigned_allowed
 echo [WARNING] SW_UPDATE_ALLOW_UNSIGNED_RELEASE is enabled; skipping minisign generation.
-if exist "%ZIP_MINISIG_FILE%" (
-  echo [INFO] Existing minisig retained: %ZIP_MINISIG_FILE%
-  exit /b 0
-)
+if exist "%ZIP_MINISIG_FILE%" goto :unsigned_with_existing_signature
 echo [ERROR] No minisig file exists to publish while unsigned override is enabled.
 echo [ERROR] Provide %ZIP_MINISIG_FILE% or disable SW_UPDATE_ALLOW_UNSIGNED_RELEASE.
 exit /b 1
+
+:minisign_bin_missing
+echo [ERROR] minisign is not installed or not in PATH.
+echo [ERROR] Install minisign or set SW_UPDATE_ALLOW_UNSIGNED_RELEASE=true to bypass (not recommended).
+exit /b 1
+
+:unsigned_with_existing_signature
+echo [INFO] Existing minisig retained: %ZIP_MINISIG_FILE%
+exit /b 0
 
 :validate_release_artifacts
 echo [TRACE] Entered :validate_release_artifacts
