@@ -1,0 +1,84 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="container py-5">
+  <div class="row justify-content-center">
+    <div class="col-12 col-lg-7">
+      <div class="card shadow-sm border-0">
+        <div class="card-body p-4 p-lg-5 text-center">
+          <div class="display-5 text-success mb-3">
+            <i class="bi bi-cloud-arrow-down-fill"></i>
+          </div>
+          <h1 class="h3 mb-3">Software update in progress</h1>
+          <p class="text-muted mb-4">
+            Stdytime is checking, downloading, and applying the newest ZIP release. The current app will close and the updated version should relaunch automatically.
+          </p>
+
+          <div class="d-inline-flex align-items-center gap-2 px-3 py-2 rounded-pill bg-light border mb-3">
+            <div class="spinner-border spinner-border-sm text-success" role="status" aria-hidden="true"></div>
+            <span id="swUpdateStatusText" class="fw-semibold text-success">Preparing software update...</span>
+          </div>
+
+          <div id="swUpdateDetail" class="small text-muted mb-4">Please keep this window open for a moment.</div>
+
+          <div class="alert alert-info text-start mb-0" role="alert">
+            <div class="fw-semibold mb-1">What to expect</div>
+            <ul class="mb-0 ps-3">
+              <li>The current app instance will close when the update is ready to apply.</li>
+              <li>Your local database and backup settings are preserved during the ZIP install.</li>
+              <li>If the new window does not reopen automatically, launch Stdytime again from the usual shortcut.</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+(function () {
+  const statusEl = document.getElementById('swUpdateStatusText');
+  const detailEl = document.getElementById('swUpdateDetail');
+  let lastKnownStatus = '';
+
+  async function pollStatus() {
+    try {
+      const response = await fetch('{{ url_for("sw_update_status_api") }}', {
+        cache: 'no-store',
+        headers: { 'Accept': 'application/json' }
+      });
+      const data = await response.json();
+      lastKnownStatus = data.status || '';
+
+      if (statusEl) {
+        statusEl.textContent = data.message || 'Software update in progress...';
+      }
+      if (detailEl) {
+        if (data.error) {
+          detailEl.textContent = data.error;
+          detailEl.className = 'small text-danger mb-4';
+        } else if (data.latest_version) {
+          detailEl.textContent = `Current: ${data.current_version || 'n/a'} · Latest: ${data.latest_version}`;
+          detailEl.className = 'small text-muted mb-4';
+        }
+      }
+
+      if (data.status === 'error') {
+        window.clearInterval(timerId);
+      }
+    } catch (_error) {
+      if (statusEl) {
+        statusEl.textContent = 'The previous app instance is closing. The new version should open shortly...';
+      }
+      if (detailEl && lastKnownStatus && lastKnownStatus !== 'error') {
+        detailEl.textContent = 'Connection to the old app was lost, which usually means restart is underway.';
+        detailEl.className = 'small text-muted mb-4';
+      }
+    }
+  }
+
+  const timerId = window.setInterval(pollStatus, 1500);
+  pollStatus();
+})();
+</script>
+{% endblock %}

@@ -763,3 +763,33 @@ This file is automatically appended by `scripts/version_bump.py` on every versio
 ## v01.03.147 - 2026-07-25
 - TODO: summarize changes for this release.
 
+## v01.03.148 - 2026-07-26
+- Add SW Update menu-driven ZIP updater flow
+
+## v01.03.149 - 2026-07-26
+- Refactor SW Update to private gateway-first architecture with ticketed downloads
+
+## v01.03.150 - 2026-07-26
+- Default SW Update to direct repo mode when no gateway is configured
+
+## v01.03.151 - 2026-07-26
+- Enforce SHA-256 checksum verification for SW Update packages
+
+## v01.03.152 - 2026-07-26
+- Add minisign signature verification support for SW Update packages
+
+## v01.03.153 - 2026-07-26
+- TODO: summarize changes for this release.
+
+## v01.03.154 - 2026-07-26
+- TODO: summarize changes for this release.
+
+## v01.03.155 - 2026-07-26
+- TODO: summarize changes for this release.
+
+## v01.03.156 - 2026-07-26
+- TODO: summarize changes for this release.
+
+## v01.03.157 - 2026-07-26
+- TODO: summarize changes for this release.
+

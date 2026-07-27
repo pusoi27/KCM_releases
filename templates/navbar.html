@@ -135,6 +135,7 @@
       >Scanner</a>
     </li>
     <li><a class="dropdown-item ps-4" href="{{ url_for('setup_storage') }}">DB Backup</a></li>
+    <li><a class="dropdown-item ps-4" href="#" onclick="return triggerSoftwareUpdate(event);">SW Update</a></li>
     <li><a class="dropdown-item ps-4" href="{{ url_for('license_page') }}">Upgrade License</a></li>
     {% if dev_trace_enabled %}
     <li><hr class="dropdown-divider"></li>
@@ -387,6 +388,63 @@ document.addEventListener('DOMContentLoaded', function() {
   refreshStationConnectionBadge();
   window.setInterval(refreshStationConnectionBadge, 30000);
 });
+
+async function triggerSoftwareUpdate(event) {
+  if (event) {
+    event.preventDefault();
+  }
+
+  const trigger = event && event.currentTarget ? event.currentTarget : null;
+  const originalLabel = trigger ? trigger.textContent : 'SW Update';
+
+  if (trigger) {
+    if (trigger.dataset.busy === '1') {
+      return false;
+    }
+    trigger.dataset.busy = '1';
+    trigger.textContent = 'SW Update...';
+  }
+
+  try {
+    const response = await fetch('{{ url_for("sw_update_check_api") }}', {
+      cache: 'no-store',
+      headers: { 'Accept': 'application/json' }
+    });
+    const data = await response.json();
+
+    if (!response.ok || !data.ok) {
+      alert(data.error || 'Unable to check for a software update right now.');
+      return false;
+    }
+
+    if (data.busy) {
+      window.location.href = data.install_url;
+      return false;
+    }
+
+    if (!data.update_available) {
+      alert(data.message || `Stdytime is already up to date at version ${data.current_version || 'current'}.`);
+      return false;
+    }
+
+    const confirmed = window.confirm(
+      `A newer Stdytime software update is available.\n\nCurrent version: ${data.current_version}\nLatest version: ${data.latest_version}\nRelease file: ${data.asset_name}\n\nDownload, install, and restart now?`
+    );
+
+    if (confirmed) {
+      window.location.href = data.install_url;
+    }
+  } catch (error) {
+    alert(`Unable to check for a software update right now. ${error}`);
+  } finally {
+    if (trigger) {
+      trigger.dataset.busy = '0';
+      trigger.textContent = originalLabel;
+    }
+  }
+
+  return false;
+}
 </script>
 
 <!-- Staff Report Modal -->
