@@ -286,15 +286,30 @@ if not exist "%ROOT%scripts\publish_github_release_assets.py" (
 set "RELEASES_REPO_SLUG=pusoi27/stdytime_releases"
 set "RELEASE_TAG=v%APP_VERSION%"
 set "RELEASE_TITLE=Stdytime %APP_VERSION%"
+set "PUBLISH_SCRIPT=%ROOT%scripts\publish_github_release_assets.py"
+set "PY_EXE=%ROOT%.venv\Scripts\python.exe"
+set "ZIP_ASSET_1=%ROOT%%ZIP_FILE%"
+set "ZIP_ASSET_2=%ROOT%%ZIP_SHA_FILE%"
+set "ZIP_ASSET_3=%ROOT%%ZIP_MINISIG_FILE%"
 
 echo [INFO] Publishing GitHub Release assets to %RELEASES_REPO_SLUG% @ %RELEASE_TAG%...
-".venv\Scripts\python.exe" "%ROOT%scripts\publish_github_release_assets.py" ^
-  --repo "%RELEASES_REPO_SLUG%" ^
-  --tag "%RELEASE_TAG%" ^
-  --title "%RELEASE_TITLE%" ^
-  --asset "%ROOT%%ZIP_FILE%" ^
-  --asset "%ROOT%%ZIP_SHA_FILE%" ^
-  --asset "%ROOT%%ZIP_MINISIG_FILE%"
+echo [INFO] Upload in progress... this can take a few minutes for large ZIP files.
+powershell -NoProfile -ExecutionPolicy Bypass -Command ^
+  "$argsList=@($env:PY_EXE,$env:PUBLISH_SCRIPT,'--repo',$env:RELEASES_REPO_SLUG,'--tag',$env:RELEASE_TAG,'--title',$env:RELEASE_TITLE,'--asset',$env:ZIP_ASSET_1,'--asset',$env:ZIP_ASSET_2,'--asset',$env:ZIP_ASSET_3);" ^
+  "$psi=New-Object System.Diagnostics.ProcessStartInfo;" ^
+  "$psi.FileName=$argsList[0];" ^
+  "$psi.UseShellExecute=$false;" ^
+  "$psi.RedirectStandardOutput=$true;" ^
+  "$psi.RedirectStandardError=$true;" ^
+  "for($i=1;$i -lt $argsList.Count;$i++){[void]$psi.ArgumentList.Add($argsList[$i])};" ^
+  "$p=[System.Diagnostics.Process]::Start($psi);" ^
+  "$frames='|','/','-','\\'; $n=0;" ^
+  "while(-not $p.HasExited){Write-Host -NoNewline \"`r[INFO] Uploading release assets... $($frames[$n %% $frames.Length])\"; Start-Sleep -Milliseconds 220; $n++};" ^
+  "$out=$p.StandardOutput.ReadToEnd(); $err=$p.StandardError.ReadToEnd();" ^
+  "Write-Host \"`r[INFO] Uploading release assets... done    \";" ^
+  "if($out){Write-Host $out.TrimEnd()};" ^
+  "if($err){Write-Host $err.TrimEnd()};" ^
+  "exit $p.ExitCode"
 if errorlevel 1 (
   echo [ERROR] Failed to publish GitHub Release assets.
   exit /b 1
