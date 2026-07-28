@@ -52,12 +52,6 @@
                                         Run health check
                                     </button>
                                 </form>
-                                <form method="POST" action="{{ url_for('setup_storage_backup_local') }}" class="m-0">
-                                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                                    <button class="btn btn-outline-success btn-sm" type="submit">
-                                        Snapshot local DB
-                                    </button>
-                                </form>
                             </div>
                         </div>
                     </div>
