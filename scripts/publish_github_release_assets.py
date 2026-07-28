@@ -16,6 +16,7 @@ import argparse
 import json
 import os
 import sys
+import time
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlencode
@@ -169,20 +170,53 @@ def _upload_asset(repo: str, release: dict[str, Any], asset_path: Path, *, token
     upload_url_base = upload_url_template.split("{", 1)[0]
     upload_url = f"{upload_url_base}?{urlencode({'name': asset_path.name})}"
 
-    data = asset_path.read_bytes()
-    response = _github_request(
-        "POST",
-        upload_url,
-        token=token,
-        headers={
-            "Content-Type": "application/octet-stream",
-        },
-        data=data,
-        expected=(201,),
-        timeout=max(120, 30 + int(asset_path.stat().st_size / (512 * 1024))),
-    )
-    payload = response.json()
-    return str(payload.get("browser_download_url") or "").strip()
+    upload_retries_raw = (os.getenv("SW_UPDATE_GITHUB_UPLOAD_RETRIES") or "3").strip()
+    try:
+        upload_retries = max(1, min(8, int(upload_retries_raw)))
+    except ValueError:
+        upload_retries = 3
+
+    upload_timeout_raw = (os.getenv("SW_UPDATE_GITHUB_UPLOAD_TIMEOUT_SECONDS") or "1800").strip()
+    try:
+        upload_timeout_seconds = max(300, min(7200, int(upload_timeout_raw)))
+    except ValueError:
+        upload_timeout_seconds = 1800
+
+    last_error: Exception | None = None
+    for attempt in range(1, upload_retries + 1):
+        try:
+            with asset_path.open("rb") as handle:
+                response = _github_request(
+                    "POST",
+                    upload_url,
+                    token=token,
+                    headers={
+                        "Content-Type": "application/octet-stream",
+                    },
+                    data=handle,
+                    expected=(201,),
+                    timeout=(30, upload_timeout_seconds),
+                )
+            payload = response.json()
+            return str(payload.get("browser_download_url") or "").strip()
+        except (requests.exceptions.Timeout, requests.exceptions.ConnectionError, requests.exceptions.ChunkedEncodingError) as exc:
+            last_error = exc
+            if attempt >= upload_retries:
+                break
+            wait_seconds = min(30, 2 * attempt)
+            print(
+                f"Upload attempt {attempt}/{upload_retries} for {asset_path.name} failed ({exc}). "
+                f"Retrying in {wait_seconds}s...",
+                file=sys.stderr,
+            )
+            time.sleep(wait_seconds)
+
+    if last_error:
+        raise RuntimeError(
+            f"Upload failed for {asset_path.name} after {upload_retries} attempts: {last_error}"
+        )
+
+    raise RuntimeError(f"Upload failed for {asset_path.name} due to an unknown error.")
 
 
 def parse_args(argv: list[str]) -> argparse.Namespace:
