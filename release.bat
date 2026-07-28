@@ -229,7 +229,7 @@ echo [TRACE] ZIP checksum file: %ZIP_SHA_FILE%
 echo [TRACE] ZIP minisig file: %ZIP_MINISIG_FILE%
 
 echo.
-echo [7/8] Publishing ZIP to releases repository...
+echo [7/8] Publishing ZIP as GitHub Release assets...
 call :publish_zip_release_repo
 if errorlevel 1 exit /b 1
 
@@ -273,165 +273,34 @@ if not exist "%ZIP_MINISIG_FILE%" (
   exit /b 1
 )
 
-set "RELEASES_REPO_URL=https://github.com/pusoi27/stdytime_releases.git"
-set "RELEASES_REPO_BASE=%TEMP%\stdytime_release_cache"
-set "RELEASES_REPO_DIR=%RELEASES_REPO_BASE%\stdytime_releases"
-
-if not exist "%RELEASES_REPO_BASE%" mkdir "%RELEASES_REPO_BASE%" >nul 2>nul
-
-if not exist "%RELEASES_REPO_DIR%\.git" (
-  echo [INFO] Cloning releases repository...
-  git clone "%RELEASES_REPO_URL%" "%RELEASES_REPO_DIR%"
-  if errorlevel 1 (
-    echo [ERROR] Failed to clone releases repository: %RELEASES_REPO_URL%
-    exit /b 1
-  )
+if "%APP_VERSION%"=="" (
+  echo [ERROR] APP_VERSION is not set before release asset publishing.
+  exit /b 1
 )
 
-pushd "%RELEASES_REPO_DIR%" >nul
+if not exist "%ROOT%scripts\publish_github_release_assets.py" (
+  echo [ERROR] Missing script: scripts\publish_github_release_assets.py
+  exit /b 1
+)
+
+set "RELEASES_REPO_SLUG=pusoi27/stdytime_releases"
+set "RELEASE_TAG=v%APP_VERSION%"
+set "RELEASE_TITLE=Stdytime %APP_VERSION%"
+
+echo [INFO] Publishing GitHub Release assets to %RELEASES_REPO_SLUG% @ %RELEASE_TAG%...
+".venv\Scripts\python.exe" "%ROOT%scripts\publish_github_release_assets.py" ^
+  --repo "%RELEASES_REPO_SLUG%" ^
+  --tag "%RELEASE_TAG%" ^
+  --title "%RELEASE_TITLE%" ^
+  --asset "%ROOT%%ZIP_FILE%" ^
+  --asset "%ROOT%%ZIP_SHA_FILE%" ^
+  --asset "%ROOT%%ZIP_MINISIG_FILE%"
 if errorlevel 1 (
-  echo [ERROR] Failed to enter releases repository folder: %RELEASES_REPO_DIR%
+  echo [ERROR] Failed to publish GitHub Release assets.
   exit /b 1
 )
 
-git lfs version >nul 2>nul
-if errorlevel 1 (
-  echo [ERROR] Git LFS is not installed or not available in PATH.
-  popd >nul
-  exit /b 1
-)
-
-git lfs install --local >nul
-if errorlevel 1 (
-  echo [ERROR] Failed to initialize Git LFS in releases repository.
-  popd >nul
-  exit /b 1
-)
-echo [INFO] Git LFS hooks initialized in releases repository.
-
-git lfs track "*.zip" >nul
-if errorlevel 1 (
-  echo [ERROR] Failed to configure Git LFS tracking for ZIP files.
-  popd >nul
-  exit /b 1
-)
-echo [INFO] Git LFS tracking rule ensured: *.zip
-
-set "RELEASES_REPO_EMPTY=0"
-git rev-parse --verify HEAD >nul 2>nul
-if errorlevel 1 (
-  set "RELEASES_REPO_EMPTY=1"
-  echo [INFO] Releases repository is empty; preparing initial main branch commit.
-  git checkout -B main >nul 2>nul
-  if errorlevel 1 (
-    echo [ERROR] Failed to initialize local main branch in releases repository.
-    popd >nul
-    exit /b 1
-  )
-) else (
-  git fetch origin
-  if errorlevel 1 (
-    echo [ERROR] Failed to fetch releases repository updates.
-    popd >nul
-    exit /b 1
-  )
-
-  git checkout main >nul 2>nul
-  if errorlevel 1 (
-    git checkout master >nul 2>nul
-    if errorlevel 1 (
-      echo [ERROR] Could not checkout either main or master in releases repository.
-      popd >nul
-      exit /b 1
-    )
-  )
-
-  git pull --rebase
-  if errorlevel 1 (
-    echo [ERROR] Failed to pull latest changes in releases repository.
-    popd >nul
-    exit /b 1
-  )
-)
-
-echo [INFO] Purging previous release ZIP artifacts from releases repository...
-git rm -f --ignore-unmatch "stdytime_installer_v*.zip" "stdytime_installer_v*.zip.sha256" "stdytime_installer_v*.zip.minisig" >nul 2>nul
-for %%F in ("stdytime_installer_v*.zip" "stdytime_installer_v*.zip.sha256" "stdytime_installer_v*.zip.minisig") do (
-  if exist "%%~F" del /f /q "%%~F" >nul 2>nul
-)
-echo [INFO] Previous release ZIP artifacts removed (if any).
-
-copy /Y "%ROOT%%ZIP_FILE%" "%RELEASES_REPO_DIR%\%ZIP_FILE%" >nul
-if not exist "%RELEASES_REPO_DIR%\%ZIP_FILE%" (
-  echo [ERROR] Failed to copy ZIP into releases repository.
-  popd >nul
-  exit /b 1
-)
-echo [INFO] ZIP copied into releases repository working tree: %ZIP_FILE%
-
-copy /Y "%ROOT%%ZIP_SHA_FILE%" "%RELEASES_REPO_DIR%\%ZIP_SHA_FILE%" >nul
-if not exist "%RELEASES_REPO_DIR%\%ZIP_SHA_FILE%" (
-  echo [ERROR] Failed to copy ZIP SHA256 into releases repository.
-  popd >nul
-  exit /b 1
-)
-echo [INFO] ZIP SHA256 copied into releases repository working tree: %ZIP_SHA_FILE%
-
-copy /Y "%ROOT%%ZIP_MINISIG_FILE%" "%RELEASES_REPO_DIR%\%ZIP_MINISIG_FILE%" >nul
-if not exist "%RELEASES_REPO_DIR%\%ZIP_MINISIG_FILE%" (
-  echo [ERROR] Failed to copy ZIP minisig into releases repository.
-  popd >nul
-  exit /b 1
-)
-echo [INFO] ZIP minisig copied into releases repository working tree: %ZIP_MINISIG_FILE%
-
-git add .gitattributes "%ZIP_FILE%" "%ZIP_SHA_FILE%" "%ZIP_MINISIG_FILE%"
-if errorlevel 1 (
-  echo [ERROR] Failed to stage ZIP sidecars/.gitattributes in releases repository.
-  popd >nul
-  exit /b 1
-)
-echo [INFO] Staged .gitattributes, ZIP, SHA256, and minisig for releases repository commit.
-
-git diff --cached --quiet
-if errorlevel 1 goto :release_repo_has_changes
-
-echo [INFO] ZIP already up to date in releases repository; nothing to commit.
-popd >nul
-exit /b 0
-
-:release_repo_has_changes
-git commit -m "Add %ZIP_FILE%"
-if errorlevel 1 (
-  echo [ERROR] Failed to commit ZIP artifacts in releases repository.
-  popd >nul
-  exit /b 1
-)
-
-for /f "delims=" %%C in ('git rev-parse --short HEAD') do set "RELEASES_COMMIT=%%C"
-if defined RELEASES_COMMIT echo [INFO] Releases repo commit created: %RELEASES_COMMIT%
-
-echo [INFO] Git LFS tracked files in releases repo:
-git lfs ls-files
-
-if "%RELEASES_REPO_EMPTY%"=="1" (
-  git push -u origin main
-  if errorlevel 1 (
-    echo [ERROR] Failed to push initial ZIP commit to releases repository.
-    popd >nul
-    exit /b 1
-  )
-) else (
-  git push origin HEAD
-  if errorlevel 1 (
-    echo [ERROR] Failed to push ZIP to releases repository.
-    popd >nul
-    exit /b 1
-  )
-)
-
-echo [INFO] ZIP published to releases repository: %RELEASES_REPO_URL%
-popd >nul
+echo [INFO] ZIP artifacts published as GitHub Release assets.
 exit /b 0
 
 :generate_zip_minisig

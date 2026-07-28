@@ -368,48 +368,49 @@ def _github_download_headers() -> dict[str, str]:
 
 def _list_release_assets_via_api(repo_url: str) -> list[dict]:
     owner, repo = _parse_github_repo(repo_url)
-    queue = [f'https://api.github.com/repos/{owner}/{repo}/contents']
-    seen = set()
-    files: list[dict[str, str]] = []
+    releases_url = f'https://api.github.com/repos/{owner}/{repo}/releases?per_page=40'
+    response = requests.get(releases_url, headers=_github_headers(), timeout=_gateway_timeout_seconds())
+    if response.status_code == 404:
+        raise FileNotFoundError(f'GitHub repository not reachable: {repo_url}')
+    response.raise_for_status()
 
-    while queue:
-        api_url = queue.pop(0)
-        if api_url in seen:
+    payload = response.json()
+    releases = payload if isinstance(payload, list) else []
+    assets: list[dict] = []
+    for release in releases:
+        if not isinstance(release, dict):
             continue
-        seen.add(api_url)
+        if bool(release.get('draft')):
+            continue
+        if _update_channel() == 'stable' and bool(release.get('prerelease')):
+            continue
 
-        response = requests.get(api_url, headers=_github_headers(), timeout=_gateway_timeout_seconds())
-        if response.status_code == 404:
-            raise FileNotFoundError(f'GitHub repository not reachable: {repo_url}')
-        response.raise_for_status()
-
-        payload = response.json()
-        entries = payload if isinstance(payload, list) else [payload]
-        for item in entries:
+        release_assets = release.get('assets') if isinstance(release.get('assets'), list) else []
+        download_by_name: dict[str, str] = {}
+        for item in release_assets:
             if not isinstance(item, dict):
                 continue
-            item_type = str(item.get('type') or '').strip().lower()
-            if item_type == 'dir' and item.get('url'):
-                queue.append(str(item['url']))
-                continue
-            if item_type != 'file':
-                continue
-            files.append({
-                'name': str(item.get('name') or ''),
-                'download_url': str(item.get('download_url') or ''),
-            })
+            item_name = str(item.get('name') or '').strip()
+            browser_download_url = str(item.get('browser_download_url') or '').strip()
+            if item_name and browser_download_url:
+                download_by_name[item_name.lower()] = browser_download_url
 
-    download_by_name = {entry['name'].lower(): entry['download_url'] for entry in files}
-    assets: list[dict] = []
-    for entry in files:
-        asset = _build_asset_record(entry.get('name', ''), entry.get('download_url', ''), repo_url)
-        if not asset:
-            continue
-        checksum_name = f"{asset['name']}.sha256"
-        signature_name = f"{asset['name']}.minisig"
-        asset['checksum_url'] = str(download_by_name.get(checksum_name.lower()) or '').strip()
-        asset['signature_url'] = str(download_by_name.get(signature_name.lower()) or '').strip()
-        assets.append(asset)
+        for item in release_assets:
+            if not isinstance(item, dict):
+                continue
+            item_name = str(item.get('name') or '').strip()
+            browser_download_url = str(item.get('browser_download_url') or '').strip()
+            if not item_name or not browser_download_url:
+                continue
+            asset = _build_asset_record(item_name, browser_download_url, repo_url)
+            if not asset:
+                continue
+
+            checksum_name = f"{asset['name']}.sha256"
+            signature_name = f"{asset['name']}.minisig"
+            asset['checksum_url'] = str(download_by_name.get(checksum_name.lower()) or '').strip()
+            asset['signature_url'] = str(download_by_name.get(signature_name.lower()) or '').strip()
+            assets.append(asset)
 
     return assets
 
@@ -567,6 +568,9 @@ def _download_release_zip(
         for key, value in extra_headers.items():
             if key and value is not None:
                 headers[str(key)] = str(value)
+    headers.setdefault('Cache-Control', 'no-cache, no-store, must-revalidate')
+    headers.setdefault('Pragma', 'no-cache')
+    headers.setdefault('Expires', '0')
 
     response = requests.get(
         final_url,
@@ -834,16 +838,44 @@ def register_sw_update_routes(app, get_app_version_func, shutdown_flush_once=Non
             )
 
             download_spec = _resolve_download_spec(result, identity)
-            extract_dir = _download_release_zip(
-                download_spec.get('download_url') or '',
-                asset_name=str(result.get('asset_name') or 'stdytime_update.zip'),
-                extra_headers=download_spec.get('download_headers') if isinstance(download_spec.get('download_headers'), dict) else None,
-                expected_sha256=str(download_spec.get('expected_sha256') or ''),
-                checksum_url=str(download_spec.get('checksum_url') or ''),
-                expected_signature=str(download_spec.get('expected_signature') or ''),
-                signature_url=str(download_spec.get('signature_url') or ''),
-                minisign_public_key=str(download_spec.get('minisign_public_key') or ''),
-            )
+            try:
+                extract_dir = _download_release_zip(
+                    download_spec.get('download_url') or '',
+                    asset_name=str(result.get('asset_name') or 'stdytime_update.zip'),
+                    extra_headers=download_spec.get('download_headers') if isinstance(download_spec.get('download_headers'), dict) else None,
+                    expected_sha256=str(download_spec.get('expected_sha256') or ''),
+                    checksum_url=str(download_spec.get('checksum_url') or ''),
+                    expected_signature=str(download_spec.get('expected_signature') or ''),
+                    signature_url=str(download_spec.get('signature_url') or ''),
+                    minisign_public_key=str(download_spec.get('minisign_public_key') or ''),
+                )
+            except RuntimeError as first_exc:
+                if 'Checksum verification failed' not in str(first_exc) or result.get('source') != 'gateway':
+                    raise
+
+                # Transient cache/race hardening: refresh ticket/spec once and retry.
+                _set_update_state(
+                    status='downloading',
+                    message='Checksum mismatch detected. Refreshing download ticket and retrying once...',
+                    error='',
+                    current_version=current_version,
+                    latest_version=result.get('latest_version') or '',
+                    asset_name=result.get('asset_name') or '',
+                    repo_url=result.get('repo_url') or '',
+                    source=result.get('source') or '',
+                )
+
+                download_spec = _resolve_download_spec(result, identity)
+                extract_dir = _download_release_zip(
+                    download_spec.get('download_url') or '',
+                    asset_name=str(result.get('asset_name') or 'stdytime_update.zip'),
+                    extra_headers=download_spec.get('download_headers') if isinstance(download_spec.get('download_headers'), dict) else None,
+                    expected_sha256=str(download_spec.get('expected_sha256') or ''),
+                    checksum_url=str(download_spec.get('checksum_url') or ''),
+                    expected_signature=str(download_spec.get('expected_signature') or ''),
+                    signature_url=str(download_spec.get('signature_url') or ''),
+                    minisign_public_key=str(download_spec.get('minisign_public_key') or ''),
+                )
 
             _set_update_state(
                 status='preparing',
