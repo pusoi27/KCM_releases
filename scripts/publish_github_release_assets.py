@@ -43,17 +43,26 @@ def _resolve_token(explicit_token: str | None, root: Path) -> str:
     if explicit_token and explicit_token.strip():
         return explicit_token.strip()
 
+    env_publish_token = (os.getenv("SW_UPDATE_GITHUB_PUBLISH_TOKEN") or "").strip()
+    if env_publish_token:
+        return env_publish_token
+
     env_token = (os.getenv("SW_UPDATE_GITHUB_TOKEN") or "").strip()
     if env_token:
         return env_token
 
     dotenv = _read_dotenv(root / ".env")
+    publish_token = (dotenv.get("SW_UPDATE_GITHUB_PUBLISH_TOKEN") or "").strip()
+    if publish_token:
+        return publish_token
+
     token = (dotenv.get("SW_UPDATE_GITHUB_TOKEN") or "").strip()
     if token:
         return token
 
     raise RuntimeError(
-        "Missing GitHub token. Set SW_UPDATE_GITHUB_TOKEN in environment or .env, "
+        "Missing GitHub token. Set SW_UPDATE_GITHUB_PUBLISH_TOKEN (preferred) or "
+        "SW_UPDATE_GITHUB_TOKEN in environment/.env, "
         "or pass --token explicitly."
     )
 
@@ -79,6 +88,12 @@ def _github_request(
     response = requests.request(method, url, headers=headers, timeout=timeout, **kwargs)
     if response.status_code not in expected:
         body = (response.text or "").strip()
+        if response.status_code == 403 and "Resource not accessible by personal access token" in body:
+            raise RuntimeError(
+                "GitHub token lacks permission to manage releases. "
+                "Use SW_UPDATE_GITHUB_PUBLISH_TOKEN (or --token) with access to this repo and "
+                "fine-grained permission 'Contents: Read and write' (or classic 'repo' scope)."
+            )
         raise RuntimeError(f"GitHub API {method} {url} failed ({response.status_code}): {body[:600]}")
     return response
 
