@@ -4,6 +4,8 @@ import requests
 import socket
 import threading
 import time
+import os
+import sys
 
 from modules.database import get_db_config_status, save_db_config_paths, get_station_runtime_config
 from modules.database import sync_to_gdrive_now, sync_from_gdrive_now, get_last_sync_error
@@ -20,6 +22,35 @@ _PAIR_CODE_STATE = {
     'code': '',
     'expires_at': 0.0,
 }
+
+
+def _current_app_version() -> str:
+    """Read current local app version from VERSION file with safe fallbacks."""
+    default_version = '00.00.01'
+
+    candidates = []
+    if getattr(sys, 'frozen', False):
+        candidates.append(os.path.join(os.path.dirname(sys.executable), 'VERSION'))
+
+    project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    candidates.append(os.path.join(project_root, 'VERSION'))
+    candidates.append(os.path.join(os.getcwd(), 'VERSION'))
+
+    seen = set()
+    for path in candidates:
+        norm = os.path.normcase(os.path.abspath(path))
+        if norm in seen:
+            continue
+        seen.add(norm)
+        try:
+            if os.path.exists(path):
+                with open(path, 'r', encoding='utf-8') as handle:
+                    value = (handle.read().strip() or default_version)
+                return value
+        except Exception:
+            continue
+
+    return default_version
 
 
 def _normalize_base_url(raw_url: str) -> str:
@@ -607,12 +638,30 @@ def register_setup_routes(app):
             return jsonify({'ok': False, 'error': 'Invalid pairing token.'}), 401
         return jsonify({'ok': True, 'station_mode': runtime.get('station_mode'), 'backup_mode': runtime.get('backup_mode')}), 200
 
+    @app.route('/api/station/version', methods=['GET'])
+    def api_station_version():
+        """Expose instructor app version to paired scanner station."""
+        runtime = get_station_runtime_config()
+        expected = str(runtime.get('station_pairing_token') or '').strip()
+        received = str(request.headers.get('X-Stdytime-Pairing-Token') or '').strip()
+        if not expected:
+            return jsonify({'ok': False, 'error': 'Pairing token is not configured on instructor station.'}), 503
+        if expected != received:
+            return jsonify({'ok': False, 'error': 'Invalid pairing token.'}), 401
+        return jsonify({
+            'ok': True,
+            'app_version': _current_app_version(),
+            'station_mode': runtime.get('station_mode'),
+            'backup_mode': runtime.get('backup_mode'),
+        }), 200
+
     @app.route('/api/station/connection-status', methods=['GET'])
     @require_login
     def api_station_connection_status():
         sync_observability = scanner_sync.get_queue_observability()
         runtime = get_station_runtime_config()
         station_mode = str(runtime.get('station_mode') or '').strip().lower()
+        scanner_version = _current_app_version()
 
         if station_mode != 'scanner_api_client':
             return jsonify({
@@ -621,6 +670,10 @@ def register_setup_routes(app):
                 'tone': 'secondary',
                 'label': 'Station Link: n/a',
                 'tooltip': 'Connection badge is only used on Scanner API Client mode.',
+                'scanner_version': scanner_version,
+                'instructor_version': '',
+                'version_match': True,
+                'version_warning': '',
                 'sync_observability': sync_observability,
             }), 200
 
@@ -633,6 +686,10 @@ def register_setup_routes(app):
                 'tone': 'warning',
                 'label': 'Station Link: setup',
                 'tooltip': 'Instructor API URL is not configured.',
+                'scanner_version': scanner_version,
+                'instructor_version': '',
+                'version_match': True,
+                'version_warning': '',
                 'sync_observability': sync_observability,
             }), 200
         if not token:
@@ -642,6 +699,10 @@ def register_setup_routes(app):
                 'tone': 'warning',
                 'label': 'Station Link: token',
                 'tooltip': 'Pairing token is not configured.',
+                'scanner_version': scanner_version,
+                'instructor_version': '',
+                'version_match': True,
+                'version_warning': '',
                 'sync_observability': sync_observability,
             }), 200
 
@@ -654,12 +715,39 @@ def register_setup_routes(app):
             )
             payload = resp.json() if resp.headers.get('content-type', '').lower().startswith('application/json') else {}
             if resp.ok and payload.get('ok'):
+                instructor_version = ''
+                version_match = True
+                version_warning = ''
+
+                version_url = f"{base_url}/api/station/version"
+                try:
+                    version_resp = requests.get(
+                        version_url,
+                        headers={"X-Stdytime-Pairing-Token": token, "Accept": "application/json"},
+                        timeout=5,
+                    )
+                    version_payload = version_resp.json() if version_resp.headers.get('content-type', '').lower().startswith('application/json') else {}
+                    if version_resp.ok and version_payload.get('ok'):
+                        instructor_version = str(version_payload.get('app_version') or '').strip()
+                        if instructor_version and instructor_version != scanner_version:
+                            version_match = False
+                            version_warning = (
+                                f"Software version mismatch: Scanner v{scanner_version} vs Instructor v{instructor_version}. "
+                                "Please update this station to match."
+                            )
+                except requests.RequestException:
+                    pass
+
                 return jsonify({
                     'visible': True,
                     'connected': True,
-                    'tone': 'success',
-                    'label': 'Station Link: connected',
-                    'tooltip': f'Scanner linked to Instructor API at {base_url}.',
+                    'tone': 'warning' if not version_match else 'success',
+                    'label': 'Station Link: mismatch' if not version_match else 'Station Link: connected',
+                    'tooltip': version_warning or f'Scanner linked to Instructor API at {base_url}.',
+                    'scanner_version': scanner_version,
+                    'instructor_version': instructor_version,
+                    'version_match': version_match,
+                    'version_warning': version_warning,
                     'sync_observability': sync_observability,
                 }), 200
 
@@ -670,6 +758,10 @@ def register_setup_routes(app):
                 'tone': 'danger',
                 'label': 'Station Link: disconnected',
                 'tooltip': f'Pairing check failed: {reason}',
+                'scanner_version': scanner_version,
+                'instructor_version': '',
+                'version_match': True,
+                'version_warning': '',
                 'sync_observability': sync_observability,
             }), 200
         except requests.RequestException as exc:
@@ -679,6 +771,10 @@ def register_setup_routes(app):
                 'tone': 'danger',
                 'label': 'Station Link: offline',
                 'tooltip': f'Cannot reach Instructor API: {exc}',
+                'scanner_version': scanner_version,
+                'instructor_version': '',
+                'version_match': True,
+                'version_warning': '',
                 'sync_observability': sync_observability,
             }), 200
 
