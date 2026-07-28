@@ -589,8 +589,9 @@ def _download_release_zip(
                 handle.write(chunk)
                 digest.update(chunk)
 
-    resolved_expected_hash = _normalize_sha256_text(expected_sha256)
-    if not resolved_expected_hash and checksum_url:
+    inline_expected_hash = _normalize_sha256_text(expected_sha256)
+    checksum_expected_hash = ''
+    if checksum_url:
         checksum_response = requests.get(
             checksum_url,
             headers=headers,
@@ -601,7 +602,11 @@ def _download_release_zip(
         if checksum_response.status_code == 404:
             raise RuntimeError('Checksum file was not found for the update payload.')
         checksum_response.raise_for_status()
-        resolved_expected_hash = _extract_sha256_from_text(checksum_response.text)
+        checksum_expected_hash = _extract_sha256_from_text(checksum_response.text)
+
+    # Prefer checksum sidecar hash when available to avoid stale inline hashes from
+    # intermediate update metadata caches.
+    resolved_expected_hash = checksum_expected_hash or inline_expected_hash
 
     if _require_checksum_verification() and not resolved_expected_hash:
         raise RuntimeError('Checksum verification required, but no valid SHA-256 value is available for this update.')

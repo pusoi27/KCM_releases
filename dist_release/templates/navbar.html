@@ -135,7 +135,14 @@
       >Scanner</a>
     </li>
     <li><a class="dropdown-item ps-4" href="{{ url_for('setup_storage') }}">DB Backup</a></li>
-    <li><a class="dropdown-item ps-4" href="#" onclick="return triggerSoftwareUpdate(event);">SW Update</a></li>
+    <li>
+      <a
+        class="dropdown-item ps-4{% if not subscription_access.can_access_sw_update %} disabled text-muted menu-item-disabled{% endif %}"
+        href="#"
+        onclick="{% if subscription_access.can_access_sw_update %}return triggerSoftwareUpdate(event);{% else %}return false;{% endif %}"
+        {% if not subscription_access.can_access_sw_update %}aria-disabled="true" tabindex="-1"{% endif %}
+      >SW Update</a>
+    </li>
     <li><a class="dropdown-item ps-4" href="{{ url_for('license_page') }}">Upgrade License</a></li>
     {% if dev_trace_enabled %}
     <li><hr class="dropdown-divider"></li>
@@ -376,12 +383,63 @@ async function refreshStationConnectionBadge() {
     badge.innerHTML = `<i class="bi bi-hdd-network"></i> ${data.label || 'Station Link'}`;
     badge.title = data.tooltip || 'Station link status';
     badge.style.display = 'inline-flex';
+
+    if (data.version_warning) {
+      const warningKey = `${data.scanner_version || ''}|${data.instructor_version || ''}|${data.version_warning}`;
+      showTemporaryStationVersionWarning(data.version_warning, warningKey);
+    }
   } catch (_err) {
     badge.className = 'badge rounded-pill me-3 text-bg-danger';
     badge.innerHTML = '<i class="bi bi-hdd-network"></i> Station Link: error';
     badge.title = 'Unable to check station link status.';
     badge.style.display = 'inline-flex';
   }
+}
+
+let _stationVersionWarningLastKey = '';
+let _stationVersionWarningLastShownAt = 0;
+
+function showTemporaryStationVersionWarning(message, key) {
+  const text = String(message || '').trim();
+  if (!text) return;
+
+  const now = Date.now();
+  const dedupeWindowMs = 5 * 60 * 1000; // avoid repeating the same warning every refresh
+  const normalizedKey = String(key || text);
+  if (_stationVersionWarningLastKey === normalizedKey && (now - _stationVersionWarningLastShownAt) < dedupeWindowMs) {
+    return;
+  }
+
+  _stationVersionWarningLastKey = normalizedKey;
+  _stationVersionWarningLastShownAt = now;
+
+  let host = document.getElementById('stationVersionWarningHost');
+  if (!host) {
+    host = document.createElement('div');
+    host.id = 'stationVersionWarningHost';
+    host.style.position = 'fixed';
+    host.style.top = '12px';
+    host.style.right = '12px';
+    host.style.zIndex = '2000';
+    host.style.maxWidth = '420px';
+    host.style.width = 'calc(100% - 24px)';
+    host.style.pointerEvents = 'none';
+    document.body.appendChild(host);
+  }
+
+  const alertEl = document.createElement('div');
+  alertEl.className = 'alert alert-warning shadow-sm mb-2';
+  alertEl.setAttribute('role', 'alert');
+  alertEl.style.pointerEvents = 'auto';
+  alertEl.innerHTML = `<i class="bi bi-exclamation-triangle-fill me-2"></i>${text}`;
+  host.appendChild(alertEl);
+
+  window.setTimeout(() => {
+    alertEl.remove();
+    if (host && host.childElementCount === 0) {
+      host.remove();
+    }
+  }, 10000);
 }
 
 document.addEventListener('DOMContentLoaded', function() {
