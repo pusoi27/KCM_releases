@@ -294,22 +294,7 @@ set "ZIP_ASSET_3=%ROOT%%ZIP_MINISIG_FILE%"
 
 echo [INFO] Publishing GitHub Release assets to %RELEASES_REPO_SLUG% @ %RELEASE_TAG%...
 echo [INFO] Upload in progress... this can take a few minutes for large ZIP files.
-powershell -NoProfile -ExecutionPolicy Bypass -Command ^
-  "$argsList=@($env:PY_EXE,$env:PUBLISH_SCRIPT,'--repo',$env:RELEASES_REPO_SLUG,'--tag',$env:RELEASE_TAG,'--title',$env:RELEASE_TITLE,'--asset',$env:ZIP_ASSET_1,'--asset',$env:ZIP_ASSET_2,'--asset',$env:ZIP_ASSET_3);" ^
-  "$psi=New-Object System.Diagnostics.ProcessStartInfo;" ^
-  "$psi.FileName=$argsList[0];" ^
-  "$psi.UseShellExecute=$false;" ^
-  "$psi.RedirectStandardOutput=$true;" ^
-  "$psi.RedirectStandardError=$true;" ^
-  "for($i=1;$i -lt $argsList.Count;$i++){[void]$psi.ArgumentList.Add($argsList[$i])};" ^
-  "$p=[System.Diagnostics.Process]::Start($psi);" ^
-  "$frames='|','/','-','\\'; $n=0;" ^
-  "while(-not $p.HasExited){Write-Host -NoNewline \"`r[INFO] Uploading release assets... $($frames[$n %% $frames.Length])\"; Start-Sleep -Milliseconds 220; $n++};" ^
-  "$out=$p.StandardOutput.ReadToEnd(); $err=$p.StandardError.ReadToEnd();" ^
-  "Write-Host \"`r[INFO] Uploading release assets... done    \";" ^
-  "if($out){Write-Host $out.TrimEnd()};" ^
-  "if($err){Write-Host $err.TrimEnd()};" ^
-  "exit $p.ExitCode"
+"%PY_EXE%" "%PUBLISH_SCRIPT%" --repo "%RELEASES_REPO_SLUG%" --tag "%RELEASE_TAG%" --title "%RELEASE_TITLE%" --asset "%ZIP_ASSET_1%" --asset "%ZIP_ASSET_2%" --asset "%ZIP_ASSET_3%"
 if errorlevel 1 (
   echo [ERROR] Failed to publish GitHub Release assets.
   exit /b 1
