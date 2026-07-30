@@ -32,6 +32,7 @@ _UPDATE_STATE = {
     'asset_name': '',
     'repo_url': '',
     'source': '',
+    'debug_log_path': '',
     'started_at': 0.0,
     'updated_at': 0.0,
 }
@@ -47,6 +48,25 @@ def _set_update_state(**fields) -> dict:
 def _get_update_state() -> dict:
     with _UPDATE_LOCK:
         return dict(_UPDATE_STATE)
+
+
+def _sw_update_debug_log_path() -> Path:
+    local_appdata = str(os.getenv('LOCALAPPDATA', '') or '').strip()
+    if local_appdata:
+        root = Path(local_appdata) / 'Stdytime' / 'logs'
+    else:
+        root = Path(__file__).resolve().parents[1] / 'logs'
+    root.mkdir(parents=True, exist_ok=True)
+    return root / 'sw_update_debug.log'
+
+
+def _sw_update_debug_log(message: str) -> None:
+    try:
+        line = f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] {str(message or '').strip()}\n"
+        with _sw_update_debug_log_path().open('a', encoding='utf-8') as handle:
+            handle.write(line)
+    except Exception:
+        pass
 
 
 def _as_bool(value: str | bool | None, default: bool = False) -> bool:
@@ -363,6 +383,7 @@ def _github_download_headers() -> dict[str, str]:
     token = str(os.getenv('SW_UPDATE_GITHUB_TOKEN', '') or '').strip()
     if token:
         headers['Authorization'] = f'Bearer {token}'
+        headers['Accept'] = 'application/octet-stream'
     return headers
 
 
@@ -376,6 +397,7 @@ def _list_release_assets_via_api(repo_url: str) -> list[dict]:
 
     payload = response.json()
     releases = payload if isinstance(payload, list) else []
+    has_token = bool(str(os.getenv('SW_UPDATE_GITHUB_TOKEN', '') or '').strip())
     assets: list[dict] = []
     for release in releases:
         if not isinstance(release, dict):
@@ -392,17 +414,21 @@ def _list_release_assets_via_api(repo_url: str) -> list[dict]:
                 continue
             item_name = str(item.get('name') or '').strip()
             browser_download_url = str(item.get('browser_download_url') or '').strip()
-            if item_name and browser_download_url:
-                download_by_name[item_name.lower()] = browser_download_url
+            api_download_url = str(item.get('url') or '').strip()
+            selected_download_url = api_download_url if has_token and api_download_url else browser_download_url
+            if item_name and selected_download_url:
+                download_by_name[item_name.lower()] = selected_download_url
 
         for item in release_assets:
             if not isinstance(item, dict):
                 continue
             item_name = str(item.get('name') or '').strip()
             browser_download_url = str(item.get('browser_download_url') or '').strip()
-            if not item_name or not browser_download_url:
+            api_download_url = str(item.get('url') or '').strip()
+            selected_download_url = api_download_url if has_token and api_download_url else browser_download_url
+            if not item_name or not selected_download_url:
                 continue
-            asset = _build_asset_record(item_name, browser_download_url, repo_url)
+            asset = _build_asset_record(item_name, selected_download_url, repo_url)
             if not asset:
                 continue
 
@@ -563,6 +589,8 @@ def _download_release_zip(
     if not final_url:
         raise RuntimeError('Update payload URL is missing.')
 
+    _sw_update_debug_log(f'Download step started. URL={final_url}')
+
     headers = {'User-Agent': 'Stdytime-SW-Updater'}
     if isinstance(extra_headers, dict):
         for key, value in extra_headers.items():
@@ -578,6 +606,7 @@ def _download_release_zip(
         timeout=(_gateway_timeout_seconds(), 180),
         stream=True,
     )
+    _sw_update_debug_log(f'Download response status={response.status_code} for URL={final_url}')
     if response.status_code in {401, 403}:
         raise RuntimeError('Update download was denied by the update server.')
     if response.status_code == 404:
@@ -588,19 +617,24 @@ def _download_release_zip(
     zip_path = temp_dir / (asset_name or 'stdytime_update.zip')
     digest = hashlib.sha256()
     with zip_path.open('wb') as handle:
+        total_bytes = 0
         for chunk in response.iter_content(chunk_size=1024 * 256):
             if chunk:
                 handle.write(chunk)
                 digest.update(chunk)
+                total_bytes += len(chunk)
+    _sw_update_debug_log(f'Download complete. bytes={total_bytes} file={zip_path}')
 
     inline_expected_hash = _normalize_sha256_text(expected_sha256)
     checksum_expected_hash = ''
     if checksum_url:
+        _sw_update_debug_log(f'Checksum fetch started. URL={checksum_url}')
         checksum_response = requests.get(
             checksum_url,
             headers=headers,
             timeout=_gateway_timeout_seconds(),
         )
+        _sw_update_debug_log(f'Checksum response status={checksum_response.status_code} URL={checksum_url}')
         if checksum_response.status_code in {401, 403}:
             raise RuntimeError('Checksum file access was denied by the update source.')
         if checksum_response.status_code == 404:
@@ -621,6 +655,7 @@ def _download_release_zip(
             raise RuntimeError(
                 f'Checksum verification failed for {asset_name}: expected {resolved_expected_hash}, got {downloaded_hash}.'
             )
+        _sw_update_debug_log(f'Checksum verification passed for {asset_name}. hash={downloaded_hash}')
 
     signature_payload = _normalize_signature_text(expected_signature)
     signature_source_url = str(signature_url or '').strip()
@@ -631,6 +666,7 @@ def _download_release_zip(
 
     should_verify_signature = bool(signature_payload or signature_source_url or _require_signature_verification())
     if should_verify_signature:
+        _sw_update_debug_log(f'Signature verification started for {asset_name}. signature_url={signature_source_url or "<inline>"}')
         _verify_minisign_signature(
             zip_path,
             signature_text=signature_payload,
@@ -638,6 +674,7 @@ def _download_release_zip(
             headers=headers,
             public_key=public_key,
         )
+        _sw_update_debug_log(f'Signature verification passed for {asset_name}.')
 
     if not zipfile.is_zipfile(zip_path):
         raise RuntimeError('Downloaded update is not a valid ZIP archive.')
@@ -646,6 +683,8 @@ def _download_release_zip(
     extract_dir.mkdir(parents=True, exist_ok=True)
     with zipfile.ZipFile(zip_path, 'r') as archive:
         archive.extractall(extract_dir)
+
+    _sw_update_debug_log(f'Payload extracted to {extract_dir}')
 
     return extract_dir
 
@@ -670,27 +709,46 @@ def _detect_payload_root(extract_dir: Path) -> Path:
     return extract_dir
 
 
-def _write_update_helper_script(source_dir: Path, install_dir: Path, wait_pid: int) -> Path:
+def _write_update_helper_script(source_dir: Path, install_dir: Path, wait_pid: int, debug_log_path: Path) -> Path:
     helper_dir = Path(tempfile.mkdtemp(prefix='stdytime_sw_apply_'))
     helper_path = helper_dir / 'apply_sw_update.ps1'
     script = f"""
 param(
     [int]$WaitPid,
     [string]$SourceDir,
-    [string]$InstallDir
+    [string]$InstallDir,
+    [string]$DebugLogPath
 )
 
 $ErrorActionPreference = 'Stop'
 
+function Write-UpdateLog([string]$Message) {{
+    try {{
+        $stamp = (Get-Date).ToString('yyyy-MM-dd HH:mm:ss')
+        Add-Content -LiteralPath $DebugLogPath -Value "[$stamp] helper: $Message"
+    }} catch {{
+    }}
+}}
+
+Write-UpdateLog "Helper started. WaitPid=$WaitPid SourceDir=$SourceDir InstallDir=$InstallDir"
+
 for ($i = 0; $i -lt 240; $i++) {{
     if (-not (Get-Process -Id $WaitPid -ErrorAction SilentlyContinue)) {{
+        Write-UpdateLog "Target process exited after $i polls."
         break
     }}
     Start-Sleep -Milliseconds 500
 }}
 
+if (Get-Process -Id $WaitPid -ErrorAction SilentlyContinue) {{
+    Write-UpdateLog "Timed out waiting for process $WaitPid to exit; continuing update copy."
+}}
+
 New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
 $resolvedSource = (Resolve-Path -LiteralPath $SourceDir).Path
+Write-UpdateLog "Resolved source path: $resolvedSource"
+
+$copiedFiles = 0
 
 Get-ChildItem -LiteralPath $resolvedSource -Recurse -Force | Sort-Object FullName | ForEach-Object {{
     $relative = $_.FullName.Substring($resolvedSource.Length).TrimStart('\\')
@@ -718,11 +776,16 @@ Get-ChildItem -LiteralPath $resolvedSource -Recurse -Force | Sort-Object FullNam
         New-Item -ItemType Directory -Force -Path $parent | Out-Null
     }}
     Copy-Item -LiteralPath $_.FullName -Destination $destination -Force
+    $copiedFiles++
 }}
+
+Write-UpdateLog "Copy pass complete. Files copied: $copiedFiles"
 
 $exePath = Join-Path $InstallDir 'Stdytime.exe'
 if (Test-Path -LiteralPath $exePath) {{
+    Write-UpdateLog "Launching executable: $exePath"
     Start-Process -FilePath $exePath -WorkingDirectory $InstallDir | Out-Null
+    Write-UpdateLog "Executable launch command sent successfully."
     exit 0
 }}
 
@@ -733,11 +796,14 @@ if (Test-Path -LiteralPath $launcherPath) {{
         $pythonw = Get-Command python.exe -ErrorAction SilentlyContinue
     }}
     if ($pythonw) {{
+        Write-UpdateLog "Launching python entrypoint with $($pythonw.Source)"
         Start-Process -FilePath $pythonw.Source -ArgumentList 'launcher.py' -WorkingDirectory $InstallDir | Out-Null
+        Write-UpdateLog "Python launcher command sent successfully."
         exit 0
     }}
 }}
 
+Write-UpdateLog 'No launch target was found after copy.'
 throw 'Update applied, but no launch target was found.'
 """.strip()
     helper_path.write_text(script, encoding='utf-8')
@@ -745,7 +811,8 @@ throw 'Update applied, but no launch target was found.'
 
 
 def _launch_update_helper(source_dir: Path, install_dir: Path, wait_pid: int) -> None:
-    helper_path = _write_update_helper_script(source_dir, install_dir, wait_pid)
+    debug_log_path = _sw_update_debug_log_path()
+    helper_path = _write_update_helper_script(source_dir, install_dir, wait_pid, debug_log_path)
     creation_flags = 0
     if os.name == 'nt':
         creation_flags = getattr(subprocess, 'DETACHED_PROCESS', 0) | getattr(subprocess, 'CREATE_NEW_PROCESS_GROUP', 0)
@@ -759,6 +826,7 @@ def _launch_update_helper(source_dir: Path, install_dir: Path, wait_pid: int) ->
             '-WaitPid', str(wait_pid),
             '-SourceDir', str(source_dir),
             '-InstallDir', str(install_dir),
+            '-DebugLogPath', str(debug_log_path),
         ],
         cwd=str(install_dir),
         stdout=subprocess.DEVNULL,
@@ -766,6 +834,9 @@ def _launch_update_helper(source_dir: Path, install_dir: Path, wait_pid: int) ->
         stdin=subprocess.DEVNULL,
         close_fds=True,
         creationflags=creation_flags,
+    )
+    _sw_update_debug_log(
+        f'Update helper launched. helper_script={helper_path} source={source_dir} install={install_dir} wait_pid={wait_pid} debug_log={debug_log_path}'
     )
 
 
@@ -826,7 +897,13 @@ def register_sw_update_routes(app, get_app_version_func, shutdown_flush_once=Non
     def _background_install_worker(identity: dict) -> None:
         try:
             current_version = get_app_version_func()
+            debug_log_path = str(_sw_update_debug_log_path())
+            _sw_update_debug_log('SW update worker started.')
             result = _check_for_update(current_version, identity)
+            _sw_update_debug_log(
+                f"Update check complete. update_available={bool(result.get('update_available'))} "
+                f"latest_version={result.get('latest_version') or ''} source={result.get('source') or ''}"
+            )
 
             if not result.get('update_available'):
                 _set_update_state(
@@ -838,21 +915,28 @@ def register_sw_update_routes(app, get_app_version_func, shutdown_flush_once=Non
                     asset_name='',
                     repo_url=result.get('repo_url') or '',
                     source=result.get('source') or '',
+                    debug_log_path=debug_log_path,
                 )
                 return
 
             _set_update_state(
                 status='downloading',
-                message=f"Downloading {result.get('asset_name') or 'software update'}...",
+                message=f"Downloading {result.get('asset_name') or 'software update'} from update source...",
                 error='',
                 current_version=current_version,
                 latest_version=result.get('latest_version') or '',
                 asset_name=result.get('asset_name') or '',
                 repo_url=result.get('repo_url') or '',
                 source=result.get('source') or '',
+                debug_log_path=debug_log_path,
             )
+            _sw_update_debug_log(f"Download phase entered for asset={result.get('asset_name') or ''}")
 
             download_spec = _resolve_download_spec(result, identity)
+            _sw_update_debug_log(
+                f"Download spec resolved. url={download_spec.get('download_url') or ''} "
+                f"checksum_url={download_spec.get('checksum_url') or ''} signature_url={download_spec.get('signature_url') or ''}"
+            )
             try:
                 extract_dir = _download_release_zip(
                     download_spec.get('download_url') or '',
@@ -891,9 +975,15 @@ def register_sw_update_routes(app, get_app_version_func, shutdown_flush_once=Non
                     asset_name=result.get('asset_name') or '',
                     repo_url=result.get('repo_url') or '',
                     source=result.get('source') or '',
+                    debug_log_path=debug_log_path,
                 )
+                _sw_update_debug_log(f'Retry triggered. reason={retry_reason}. First error={first_message}')
 
                 download_spec = _resolve_download_spec(result, identity)
+                _sw_update_debug_log(
+                    f"Retry download spec resolved. url={download_spec.get('download_url') or ''} "
+                    f"checksum_url={download_spec.get('checksum_url') or ''} signature_url={download_spec.get('signature_url') or ''}"
+                )
                 extract_dir = _download_release_zip(
                     download_spec.get('download_url') or '',
                     asset_name=str(result.get('asset_name') or 'stdytime_update.zip'),
@@ -907,44 +997,55 @@ def register_sw_update_routes(app, get_app_version_func, shutdown_flush_once=Non
 
             _set_update_state(
                 status='preparing',
-                message='Preparing release payload for installation...',
+                message='Preparing release payload for installation (verifying files and staging updater)...',
                 error='',
                 current_version=current_version,
                 latest_version=result.get('latest_version') or '',
                 asset_name=result.get('asset_name') or '',
                 repo_url=result.get('repo_url') or '',
                 source=result.get('source') or '',
+                debug_log_path=debug_log_path,
             )
+            _sw_update_debug_log(f'Preparing phase entered. extract_dir={extract_dir}')
 
             payload_root = _detect_payload_root(extract_dir)
+            _sw_update_debug_log(f'Payload root detected: {payload_root}')
             install_dir = _resolve_install_dir()
             install_dir.mkdir(parents=True, exist_ok=True)
             _launch_update_helper(payload_root, install_dir, os.getpid())
 
             _set_update_state(
                 status='restarting',
-                message='Applying update and restarting Stdytime...',
+                message=f'Applying update and restarting Stdytime... If this takes over 2 minutes, check debug log: {debug_log_path}',
                 error='',
                 current_version=current_version,
                 latest_version=result.get('latest_version') or '',
                 asset_name=result.get('asset_name') or '',
                 repo_url=result.get('repo_url') or '',
                 source=result.get('source') or '',
+                debug_log_path=debug_log_path,
             )
+            _sw_update_debug_log('Restarting phase entered; shutdown flush and process exit beginning.')
 
             if callable(shutdown_flush_once):
                 try:
+                    _sw_update_debug_log('Invoking shutdown_flush_once("software update").')
                     shutdown_flush_once('software update')
+                    _sw_update_debug_log('shutdown_flush_once completed successfully.')
                 except Exception:
+                    _sw_update_debug_log('shutdown_flush_once raised an exception (continuing).')
                     pass
 
             time.sleep(1.2)
+            _sw_update_debug_log('Calling os._exit(0) to hand off to update helper.')
             os._exit(0)
         except Exception as exc:
+            _sw_update_debug_log(f'Worker failed with exception: {exc}')
             _set_update_state(
                 status='error',
                 message='Software update failed.',
                 error=str(exc),
+                debug_log_path=str(_sw_update_debug_log_path()),
             )
 
     @app.route('/api/sw-update/check', methods=['GET'])
@@ -1005,13 +1106,14 @@ def register_sw_update_routes(app, get_app_version_func, shutdown_flush_once=Non
             identity = _identity_snapshot()
             _set_update_state(
                 status='checking',
-                message='Checking for a newer software update...',
+                message='Checking for a newer software update and preparing download ticket...',
                 error='',
                 current_version=current_version,
                 latest_version='',
                 asset_name='',
                 repo_url=_gateway_base_url() or _repo_url(),
                 source='gateway' if _gateway_enabled() else 'github-fallback',
+                debug_log_path=str(_sw_update_debug_log_path()),
                 started_at=time.time(),
             )
             worker = threading.Thread(

@@ -19,7 +19,38 @@
             <span id="swUpdateStatusText" class="fw-semibold text-success">Preparing software update...</span>
           </div>
 
-          <div id="swUpdateDetail" class="small text-muted mb-4">Please keep this window open for a moment.</div>
+          <div id="swUpdateDetail" class="small text-muted mb-3">Please keep this window open for a moment.</div>
+
+          <div class="px-2 px-lg-4 mb-4 text-start">
+            <div class="d-flex justify-content-between align-items-center mb-2">
+              <span class="small text-muted">Update progress</span>
+              <span id="swUpdateProgressPct" class="small fw-semibold text-success">5%</span>
+            </div>
+            <div class="progress" style="height: 0.65rem;">
+              <div id="swUpdateProgressBar" class="progress-bar progress-bar-striped progress-bar-animated bg-success" role="progressbar" style="width: 5%;" aria-valuemin="0" aria-valuemax="100" aria-valuenow="5"></div>
+            </div>
+            <div id="swUpdateEta" class="small text-muted mt-2">Estimating completion time...</div>
+            <div id="swUpdateDebugPath" class="small text-muted mt-1 d-none"></div>
+
+            <ol id="swUpdateSteps" class="list-group list-group-flush mt-3 rounded border">
+              <li class="list-group-item d-flex justify-content-between align-items-center" data-step-key="checking">
+                <span><i class="bi bi-search me-2"></i>Checking for update</span>
+                <span class="badge rounded-pill text-bg-secondary">Pending</span>
+              </li>
+              <li class="list-group-item d-flex justify-content-between align-items-center" data-step-key="downloading">
+                <span><i class="bi bi-cloud-download me-2"></i>Downloading package</span>
+                <span class="badge rounded-pill text-bg-secondary">Pending</span>
+              </li>
+              <li class="list-group-item d-flex justify-content-between align-items-center" data-step-key="preparing">
+                <span><i class="bi bi-gear me-2"></i>Preparing installation</span>
+                <span class="badge rounded-pill text-bg-secondary">Pending</span>
+              </li>
+              <li class="list-group-item d-flex justify-content-between align-items-center" data-step-key="restarting">
+                <span><i class="bi bi-arrow-repeat me-2"></i>Restarting app</span>
+                <span class="badge rounded-pill text-bg-secondary">Pending</span>
+              </li>
+            </ol>
+          </div>
 
           <div class="alert alert-info text-start mb-0" role="alert">
             <div class="fw-semibold mb-1">What to expect</div>
@@ -39,7 +70,146 @@
 (function () {
   const statusEl = document.getElementById('swUpdateStatusText');
   const detailEl = document.getElementById('swUpdateDetail');
+  const progressBarEl = document.getElementById('swUpdateProgressBar');
+  const progressPctEl = document.getElementById('swUpdateProgressPct');
+  const etaEl = document.getElementById('swUpdateEta');
+  const debugPathEl = document.getElementById('swUpdateDebugPath');
+  const stepsRootEl = document.getElementById('swUpdateSteps');
+
   let lastKnownStatus = '';
+  let lastKnownData = null;
+
+  const stepOrder = ['checking', 'downloading', 'preparing', 'restarting'];
+  const statusProgress = {
+    checking: 15,
+    downloading: 60,
+    preparing: 85,
+    restarting: 97,
+    idle: 100,
+    error: 100
+  };
+
+  const statusEtaText = {
+    checking: 'Usually under 1 minute',
+    downloading: 'Usually 1-5 minutes (depends on internet speed)',
+    preparing: 'Usually under 1 minute',
+    restarting: 'Usually 30-90 seconds',
+    idle: 'Completed',
+    error: 'Unable to estimate due to an error'
+  };
+
+  function formatDuration(totalSeconds) {
+    const seconds = Math.max(0, Math.floor(Number(totalSeconds) || 0));
+    const mins = Math.floor(seconds / 60);
+    const rem = seconds % 60;
+    return `${mins}:${String(rem).padStart(2, '0')}`;
+  }
+
+  function updateProgress(status) {
+    const pct = Number(statusProgress[status] || 8);
+    if (progressBarEl) {
+      progressBarEl.style.width = `${pct}%`;
+      progressBarEl.setAttribute('aria-valuenow', String(pct));
+      progressBarEl.classList.toggle('bg-danger', status === 'error');
+      progressBarEl.classList.toggle('bg-success', status !== 'error');
+      progressBarEl.classList.toggle('progress-bar-animated', status !== 'idle' && status !== 'error');
+      progressBarEl.classList.toggle('progress-bar-striped', status !== 'idle' && status !== 'error');
+    }
+    if (progressPctEl) {
+      progressPctEl.textContent = `${pct}%`;
+      progressPctEl.className = status === 'error' ? 'small fw-semibold text-danger' : 'small fw-semibold text-success';
+    }
+  }
+
+  function updateSteps(status) {
+    if (!stepsRootEl) {
+      return;
+    }
+
+    const currentIndex = stepOrder.indexOf(status);
+    const effectiveIndex = currentIndex >= 0 ? currentIndex : -1;
+
+    stepOrder.forEach((key, idx) => {
+      const row = stepsRootEl.querySelector(`[data-step-key="${key}"]`);
+      if (!row) {
+        return;
+      }
+      const badge = row.querySelector('.badge');
+      row.classList.remove('list-group-item-success', 'fw-semibold');
+      if (badge) {
+        badge.classList.remove('text-bg-secondary', 'text-bg-warning', 'text-bg-success', 'text-bg-danger');
+      }
+
+      if (status === 'error' && idx === Math.max(0, effectiveIndex)) {
+        row.classList.add('fw-semibold');
+        if (badge) {
+          badge.classList.add('text-bg-danger');
+          badge.textContent = 'Failed';
+        }
+        return;
+      }
+
+      if (idx < effectiveIndex || status === 'idle') {
+        row.classList.add('list-group-item-success');
+        if (badge) {
+          badge.classList.add('text-bg-success');
+          badge.textContent = 'Done';
+        }
+      } else if (idx === effectiveIndex) {
+        row.classList.add('fw-semibold');
+        if (badge) {
+          badge.classList.add('text-bg-warning');
+          badge.textContent = 'In progress';
+        }
+      } else {
+        if (badge) {
+          badge.classList.add('text-bg-secondary');
+          badge.textContent = 'Pending';
+        }
+      }
+    });
+  }
+
+  function updateEta(data) {
+    if (!etaEl) {
+      return;
+    }
+    const status = data.status || '';
+    const startedAt = Number(data.started_at || 0);
+    const now = Date.now() / 1000;
+    const elapsedSec = startedAt > 0 ? Math.max(0, now - startedAt) : 0;
+    const etaNote = statusEtaText[status] || 'Calculating...';
+
+    if (status === 'error') {
+      etaEl.className = 'small text-danger mt-2';
+      etaEl.textContent = `Update failed after ${formatDuration(elapsedSec)} elapsed.`;
+      return;
+    }
+
+    etaEl.className = 'small text-muted mt-2';
+    if (startedAt > 0) {
+      etaEl.textContent = `Elapsed ${formatDuration(elapsedSec)} • ${etaNote}`;
+    } else {
+      etaEl.textContent = etaNote;
+    }
+  }
+
+  function refreshVisuals(data) {
+    const status = data.status || '';
+    updateProgress(status);
+    updateSteps(status);
+    updateEta(data);
+    if (debugPathEl) {
+      const path = String(data.debug_log_path || '').trim();
+      if (path) {
+        debugPathEl.classList.remove('d-none');
+        debugPathEl.textContent = `Debug log: ${path}`;
+      } else {
+        debugPathEl.classList.add('d-none');
+        debugPathEl.textContent = '';
+      }
+    }
+  }
 
   async function pollStatus() {
     try {
@@ -48,6 +218,7 @@
         headers: { 'Accept': 'application/json' }
       });
       const data = await response.json();
+      lastKnownData = data;
       lastKnownStatus = data.status || '';
 
       if (statusEl) {
@@ -63,17 +234,21 @@
         }
       }
 
+      refreshVisuals(data);
+
       if (data.status === 'error') {
         window.clearInterval(timerId);
       }
     } catch (_error) {
       if (statusEl) {
-        statusEl.textContent = 'The previous app instance is closing. The new version should open shortly...';
+        statusEl.textContent = 'The previous app instance is closing. If this takes over 2 minutes, check the update debug log path below.';
       }
       if (detailEl && lastKnownStatus && lastKnownStatus !== 'error') {
         detailEl.textContent = 'Connection to the old app was lost, which usually means restart is underway.';
         detailEl.className = 'small text-muted mb-4';
       }
+
+      refreshVisuals(lastKnownData || { status: lastKnownStatus || 'restarting', started_at: 0 });
     }
   }
 
