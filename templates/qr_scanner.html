@@ -314,7 +314,7 @@ async function finalizeScan(){
   
   // Try direct match: ID:43, ASST:3, BOOK:12, etc.
   if (!type){
-    const directMatch = raw.match(/^(ID|ASST|ASSISTANT|BOOK)\s*:?\s*(\d+)$/i);
+    const directMatch = data.match(/^(ID|ASST|ASSISTANT|BOOK)\s*:?\s*(\d+)$/i);
     if (directMatch){
       console.log('DIRECT MATCH:', directMatch);
       type = (directMatch[1].toUpperCase() === 'ASSISTANT') ? 'ASST' : directMatch[1].toUpperCase();
@@ -406,7 +406,12 @@ async function finalizeScan(){
     }
   });
   const scannedNameHint = fields.NAME || '';
-  const scannedUidHint = fields.UID || '';
+  const scannedUidHint = (
+    fields.UID
+    || ((data.match(/(?:^|\n)\s*UID\s*[:;=]\s*([^\n\r]+)/i) || [])[1] || '')
+    || ((raw.match(/UID\.\s*([A-Za-z0-9_-]+)/i) || [])[1] || '')
+    || ''
+  ).trim();
   
   const nameMatch = fields.NAME || null;
   const titleMatch = fields.TITLE || null;

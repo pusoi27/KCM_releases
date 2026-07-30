@@ -155,6 +155,34 @@ def _bridge_forward_post(path: str, payload: dict | None = None):
     return jsonify(body), code
 
 
+def _bridge_forward_post_once_no_cooldown(path: str, payload: dict | None = None):
+    """Best-effort direct bridge POST bypassing cooldown gate.
+
+    Used for scanner-station recovery when local fallback data may be stale
+    and a second quick upstream attempt can avoid false "student not found"
+    outcomes.
+    """
+    if not _scanner_api_client_enabled():
+        return None
+
+    url = _bridge_url(path)
+    if not url.startswith("http"):
+        return None
+
+    try:
+        response = requests.post(
+            url,
+            headers=_build_bridge_headers(),
+            json=(payload or {}),
+            timeout=(2, BRIDGE_POST_TIMEOUT_SECONDS),
+        )
+    except requests.RequestException:
+        return None
+
+    body, code = _bridge_json_response(response)
+    return jsonify(body), code
+
+
 def _bridge_request_is_pairing_authorized() -> bool:
     expected = _runtime_pairing_token()
     if not expected:
@@ -1795,6 +1823,23 @@ def register_api_routes(app):
             # Get student info
             student = student_manager.get_student(student_id)
             if not student:
+                if _scanner_api_client_enabled():
+                    # Recovery path: scanner local DB can lag instructor records.
+                    # Try one direct upstream toggle call before returning 404.
+                    forced_forward = _bridge_forward_post_once_no_cooldown('/api/bridge/sessions/toggle', data)
+                    if forced_forward is not None:
+                        try:
+                            response, status_code = forced_forward
+                            payload = response.get_json(silent=True) or {}
+                            if 200 <= int(status_code) < 300:
+                                _mirror_local_session_state_after_bridge_action(
+                                    int(payload.get("student_id") or student_id),
+                                    str(payload.get("action") or ""),
+                                )
+                                server_cache.invalidate(_students_list_cache_key())
+                        except Exception:
+                            pass
+                        return forced_forward
                 return jsonify({"error": "Student not found"}), 404
             
             student_name = student[1]  # name is at index 1

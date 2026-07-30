@@ -1490,7 +1490,7 @@ resetIdleTimer();
     let m = data.match(/^(ID|ASST|ASSISTANT)\s*[:;=]?\s*(\d+)$/i);
     if(m){
       type = (m[1].toUpperCase()==='ASSISTANT') ? 'ASST' : m[1].toUpperCase();
-      ident = parseInt(deduplicateRepeatingDigits(m[2]),10);
+      ident = parseInt(m[2],10);
       logDebug(`DIRECT match -> type=${type} id=${ident}`);
     }
 
@@ -1530,7 +1530,12 @@ resetIdleTimer();
       if(mm){ fields[mm[1].trim().toUpperCase()] = mm[2].trim(); }
     });
     const scannedNameHint = fields.NAME || '';
-    const scannedUidHint = fields.UID || '';
+    const scannedUidHint = (
+      fields.UID
+      || ((data.match(/(?:^|\n)\s*UID\s*[:;=]\s*([^\n\r]+)/i) || [])[1] || '')
+      || ((raw.match(/UID\.\s*([A-Za-z0-9_-]+)/i) || [])[1] || '')
+      || ''
+    ).trim();
 
     async function resolveAssistantName(aid){
       if(fields.NAME) return fields.NAME;
