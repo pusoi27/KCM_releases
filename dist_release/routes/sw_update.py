@@ -807,6 +807,21 @@ def _resolve_download_spec(update_result: dict, identity: dict) -> dict:
     raise RuntimeError('No downloadable payload URL is available for this update source.')
 
 
+def _should_retry_download_resolution(exc: RuntimeError, update_result: dict) -> bool:
+    if update_result.get('source') != 'gateway':
+        return False
+
+    message = str(exc or '')
+    retry_markers = (
+        'Checksum verification failed',
+        'Update payload is unavailable (404).',
+        'Update payload URL is missing.',
+        'Checksum file was not found for the update payload.',
+        'Signature file was not found for the update payload.',
+    )
+    return any(marker in message for marker in retry_markers)
+
+
 def register_sw_update_routes(app, get_app_version_func, shutdown_flush_once=None):
     def _background_install_worker(identity: dict) -> None:
         try:
@@ -850,13 +865,26 @@ def register_sw_update_routes(app, get_app_version_func, shutdown_flush_once=Non
                     minisign_public_key=str(download_spec.get('minisign_public_key') or ''),
                 )
             except RuntimeError as first_exc:
-                if 'Checksum verification failed' not in str(first_exc) or result.get('source') != 'gateway':
+                if not _should_retry_download_resolution(first_exc, result):
                     raise
+
+                retry_reason = 'download metadata appears stale'
+                first_message = str(first_exc)
+                if 'Checksum verification failed' in first_message:
+                    retry_reason = 'checksum mismatch detected'
+                elif 'Update payload is unavailable (404).' in first_message:
+                    retry_reason = 'update payload returned 404'
+                elif 'Update payload URL is missing.' in first_message:
+                    retry_reason = 'download URL is missing'
+                elif 'Checksum file was not found for the update payload.' in first_message:
+                    retry_reason = 'checksum sidecar returned 404'
+                elif 'Signature file was not found for the update payload.' in first_message:
+                    retry_reason = 'signature sidecar returned 404'
 
                 # Transient cache/race hardening: refresh ticket/spec once and retry.
                 _set_update_state(
                     status='downloading',
-                    message='Checksum mismatch detected. Refreshing download ticket and retrying once...',
+                    message=f'{retry_reason.capitalize()}. Refreshing download ticket and retrying once...',
                     error='',
                     current_version=current_version,
                     latest_version=result.get('latest_version') or '',

@@ -112,17 +112,26 @@ if "%APP_VERSION%"=="" (
 
 set "APP_VERSION_SAFE=%APP_VERSION:.=_%"
 set "SECONDARY_INSTALLER_DIR=C:\Users\octav\OneDrive\ADOCTA TECH LLC\StdyTime"
+set "RELEASE_FOLDER_NAME=v%APP_VERSION%"
+set "LOCAL_RELEASE_BASE=%CD%\releases"
+set "LOCAL_RELEASE_DIR=%LOCAL_RELEASE_BASE%\%RELEASE_FOLDER_NAME%"
+set "SECONDARY_RELEASE_DIR=%SECONDARY_INSTALLER_DIR%\%RELEASE_FOLDER_NAME%"
 
 set "INSTALLER_FILE=stdytime_installer_v%APP_VERSION_SAFE%.exe"
 set "SHA_FILE=%INSTALLER_FILE%.sha256"
 set "ZIP_FILE=%INSTALLER_FILE:.exe=.zip%"
 set "ZIP_SHA_FILE=%ZIP_FILE%.sha256"
 set "ZIP_MINISIG_FILE=%ZIP_FILE%.minisig"
-set "LOCAL_INSTALLER_OUTPUT=%CD%\%INSTALLER_FILE%"
-set "LOCAL_ZIP_OUTPUT=%CD%\%ZIP_FILE%"
-set "SECONDARY_ZIP_OUTPUT=%SECONDARY_INSTALLER_DIR%\%ZIP_FILE%"
-set "SECONDARY_ZIP_SHA_OUTPUT=%SECONDARY_INSTALLER_DIR%\%ZIP_SHA_FILE%"
-set "SECONDARY_ZIP_MINISIG_OUTPUT=%SECONDARY_INSTALLER_DIR%\%ZIP_MINISIG_FILE%"
+set "LOCAL_INSTALLER_OUTPUT=%LOCAL_RELEASE_DIR%\%INSTALLER_FILE%"
+set "LOCAL_SHA_OUTPUT=%LOCAL_RELEASE_DIR%\%SHA_FILE%"
+set "LOCAL_ZIP_OUTPUT=%LOCAL_RELEASE_DIR%\%ZIP_FILE%"
+set "LOCAL_ZIP_SHA_OUTPUT=%LOCAL_RELEASE_DIR%\%ZIP_SHA_FILE%"
+set "LOCAL_ZIP_MINISIG_OUTPUT=%LOCAL_RELEASE_DIR%\%ZIP_MINISIG_FILE%"
+set "SECONDARY_INSTALLER_OUTPUT=%SECONDARY_RELEASE_DIR%\%INSTALLER_FILE%"
+set "SECONDARY_SHA_OUTPUT=%SECONDARY_RELEASE_DIR%\%SHA_FILE%"
+set "SECONDARY_ZIP_OUTPUT=%SECONDARY_RELEASE_DIR%\%ZIP_FILE%"
+set "SECONDARY_ZIP_SHA_OUTPUT=%SECONDARY_RELEASE_DIR%\%ZIP_SHA_FILE%"
+set "SECONDARY_ZIP_MINISIG_OUTPUT=%SECONDARY_RELEASE_DIR%\%ZIP_MINISIG_FILE%"
 
 if not exist "%INSTALLER_FILE%" (
   echo [ERROR] Expected installer not found: %INSTALLER_FILE%
@@ -133,12 +142,32 @@ if not exist "%SECONDARY_INSTALLER_DIR%" (
   mkdir "%SECONDARY_INSTALLER_DIR%" >nul 2>nul
 )
 
+if not exist "%LOCAL_RELEASE_BASE%" (
+  mkdir "%LOCAL_RELEASE_BASE%" >nul 2>nul
+)
+if not exist "%LOCAL_RELEASE_DIR%" (
+  mkdir "%LOCAL_RELEASE_DIR%" >nul 2>nul
+)
+
 if exist "%SECONDARY_INSTALLER_DIR%" (
-  copy /Y "%INSTALLER_FILE%" "%SECONDARY_INSTALLER_DIR%\%INSTALLER_FILE%" >nul
-  if exist "%SECONDARY_INSTALLER_DIR%\%INSTALLER_FILE%" (
-    echo [INFO] Installer copied to: %SECONDARY_INSTALLER_DIR%\%INSTALLER_FILE%
+  if not exist "%SECONDARY_RELEASE_DIR%" (
+    mkdir "%SECONDARY_RELEASE_DIR%" >nul 2>nul
+  )
+)
+
+copy /Y "%INSTALLER_FILE%" "%LOCAL_INSTALLER_OUTPUT%" >nul
+if exist "%LOCAL_INSTALLER_OUTPUT%" (
+  echo [INFO] Installer copied to: %LOCAL_INSTALLER_OUTPUT%
+) else (
+  echo [WARNING] Failed copying installer to local release folder: %LOCAL_RELEASE_DIR%
+)
+
+if exist "%SECONDARY_RELEASE_DIR%" (
+  copy /Y "%INSTALLER_FILE%" "%SECONDARY_INSTALLER_OUTPUT%" >nul
+  if exist "%SECONDARY_INSTALLER_OUTPUT%" (
+    echo [INFO] Installer copied to: %SECONDARY_INSTALLER_OUTPUT%
   ) else (
-    echo [WARNING] Failed copying installer to: %SECONDARY_INSTALLER_DIR%
+    echo [WARNING] Failed copying installer to: %SECONDARY_RELEASE_DIR%
   )
 ) else (
   echo [WARNING] Secondary installer directory is unavailable: %SECONDARY_INSTALLER_DIR%
@@ -163,6 +192,22 @@ if errorlevel 1 (
 )
 echo [INFO] SHA256 written: %SHA_FILE%
 
+copy /Y "%SHA_FILE%" "%LOCAL_SHA_OUTPUT%" >nul
+if exist "%LOCAL_SHA_OUTPUT%" (
+  echo [INFO] Installer SHA256 copied to: %LOCAL_SHA_OUTPUT%
+) else (
+  echo [WARNING] Failed copying installer SHA256 to local release folder: %LOCAL_RELEASE_DIR%
+)
+
+if exist "%SECONDARY_RELEASE_DIR%" (
+  copy /Y "%SHA_FILE%" "%SECONDARY_SHA_OUTPUT%" >nul
+  if exist "%SECONDARY_SHA_OUTPUT%" (
+    echo [INFO] Installer SHA256 copied to: %SECONDARY_SHA_OUTPUT%
+  ) else (
+    echo [WARNING] Failed copying installer SHA256 to: %SECONDARY_RELEASE_DIR%
+  )
+)
+
 if exist "%ZIP_FILE%" del /f /q "%ZIP_FILE%" >nul 2>nul
 powershell -NoProfile -Command "Compress-Archive -Path '%INSTALLER_FILE%' -DestinationPath '%ZIP_FILE%' -CompressionLevel Optimal -Force"
 if errorlevel 1 (
@@ -174,12 +219,19 @@ if not exist "%ZIP_FILE%" (
   exit /b 1
 )
 
-if exist "%SECONDARY_INSTALLER_DIR%" (
+copy /Y "%ZIP_FILE%" "%LOCAL_ZIP_OUTPUT%" >nul
+if exist "%LOCAL_ZIP_OUTPUT%" (
+  echo [INFO] ZIP copied to: %LOCAL_ZIP_OUTPUT%
+) else (
+  echo [WARNING] Failed copying ZIP to local release folder: %LOCAL_RELEASE_DIR%
+)
+
+if exist "%SECONDARY_RELEASE_DIR%" (
   copy /Y "%ZIP_FILE%" "%SECONDARY_ZIP_OUTPUT%" >nul
   if exist "%SECONDARY_ZIP_OUTPUT%" (
     echo [INFO] ZIP copied to: %SECONDARY_ZIP_OUTPUT%
   ) else (
-    echo [WARNING] Failed copying ZIP to: %SECONDARY_INSTALLER_DIR%
+    echo [WARNING] Failed copying ZIP to: %SECONDARY_RELEASE_DIR%
   )
 )
 
@@ -199,12 +251,19 @@ if errorlevel 1 (
 )
 echo [INFO] ZIP SHA256 written: %ZIP_SHA_FILE%
 
-if exist "%SECONDARY_INSTALLER_DIR%" (
+copy /Y "%ZIP_SHA_FILE%" "%LOCAL_ZIP_SHA_OUTPUT%" >nul
+if exist "%LOCAL_ZIP_SHA_OUTPUT%" (
+  echo [INFO] ZIP SHA256 copied to: %LOCAL_ZIP_SHA_OUTPUT%
+) else (
+  echo [WARNING] Failed copying ZIP SHA256 to local release folder: %LOCAL_RELEASE_DIR%
+)
+
+if exist "%SECONDARY_RELEASE_DIR%" (
   copy /Y "%ZIP_SHA_FILE%" "%SECONDARY_ZIP_SHA_OUTPUT%" >nul
   if exist "%SECONDARY_ZIP_SHA_OUTPUT%" (
     echo [INFO] ZIP SHA256 copied to: %SECONDARY_ZIP_SHA_OUTPUT%
   ) else (
-    echo [WARNING] Failed copying ZIP SHA256 to: %SECONDARY_INSTALLER_DIR%
+    echo [WARNING] Failed copying ZIP SHA256 to: %SECONDARY_RELEASE_DIR%
   )
 )
 
@@ -214,12 +273,19 @@ if errorlevel 1 (
   exit /b 1
 )
 
-if exist "%SECONDARY_INSTALLER_DIR%" (
+copy /Y "%ZIP_MINISIG_FILE%" "%LOCAL_ZIP_MINISIG_OUTPUT%" >nul
+if exist "%LOCAL_ZIP_MINISIG_OUTPUT%" (
+  echo [INFO] ZIP minisig copied to: %LOCAL_ZIP_MINISIG_OUTPUT%
+) else (
+  echo [WARNING] Failed copying ZIP minisig to local release folder: %LOCAL_RELEASE_DIR%
+)
+
+if exist "%SECONDARY_RELEASE_DIR%" (
   copy /Y "%ZIP_MINISIG_FILE%" "%SECONDARY_ZIP_MINISIG_OUTPUT%" >nul
   if exist "%SECONDARY_ZIP_MINISIG_OUTPUT%" (
     echo [INFO] ZIP minisig copied to: %SECONDARY_ZIP_MINISIG_OUTPUT%
   ) else (
-    echo [WARNING] Failed copying ZIP minisig to: %SECONDARY_INSTALLER_DIR%
+    echo [WARNING] Failed copying ZIP minisig to: %SECONDARY_RELEASE_DIR%
   )
 )
 
@@ -244,9 +310,15 @@ if errorlevel 1 (
 echo.
 echo ==============================================================
 echo Completed successfully.
-echo Local Output: %LOCAL_INSTALLER_OUTPUT%
-echo Local ZIP Output: %LOCAL_ZIP_OUTPUT%
-echo OneDrive Output: %SECONDARY_INSTALLER_DIR%\%INSTALLER_FILE%
+echo Local release folder: %LOCAL_RELEASE_DIR%
+echo Local installer output: %LOCAL_INSTALLER_OUTPUT%
+echo Local installer SHA256 output: %LOCAL_SHA_OUTPUT%
+echo Local ZIP output: %LOCAL_ZIP_OUTPUT%
+echo Local ZIP SHA256 output: %LOCAL_ZIP_SHA_OUTPUT%
+echo Local ZIP minisig output: %LOCAL_ZIP_MINISIG_OUTPUT%
+echo OneDrive release folder: %SECONDARY_RELEASE_DIR%
+echo OneDrive installer output: %SECONDARY_INSTALLER_OUTPUT%
+echo OneDrive installer SHA256 output: %SECONDARY_SHA_OUTPUT%
 echo OneDrive ZIP Output: %SECONDARY_ZIP_OUTPUT%
 echo OneDrive ZIP SHA256 Output: %SECONDARY_ZIP_SHA_OUTPUT%
 echo OneDrive ZIP minisig Output: %SECONDARY_ZIP_MINISIG_OUTPUT%
@@ -260,16 +332,16 @@ endlocal
 exit /b 0
 
 :publish_zip_release_repo
-if not exist "%ZIP_FILE%" (
-  echo [ERROR] ZIP file not found; refusing to publish: %ZIP_FILE%
+if not exist "%LOCAL_ZIP_OUTPUT%" (
+  echo [ERROR] ZIP file not found; refusing to publish: %LOCAL_ZIP_OUTPUT%
   exit /b 1
 )
-if not exist "%ZIP_SHA_FILE%" (
-  echo [ERROR] ZIP checksum file not found; refusing to publish: %ZIP_SHA_FILE%
+if not exist "%LOCAL_ZIP_SHA_OUTPUT%" (
+  echo [ERROR] ZIP checksum file not found; refusing to publish: %LOCAL_ZIP_SHA_OUTPUT%
   exit /b 1
 )
-if not exist "%ZIP_MINISIG_FILE%" (
-  echo [ERROR] ZIP minisig file not found; refusing to publish: %ZIP_MINISIG_FILE%
+if not exist "%LOCAL_ZIP_MINISIG_OUTPUT%" (
+  echo [ERROR] ZIP minisig file not found; refusing to publish: %LOCAL_ZIP_MINISIG_OUTPUT%
   exit /b 1
 )
 
@@ -288,9 +360,9 @@ set "RELEASE_TAG=v%APP_VERSION%"
 set "RELEASE_TITLE=Stdytime %APP_VERSION%"
 set "PUBLISH_SCRIPT=%ROOT%scripts\publish_github_release_assets.py"
 set "PY_EXE=%ROOT%.venv\Scripts\python.exe"
-set "ZIP_ASSET_1=%ROOT%%ZIP_FILE%"
-set "ZIP_ASSET_2=%ROOT%%ZIP_SHA_FILE%"
-set "ZIP_ASSET_3=%ROOT%%ZIP_MINISIG_FILE%"
+set "ZIP_ASSET_1=%LOCAL_ZIP_OUTPUT%"
+set "ZIP_ASSET_2=%LOCAL_ZIP_SHA_OUTPUT%"
+set "ZIP_ASSET_3=%LOCAL_ZIP_MINISIG_OUTPUT%"
 
 echo [INFO] Publishing GitHub Release assets to %RELEASES_REPO_SLUG% @ %RELEASE_TAG%...
 echo [INFO] Upload in progress... this can take a few minutes for large ZIP files.
