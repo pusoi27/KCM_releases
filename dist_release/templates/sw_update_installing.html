@@ -81,10 +81,24 @@
   let manualRestartPrompted = false;
 
   const stepOrder = ['checking', 'downloading', 'preparing', 'restarting'];
+  const statusToStepKey = {
+    checking: 'checking',
+    downloading: 'downloading',
+    preparing: 'preparing',
+    handoff_sent: 'restarting',
+    apply_in_progress: 'restarting',
+    relaunch_dispatched: 'restarting',
+    restarting: 'restarting',
+    idle: 'restarting',
+    error: 'restarting',
+  };
   const statusProgress = {
     checking: 15,
     downloading: 60,
     preparing: 85,
+    handoff_sent: 92,
+    apply_in_progress: 95,
+    relaunch_dispatched: 98,
     restarting: 97,
     idle: 100,
     error: 100
@@ -94,6 +108,9 @@
     checking: 'Usually under 1 minute',
     downloading: 'Usually 1-5 minutes (depends on internet speed)',
     preparing: 'Usually under 1 minute',
+    handoff_sent: 'Handoff sent to installer helper',
+    apply_in_progress: 'Installer is applying files now',
+    relaunch_dispatched: 'Relaunch command sent',
     restarting: 'Usually 30-90 seconds',
     idle: 'Update completed — restart required',
     error: 'Unable to estimate due to an error'
@@ -147,7 +164,8 @@
       return;
     }
 
-    const currentIndex = stepOrder.indexOf(status);
+    const mappedStep = statusToStepKey[status] || status;
+    const currentIndex = stepOrder.indexOf(mappedStep);
     const effectiveIndex = currentIndex >= 0 ? currentIndex : -1;
 
     stepOrder.forEach((key, idx) => {

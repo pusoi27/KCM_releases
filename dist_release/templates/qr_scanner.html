@@ -217,6 +217,56 @@ function normalizePayload(str){
     .trim();
 }
 
+function normalizeIsbnToken(value){
+  return String(value || '').replace(/[^0-9Xx]/g, '').toUpperCase();
+}
+
+function isValidIsbn10(token){
+  if (!token || token.length !== 10) return false;
+  const body = token.slice(0, 9);
+  const check = token[9];
+  if (!/^\d{9}$/.test(body) || !/^(\d|X)$/.test(check)) return false;
+  let sum = 0;
+  for (let i = 0; i < 9; i++) sum += (10 - i) * Number(body[i]);
+  sum += check === 'X' ? 10 : Number(check);
+  return (sum % 11) === 0;
+}
+
+function isValidIsbn13(token){
+  if (!token || token.length !== 13 || !/^\d{13}$/.test(token)) return false;
+  let sum = 0;
+  for (let i = 0; i < 12; i++) {
+    const n = Number(token[i]);
+    sum += (i % 2 === 0) ? n : n * 3;
+  }
+  const expected = (10 - (sum % 10)) % 10;
+  return expected === Number(token[12]);
+}
+
+function extractIsbnFromPayload(payload){
+  const txt = normalizePayload(payload);
+  if (!txt) return null;
+
+  // Keep student/staff QR payloads in scanner workflow lane.
+  if (/(?:^|\n)\s*(ID|NAME|UID|ASST|ASSISTANT)\s*[:;=]/i.test(txt)) {
+    return null;
+  }
+
+  const labeled = txt.match(/ISBN(?:-1[03])?\s*[:;=]?\s*([0-9Xx\-\s]{10,20})/i);
+  if (labeled) {
+    const token = normalizeIsbnToken(labeled[1]);
+    if ((token.length === 10 && isValidIsbn10(token)) || (token.length === 13 && isValidIsbn13(token))) {
+      return token;
+    }
+  }
+
+  const whole = normalizeIsbnToken(txt);
+  if ((whole.length === 10 && isValidIsbn10(whole)) || (whole.length === 13 && isValidIsbn13(whole))) {
+    return whole;
+  }
+  return null;
+}
+
 function deduplicateRepeatingDigits(numStr){
   if(!numStr || numStr.length < 2) return numStr;
   const uniqCount = new Set(numStr.split('')).size;
@@ -295,6 +345,17 @@ async function finalizeScan(){
     scannerLogDebug('Empty payload');
     showStatus('Empty scan', 'warning');
     scheduleReset();
+    return;
+  }
+
+  const isbn = extractIsbnFromPayload(data);
+  if (isbn) {
+    scannerLogDebug(`ISBN detected on scanner page; redirecting to Book Loan with isbn=${isbn}`);
+    showStatus('Book ISBN detected. Opening Book Loan...', 'info');
+    isProcessing = false;
+    scanBuffer = '';
+    const target = `/books/loan?isbn=${encodeURIComponent(isbn)}&src=scanner`;
+    window.location.href = target;
     return;
   }
 

@@ -1,0 +1,151 @@
+param(
+    [int]$WaitPid,
+    [string]$SourceDir,
+    [string]$InstallDir,
+    [string]$DebugLogPath,
+    [string]$HandoffPath
+)
+
+$ErrorActionPreference = 'Stop'
+
+function Write-UpdateLog([string]$Message) {
+    try {
+        $stamp = (Get-Date).ToString('yyyy-MM-dd HH:mm:ss')
+        Add-Content -LiteralPath $DebugLogPath -Value "[$stamp] helper: $Message"
+    } catch {
+    }
+}
+
+function Write-HandoffState([string]$Stage, [string]$Detail = '') {
+    try {
+        $payload = @{
+            updated_at = (Get-Date).ToString('yyyy-MM-dd HH:mm:ss')
+            stage = $Stage
+            detail = $Detail
+            wait_pid = $WaitPid
+            install_dir = $InstallDir
+            source_dir = $SourceDir
+        }
+        $json = $payload | ConvertTo-Json -Depth 4 -Compress
+        Set-Content -LiteralPath $HandoffPath -Value $json -Encoding UTF8
+    } catch {
+    }
+}
+
+Write-UpdateLog "Helper started. WaitPid=$WaitPid SourceDir=$SourceDir InstallDir=$InstallDir"
+Write-HandoffState "helper_started"
+
+for ($i = 0; $i -lt 240; $i++) {
+    if (-not (Get-Process -Id $WaitPid -ErrorAction SilentlyContinue)) {
+        Write-UpdateLog "Target process exited after $i polls."
+        break
+    }
+    Start-Sleep -Milliseconds 500
+}
+
+if (Get-Process -Id $WaitPid -ErrorAction SilentlyContinue) {
+    Write-UpdateLog "Timed out waiting for process $WaitPid to exit; continuing update copy."
+}
+
+Write-HandoffState "copy_started"
+New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
+$resolvedSource = (Resolve-Path -LiteralPath $SourceDir).Path
+Write-UpdateLog "Resolved source path: $resolvedSource"
+
+$stagingRoot = Join-Path $InstallDir '.update_staging'
+if (Test-Path -LiteralPath $stagingRoot) {
+    Remove-Item -LiteralPath $stagingRoot -Recurse -Force -ErrorAction SilentlyContinue
+}
+New-Item -ItemType Directory -Force -Path $stagingRoot | Out-Null
+
+$stagedFiles = 0
+Get-ChildItem -LiteralPath $resolvedSource -Recurse -Force | Sort-Object FullName | ForEach-Object {
+    $relative = $_.FullName.Substring($resolvedSource.Length).TrimStart('\\')
+    if ([string]::IsNullOrWhiteSpace($relative)) {
+        return
+    }
+    if ($relative -ieq 'db_config.json') {
+        return
+    }
+    if ($relative -match '(^|\\)data\\backups(\\|$)') {
+        return
+    }
+    if (-not $_.PSIsContainer -and $relative -like '*.db') {
+        return
+    }
+
+    $stageDest = Join-Path $stagingRoot $relative
+    if ($_.PSIsContainer) {
+        New-Item -ItemType Directory -Force -Path $stageDest | Out-Null
+        return
+    }
+
+    $stageParent = Split-Path -Parent $stageDest
+    if ($stageParent) {
+        New-Item -ItemType Directory -Force -Path $stageParent | Out-Null
+    }
+    Copy-Item -LiteralPath $_.FullName -Destination $stageDest -Force
+    $stagedFiles++
+}
+
+Write-UpdateLog "Staging pass complete. Files staged: $stagedFiles"
+
+$appliedFiles = 0
+$criticalFiles = @('Stdytime.exe', 'launcher.py', 'app.py', 'VERSION')
+Get-ChildItem -LiteralPath $stagingRoot -Recurse -Force | Sort-Object FullName | ForEach-Object {
+    if ($_.PSIsContainer) {
+        return
+    }
+
+    $relative = $_.FullName.Substring($stagingRoot.Length).TrimStart('\\')
+    if ([string]::IsNullOrWhiteSpace($relative)) {
+        return
+    }
+
+    $destination = Join-Path $InstallDir $relative
+    $destinationParent = Split-Path -Parent $destination
+    if ($destinationParent) {
+        New-Item -ItemType Directory -Force -Path $destinationParent | Out-Null
+    }
+
+    $fileName = [System.IO.Path]::GetFileName($destination)
+    if ($criticalFiles -contains $fileName) {
+        $tmpDest = "$destination.new"
+        Copy-Item -LiteralPath $_.FullName -Destination $tmpDest -Force
+        Move-Item -LiteralPath $tmpDest -Destination $destination -Force
+    } else {
+        Copy-Item -LiteralPath $_.FullName -Destination $destination -Force
+    }
+    $appliedFiles++
+}
+
+Write-UpdateLog "Apply pass complete. Files applied: $appliedFiles"
+Write-HandoffState "copy_done" "Applied files: $appliedFiles"
+
+$exePath = Join-Path $InstallDir 'Stdytime.exe'
+if (Test-Path -LiteralPath $exePath) {
+    Write-UpdateLog "Launching executable: $exePath"
+    Write-HandoffState "relaunch_sent" "Launching Stdytime.exe"
+    Start-Process -FilePath $exePath -WorkingDirectory $InstallDir | Out-Null
+    Write-UpdateLog "Executable launch command sent successfully."
+    exit 0
+}
+
+$launcherPath = Join-Path $InstallDir 'launcher.py'
+if (Test-Path -LiteralPath $launcherPath) {
+    $pythonw = Get-Command pythonw.exe -ErrorAction SilentlyContinue
+    if (-not $pythonw) {
+        $pythonw = Get-Command python.exe -ErrorAction SilentlyContinue
+    }
+    if ($pythonw) {
+        Write-UpdateLog "Launching python entrypoint with $($pythonw.Source)"
+        Write-HandoffState "relaunch_sent" "Launching launcher.py with python"
+        Start-Process -FilePath $pythonw.Source -ArgumentList 'launcher.py' -WorkingDirectory $InstallDir | Out-Null
+        Write-UpdateLog "Python launcher command sent successfully."
+        exit 0
+    }
+}
+
+Write-UpdateLog 'No launch target was found after copy.'
+Write-HandoffState "relaunch_failed" "No launch target found"
+throw 'Update applied, but no launch target was found.'

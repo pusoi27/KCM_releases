@@ -2,7 +2,7 @@
 from flask import jsonify, request, g
 from modules import student_manager, assistant_manager, timer_manager, auth_manager, license_manager
 from modules import server_cache
-from modules import scanner_sync
+from modules import scanner_sync, db_backup_recovery
 from modules.email_manager import get_email_manager, render_branded_email_shell, resolve_center_name
 from modules import instructor_profile_manager
 from modules.database import (
@@ -770,6 +770,164 @@ def _bridge_student_payload(student_row) -> dict:
     }
 
 
+def _bridge_student_recovery_payload(student_row) -> dict:
+    """Return a rich student payload suitable for scanner DB recovery upserts."""
+    payload = _bridge_student_payload(student_row)
+    payload.update({
+        "student_identifier": str(student_row[32] or "").strip() if len(student_row) > 32 else "",
+        "subject_minutes_json": str(student_row[18] or "[]") if len(student_row) > 18 else "[]",
+        "total_study_minutes": int(student_row[19] or 30) if len(student_row) > 19 and student_row[19] is not None else 30,
+        "day1": str(student_row[13] or "") if len(student_row) > 13 else "",
+        "day1_time": str(student_row[14] or "") if len(student_row) > 14 else "",
+        "day2": str(student_row[15] or "") if len(student_row) > 15 else "",
+        "day2_time": str(student_row[16] or "") if len(student_row) > 16 else "",
+        "day3": str(student_row[24] or "") if len(student_row) > 24 else "",
+        "day3_time": str(student_row[25] or "") if len(student_row) > 25 else "",
+        "day4": str(student_row[26] or "") if len(student_row) > 26 else "",
+        "day4_time": str(student_row[27] or "") if len(student_row) > 27 else "",
+        "day5": str(student_row[28] or "") if len(student_row) > 28 else "",
+        "day5_time": str(student_row[29] or "") if len(student_row) > 29 else "",
+        "day6": str(student_row[30] or "") if len(student_row) > 30 else "",
+        "day6_time": str(student_row[31] or "") if len(student_row) > 31 else "",
+        "schedule_json": str(student_row[23] or "") if len(student_row) > 23 else "",
+        "checkout_notify_enabled": 1,
+    })
+    return payload
+
+
+def _recover_scanner_students_from_bridge() -> tuple[bool, str, int]:
+    """Attempt scanner local student-table recovery from instructor bridge snapshot.
+
+    Returns (ok, message, upserted_count).
+    """
+    if not _scanner_api_client_enabled():
+        return False, "Recovery is available only in Scanner API Client mode.", 0
+
+    url = _bridge_url('/api/bridge/students/snapshot')
+    if not url.startswith('http'):
+        return False, 'Instructor API URL is missing or invalid.', 0
+
+    try:
+        response = requests.get(url, headers=_build_bridge_headers(), timeout=(2, BRIDGE_GET_TIMEOUT_SECONDS))
+    except requests.RequestException as exc:
+        _mark_scanner_bridge_offline(f"request_error:{exc}")
+        return False, f"Unable to reach Instructor API: {exc}", 0
+
+    body, status_code = _bridge_json_response(response)
+    if status_code >= 500:
+        _mark_scanner_bridge_offline(f"upstream_http_{int(status_code)}")
+        return False, f"Instructor API returned HTTP {status_code}.", 0
+    if status_code >= 400:
+        return False, str((body or {}).get('error') or f'Instructor API returned HTTP {status_code}.'), 0
+
+    students = (body or {}).get('students') if isinstance(body, dict) else None
+    if not isinstance(students, list):
+        return False, 'Instructor API returned invalid student snapshot payload.', 0
+
+    backup_path = db_backup_recovery.create_backup('scanner_students_recovery')
+    upserted = 0
+
+    with sqlite3.connect(DB_PATH) as conn:
+        cur = conn.cursor()
+        cols = {
+            str(row[1] or '').strip().lower()
+            for row in cur.execute("PRAGMA table_info(students)").fetchall()
+        }
+        if not cols:
+            return False, 'Local students table is missing.', 0
+
+        field_order = [
+            'name', 'student_identifier', 'subject',
+            'subjects_json', 'subject_minutes_json', 'total_study_minutes',
+            'email', 'phone', 'guardian', 'active',
+            'el', 'pi', 'v', 'ind',
+            'day1', 'day1_time', 'day2', 'day2_time',
+            'day3', 'day3_time', 'day4', 'day4_time',
+            'day5', 'day5_time', 'day6', 'day6_time',
+            'schedule_json', 'checkout_notify_enabled',
+        ]
+        usable_fields = [field for field in field_order if field in cols]
+
+        try:
+            cur.execute('BEGIN IMMEDIATE')
+            for item in students:
+                if not isinstance(item, dict):
+                    continue
+
+                sid = int(item.get('id') or 0)
+                if sid <= 0:
+                    continue
+
+                name = str(item.get('name') or '').strip()
+                if not name:
+                    continue
+
+                row_values = {
+                    'name': name,
+                    'student_identifier': str(item.get('student_identifier') or '').strip(),
+                    'subject': str(item.get('subject') or '').strip(),
+                    'subjects_json': str(item.get('subjects_json') or '[]'),
+                    'subject_minutes_json': str(item.get('subject_minutes_json') or '[]'),
+                    'total_study_minutes': int(item.get('total_study_minutes') or 30),
+                    'email': str(item.get('email') or '').strip(),
+                    'phone': str(item.get('phone') or '').strip(),
+                    'guardian': str(item.get('guardian') or '').strip(),
+                    'active': 1 if bool(item.get('active', 1)) else 0,
+                    'el': 1 if bool(item.get('el', 0)) else 0,
+                    'pi': 1 if bool(item.get('pi', 0)) else 0,
+                    'v': 1 if bool(item.get('v', 0)) else 0,
+                    'ind': 1 if bool(item.get('ind', 0)) else 0,
+                    'day1': str(item.get('day1') or '').strip(),
+                    'day1_time': str(item.get('day1_time') or '').strip(),
+                    'day2': str(item.get('day2') or '').strip(),
+                    'day2_time': str(item.get('day2_time') or '').strip(),
+                    'day3': str(item.get('day3') or '').strip(),
+                    'day3_time': str(item.get('day3_time') or '').strip(),
+                    'day4': str(item.get('day4') or '').strip(),
+                    'day4_time': str(item.get('day4_time') or '').strip(),
+                    'day5': str(item.get('day5') or '').strip(),
+                    'day5_time': str(item.get('day5_time') or '').strip(),
+                    'day6': str(item.get('day6') or '').strip(),
+                    'day6_time': str(item.get('day6_time') or '').strip(),
+                    'schedule_json': str(item.get('schedule_json') or '').strip(),
+                    'checkout_notify_enabled': 1 if bool(item.get('checkout_notify_enabled', 1)) else 0,
+                }
+
+                existing = cur.execute(
+                    'SELECT id FROM students WHERE id = ? LIMIT 1',
+                    (sid,),
+                ).fetchone()
+
+                if existing:
+                    set_sql = ', '.join(f"{field} = ?" for field in usable_fields)
+                    values = [row_values[field] for field in usable_fields]
+                    cur.execute(
+                        f"UPDATE students SET {set_sql} WHERE id = ?",
+                        (*values, sid),
+                    )
+                else:
+                    insert_fields = ['id', *usable_fields]
+                    placeholders = ', '.join('?' for _ in insert_fields)
+                    values = [sid, *[row_values[field] for field in usable_fields]]
+                    cur.execute(
+                        f"INSERT INTO students ({', '.join(insert_fields)}) VALUES ({placeholders})",
+                        tuple(values),
+                    )
+                upserted += 1
+
+            conn.commit()
+        except Exception as exc:
+            conn.rollback()
+            try:
+                db_backup_recovery.restore_tenant_rows(backup_path, 'students')
+            except Exception as restore_exc:
+                return False, f"Recovery failed ({exc}) and restore failed ({restore_exc}).", 0
+            return False, f"Recovery failed and local students were restored: {exc}", 0
+
+    server_cache.invalidate(_students_list_cache_key())
+    return True, f"Recovered {upserted} student record(s) from Instructor Station.", upserted
+
+
 def _resolve_student_id_from_scan_payload(payload: dict) -> int | None:
     """Resolve student id from scan payload using UID first, then id/name fallbacks."""
     payload = payload or {}
@@ -1147,6 +1305,21 @@ def register_api_routes(app):
             })
 
         return jsonify(result), 200
+
+    @app.route('/api/bridge/students/snapshot', methods=['GET'])
+    def api_bridge_students_snapshot():
+        guard = _enforce_bridge_remote_access_policy()
+        if guard is not None:
+            return guard
+        if not _bridge_request_is_pairing_authorized():
+            return _bridge_pairing_auth_error()
+
+        try:
+            students = [_bridge_student_recovery_payload(row) for row in student_manager.get_all_students()]
+        except Exception as exc:
+            return jsonify({'error': f'Unable to build student snapshot: {exc}'}), 500
+
+        return jsonify({'students': students, 'count': len(students)}), 200
 
     @app.route("/api/bridge/assistants/list", methods=["GET"])
     def api_bridge_assistants_list():
@@ -1534,6 +1707,24 @@ def register_api_routes(app):
         )
 
         checked_count = sum(1 for student in result if student.get("status") == "checked")
+        if _scanner_api_client_enabled() and bool(getattr(g, 'scanner_bridge_fallback', False)) and not result:
+            ok, recovery_message, recovered_count = _recover_scanner_students_from_bridge()
+            _trace_column3(
+                "students_list_auto_recovery_attempt",
+                ok=ok,
+                recovered_count=recovered_count,
+                reason=getattr(g, 'scanner_bridge_fallback_reason', ''),
+            )
+            if ok and recovered_count > 0:
+                result = server_cache.get_or_set(
+                    cache_key,
+                    _build_students_list_payload,
+                    policy="checkin_live",
+                )
+                checked_count = sum(1 for student in result if student.get("status") == "checked")
+            elif not ok:
+                _trace_column3("students_list_auto_recovery_failed", error=recovery_message)
+
         _trace_column3(
             "students_list_response",
             cache_key=cache_key,
@@ -1542,6 +1733,16 @@ def register_api_routes(app):
         )
 
         return jsonify(result)
+
+    @app.route('/api/students/recover', methods=['POST'])
+    @require_admin
+    @require_feature(auth_manager.FEATURE_STDYTIMECLASS)
+    def api_students_recover():
+        """Manual scanner-side student DB recovery from Instructor bridge snapshot."""
+        ok, message, recovered_count = _recover_scanner_students_from_bridge()
+        if ok:
+            return jsonify({'ok': True, 'message': message, 'recovered': int(recovered_count)}), 200
+        return jsonify({'ok': False, 'error': message, 'recovered': int(recovered_count)}), 502
 
     @app.route("/api/students/start/<int:sid>", methods=["POST"])
     @require_login

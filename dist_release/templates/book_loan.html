@@ -1,25 +1,69 @@
 {% extends "base.html" %}
 
 {% block content %}
+<style>
+  #bookCard .card-body,
+  #studentCard .card-body {
+    padding: 0.65rem 0.75rem;
+  }
+
+  #bookCard .card-header,
+  #studentCard .card-header {
+    padding: 0.45rem 0.75rem;
+    font-size: 0.92rem;
+  }
+
+  .loan-tile-media {
+    width: 60px !important;
+    height: 80px !important;
+    object-fit: cover;
+    border-radius: 8px;
+    border: 1px solid #dee2e6;
+  }
+
+  .loan-tile-placeholder-icon {
+    font-size: 1.35rem !important;
+  }
+
+  #bookTitle,
+  #studentName {
+    font-size: 1rem;
+    line-height: 1.2;
+    margin-bottom: 0;
+  }
+
+  .loaned-books-details > summary {
+    cursor: pointer;
+    list-style: none;
+    font-size: 0.95rem;
+    color: var(--brand-primary-dark, #1b5e20);
+    font-weight: 600;
+    margin-bottom: 0.5rem;
+  }
+
+  .loaned-books-details > summary::-webkit-details-marker {
+    display: none;
+  }
+</style>
 <div class="container mt-4">
   <div class="d-flex justify-content-between align-items-center mb-3">
     <div>
       <h4 class="mb-1"><i class="bi bi-arrow-left-right"></i> Book Checkout / Checkin</h4>
-      <p class="text-muted mb-0">Step 1: Scan book barcode/ISBN to load Book card. Step 2: Scan student QR to load Student card. Step 3: Click <strong>Complete Checkout</strong>.</p>
+      <p class="text-muted small mb-0">Scan book, scan student, then complete checkout.</p>
     </div>
     <a class="btn btn-outline-secondary btn-sm" href="{{ url_for('books_list') }}"><i class="bi bi-arrow-left"></i> Back to Book List</a>
   </div>
 
-  <div class="row g-3 mb-3">
+  <div class="row g-2 mb-3">
     <div class="col-lg-6">
       <div class="card h-100" id="bookCard">
-        <div class="card-header bg-light fw-semibold">1) Book Card (scan ISBN)</div>
+        <div class="card-header bg-light fw-semibold">Book</div>
         <div class="card-body">
-          <div class="d-flex gap-3 align-items-start">
+          <div class="d-flex gap-2 align-items-start">
             <div>
-              <img id="bookCover" src="" alt="Book Cover" style="width:90px;height:120px;object-fit:cover;border-radius:8px;border:1px solid #dee2e6;display:none;">
-              <div id="bookCoverPlaceholder" class="d-flex align-items-center justify-content-center border rounded" style="width:90px;height:120px;background:#f8f9fa;">
-                <i class="bi bi-book text-muted" style="font-size:1.8rem;"></i>
+              <img id="bookCover" src="" alt="Book Cover" class="loan-tile-media" style="display:none;">
+              <div id="bookCoverPlaceholder" class="d-flex align-items-center justify-content-center border rounded loan-tile-media" style="background:#f8f9fa;">
+                <i class="bi bi-book text-muted loan-tile-placeholder-icon"></i>
               </div>
             </div>
             <div class="flex-grow-1 d-flex align-items-center">
@@ -32,19 +76,19 @@
 
     <div class="col-lg-6">
       <div class="card h-100" id="studentCard">
-        <div class="card-header bg-light fw-semibold">2) Student Card (scan Student QR)</div>
+        <div class="card-header bg-light fw-semibold">Student</div>
         <div class="card-body">
-          <div class="d-flex gap-3 align-items-start">
+          <div class="d-flex gap-2 align-items-start">
             <div>
-              <img id="studentPhoto" src="" alt="Student Photo" style="width:90px;height:120px;object-fit:cover;border-radius:8px;border:1px solid #dee2e6;display:none;">
-              <div id="studentPhotoPlaceholder" class="d-flex align-items-center justify-content-center border rounded" style="width:90px;height:120px;background:#f8f9fa;">
-                <i class="bi bi-person text-muted" style="font-size:1.8rem;"></i>
+              <img id="studentPhoto" src="" alt="Student Photo" class="loan-tile-media" style="display:none;">
+              <div id="studentPhotoPlaceholder" class="d-flex align-items-center justify-content-center border rounded loan-tile-media" style="background:#f8f9fa;">
+                <i class="bi bi-person text-muted loan-tile-placeholder-icon"></i>
               </div>
             </div>
             <div class="flex-grow-1">
               <h5 id="studentName" class="mb-1">Waiting for student QR scan...</h5>
-              <p class="mb-1"><strong>Student ID:</strong> <span id="studentId">-</span></p>
-              <div class="small text-muted mt-1" id="studentStatus">Scan student after selecting a book.</div>
+              <p class="mb-1 d-none"><strong>Student ID:</strong> <span id="studentId">-</span></p>
+              <div class="small text-muted mt-1 d-none" id="studentStatus">Scan student after selecting a book.</div>
             </div>
           </div>
         </div>
@@ -72,61 +116,64 @@
       <span class="badge bg-light text-primary">{{ total_loans }} books on loan</span>
     </div>
     <div class="card-body">
-      {% if books_by_student and books_by_student|length > 0 %}
-      <div class="table-responsive">
-        <table class="table table-sm table-hover align-middle">
-          <thead class="table-light">
-            <tr>
-              <th>Student Name</th>
-              <th>Book Title</th>
-              <th>Date Loaned</th>
-              <th class="text-center">Action</th>
-            </tr>
-          </thead>
-          <tbody>
-            {% for student_name, books in books_by_student.items() %}
-              {% for book in books %}
+      <details class="loaned-books-details">
+        <summary><i class="bi bi-chevron-right"></i> Show currently loaned books</summary>
+        {% if books_by_student and books_by_student|length > 0 %}
+        <div class="table-responsive mt-2">
+          <table class="table table-sm table-hover align-middle">
+            <thead class="table-light">
               <tr>
-                {% if loop.first %}
-                <td rowspan="{{ books|length }}" class="fw-bold align-middle" style="vertical-align: middle; border-right: 2px solid #dee2e6;">
-                  {{ student_name }}
-                </td>
-                {% endif %}
-                <td>{{ book.title }}</td>
-                <td><small class="text-muted">{{ book.checkout_date }}</small></td>
-                <td class="text-center">
-                  <button
-                    type="button"
-                    class="btn btn-outline-info btn-sm"
-                    onclick='returnLoanedBook({{ book.book_id }}, {{ book.title|tojson }}, {{ student_name|tojson }})'
-                    title="Return this book to library"
-                  >
-                    <i class="bi bi-box-arrow-in-left"></i> Return
-                  </button>
-                  {% if book.show_clear and current_user and current_user.is_admin() %}
-                  <button
-                    type="button"
-                    class="btn btn-outline-danger btn-sm"
-                    onclick='clearLoan({{ book.book_id }}, {{ book.student_id }}, {{ book.title|tojson }}, {{ student_name|tojson }})'
-                    title="Clear this loan for this student"
-                  >
-                    <i class="bi bi-x-circle"></i> Clear
-                  </button>
-                  {% else %}
-                  <span class="text-muted small">—</span>
-                  {% endif %}
-                </td>
+                <th>Student Name</th>
+                <th>Book Title</th>
+                <th>Date Loaned</th>
+                <th class="text-center">Action</th>
               </tr>
+            </thead>
+            <tbody>
+              {% for student_name, books in books_by_student.items() %}
+                {% for book in books %}
+                <tr>
+                  {% if loop.first %}
+                  <td rowspan="{{ books|length }}" class="fw-bold align-middle" style="vertical-align: middle; border-right: 2px solid #dee2e6;">
+                    {{ student_name }}
+                  </td>
+                  {% endif %}
+                  <td>{{ book.title }}</td>
+                  <td><small class="text-muted">{{ book.checkout_date }}</small></td>
+                  <td class="text-center">
+                    <button
+                      type="button"
+                      class="btn btn-outline-info btn-sm"
+                      onclick='returnLoanedBook({{ book.book_id }}, {{ book.title|tojson }}, {{ student_name|tojson }})'
+                      title="Return this book to library"
+                    >
+                      <i class="bi bi-box-arrow-in-left"></i> Return
+                    </button>
+                    {% if book.show_clear and current_user and current_user.is_admin() %}
+                    <button
+                      type="button"
+                      class="btn btn-outline-danger btn-sm"
+                      onclick='clearLoan({{ book.book_id }}, {{ book.student_id }}, {{ book.title|tojson }}, {{ student_name|tojson }})'
+                      title="Clear this loan for this student"
+                    >
+                      <i class="bi bi-x-circle"></i> Clear
+                    </button>
+                    {% else %}
+                    <span class="text-muted small">—</span>
+                    {% endif %}
+                  </td>
+                </tr>
+                {% endfor %}
               {% endfor %}
-            {% endfor %}
-          </tbody>
-        </table>
-      </div>
-      {% else %}
-      <div class="alert alert-info mb-0">
-        <i class="bi bi-info-circle"></i> No books are currently on loan.
-      </div>
-      {% endif %}
+            </tbody>
+          </table>
+        </div>
+        {% else %}
+        <div class="alert alert-info mb-0 mt-2">
+          <i class="bi bi-info-circle"></i> No books are currently on loan.
+        </div>
+        {% endif %}
+      </details>
     </div>
   </div>
 </div>
@@ -254,8 +301,9 @@ function returnLoanedBook(bookId, bookTitle, studentName) {
   }
 
   function setStudentStatus(text, type='muted') {
+    if (!studentStatus) return;
     studentStatus.textContent = text || '';
-    studentStatus.className = 'small mt-1 text-' + (type === 'muted' ? 'muted' : type);
+    studentStatus.className = 'small mt-1 d-none text-' + (type === 'muted' ? 'muted' : type);
   }
 
   function normalizeBookQuery(raw) {
@@ -637,6 +685,16 @@ function returnLoanedBook(bookId, bookTitle, studentName) {
   }
 
   document.addEventListener('keydown', onGlobalScannerKeydown, { capture: true });
+  const initialParams = new URLSearchParams(window.location.search);
+  const initialIsbn = normalizeBookQuery(initialParams.get('isbn') || '');
+  if (initialIsbn) {
+    findBook(initialIsbn);
+    initialParams.delete('isbn');
+    initialParams.delete('src');
+    const remaining = initialParams.toString();
+    const cleanUrl = window.location.pathname + (remaining ? `?${remaining}` : '');
+    window.history.replaceState({}, document.title, cleanUrl);
+  }
   refreshConfirmationState();
 })();
 </script>
