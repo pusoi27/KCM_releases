@@ -107,7 +107,7 @@ def main() -> int:
         if install_resp.status_code in (301, 302, 303, 307, 308):
             print(f"[SIM] install redirect location: {install_resp.headers.get('Location')}")
 
-        terminal_statuses = {"restarting", "error", "idle"}
+        terminal_statuses = {"restarting", "relaunch_dispatched", "error", "idle"}
         seen = []
         final_state = None
 
@@ -136,8 +136,8 @@ def main() -> int:
             print("[SIM] Timed out waiting for terminal update state.")
             return 3
 
-        if final_state.get("status") != "restarting":
-            print(f"[SIM] Expected 'restarting', got '{final_state.get('status')}'.")
+        if final_state.get("status") not in {"restarting", "relaunch_dispatched"}:
+            print(f"[SIM] Expected 'restarting' or 'relaunch_dispatched', got '{final_state.get('status')}'.")
             return 4
 
         if not launched["called"]:

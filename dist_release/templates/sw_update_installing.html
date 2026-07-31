@@ -11,7 +11,7 @@
           </div>
           <h1 class="h3 mb-3">Software update in progress</h1>
           <p class="text-muted mb-4">
-            Stdytime is checking, downloading, and applying the newest ZIP release. The current app will close and the updated version should relaunch automatically.
+            Stdytime is checking, downloading, and applying the newest ZIP release. When complete, you will be prompted to close and reopen the application window.
           </p>
 
           <div class="d-inline-flex align-items-center gap-2 px-3 py-2 rounded-pill bg-light border mb-3">
@@ -55,9 +55,9 @@
           <div class="alert alert-info text-start mb-0" role="alert">
             <div class="fw-semibold mb-1">What to expect</div>
             <ul class="mb-0 ps-3">
-              <li>The current app instance will close when the update is ready to apply.</li>
+              <li>The update will complete in this window and then ask you to restart manually.</li>
               <li>Your local database and backup settings are preserved during the ZIP install.</li>
-              <li>If the new window does not reopen automatically, launch Stdytime again from the usual shortcut.</li>
+              <li>When prompted, close this window and reopen Stdytime from your usual shortcut.</li>
             </ul>
           </div>
         </div>
@@ -78,6 +78,7 @@
 
   let lastKnownStatus = '';
   let lastKnownData = null;
+  let manualRestartPrompted = false;
 
   const stepOrder = ['checking', 'downloading', 'preparing', 'restarting'];
   const statusProgress = {
@@ -94,9 +95,29 @@
     downloading: 'Usually 1-5 minutes (depends on internet speed)',
     preparing: 'Usually under 1 minute',
     restarting: 'Usually 30-90 seconds',
-    idle: 'Completed',
+    idle: 'Update completed — restart required',
     error: 'Unable to estimate due to an error'
   };
+
+  function promptManualRestart(reason) {
+    if (manualRestartPrompted) {
+      return;
+    }
+    manualRestartPrompted = true;
+
+    const message = 'Software update completed. Please close this application window and reopen Stdytime from your usual shortcut.';
+
+    if (statusEl) {
+      statusEl.textContent = 'Update completed — please close and reopen Stdytime.';
+      statusEl.className = 'fw-semibold text-warning';
+    }
+    if (detailEl) {
+      detailEl.textContent = reason || message;
+      detailEl.className = 'small text-warning mb-4';
+    }
+
+    window.alert(message);
+  }
 
   function formatDuration(totalSeconds) {
     const seconds = Math.max(0, Math.floor(Number(totalSeconds) || 0));
@@ -236,16 +257,27 @@
 
       refreshVisuals(data);
 
+      if (data.status === 'idle') {
+        promptManualRestart('Update has finished. Close this window and reopen Stdytime to continue.');
+        window.clearInterval(timerId);
+        return;
+      }
+
       if (data.status === 'error') {
         window.clearInterval(timerId);
       }
     } catch (_error) {
       if (statusEl) {
-        statusEl.textContent = 'The previous app instance is closing. If this takes over 2 minutes, check the update debug log path below.';
+        statusEl.textContent = 'Update handoff finished. Please close and reopen Stdytime.';
       }
       if (detailEl && lastKnownStatus && lastKnownStatus !== 'error') {
-        detailEl.textContent = 'Connection to the old app was lost, which usually means restart is underway.';
-        detailEl.className = 'small text-muted mb-4';
+        detailEl.textContent = 'Connection to the updater page was lost. Close this window and reopen Stdytime from your usual shortcut.';
+        detailEl.className = 'small text-warning mb-4';
+      }
+
+      if (lastKnownStatus && lastKnownStatus !== 'error') {
+        promptManualRestart('Close this window and reopen Stdytime to finish the update.');
+        window.clearInterval(timerId);
       }
 
       refreshVisuals(lastKnownData || { status: lastKnownStatus || 'restarting', started_at: 0 });

@@ -1,8 +1,13 @@
 ﻿"""
 Version bump utility for Stdytime.
 
-Increments the patch segment of the VERSION file (xx.xx.xx -> xx.xx.(xx+1)),
+Increments the patch segment of the VERSION file with rollover support,
 preserving zero-padding width of each segment.
+
+Examples:
+- 01.04.003 -> 01.04.004
+- 01.04.999 -> 01.05.000
+- 01.99.999 -> 02.00.000
 
 Also appends an entry to RELEASE_NOTES.md so every version bump has
 corresponding release notes.
@@ -56,6 +61,16 @@ def bump_patch(parts: list[str]) -> list[str]:
         patch = int(parts[2]) + 1
     except ValueError:
         major, minor, patch = 0, 0, 1
+
+    patch_max = (10 ** widths[2]) - 1
+    minor_max = (10 ** widths[1]) - 1
+
+    if patch > patch_max:
+        patch = 0
+        minor += 1
+        if minor > minor_max:
+            minor = 0
+            major += 1
 
     return [
         str(major).zfill(widths[0]),

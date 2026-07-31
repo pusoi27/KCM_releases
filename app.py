@@ -177,6 +177,12 @@ def _minimize_console_window_once():
     if os.name != 'nt' or not getattr(sys, 'frozen', False):
         return
 
+    # Allow operators to keep the console visible for troubleshooting.
+    minimize_pref = str(os.getenv('STDYTIME_MINIMIZE_CONSOLE', 'true') or 'true').strip().lower()
+    if minimize_pref in {'0', 'false', 'no', 'off'}:
+        print('[startup] Console auto-minimize disabled by STDYTIME_MINIMIZE_CONSOLE.')
+        return
+
     try:
         hwnd = ctypes.windll.kernel32.GetConsoleWindow()
         if hwnd:
@@ -1057,8 +1063,12 @@ def inject_dev_trace_context():
 
 
 def _bump_patch_version(version):
-    """Bump version with rollover: x.x.(x+1) where each segment goes 0-99.
-    Example: 06.07.59 → 06.07.60, 06.07.99 → 06.08.00, 06.99.99 → 07.00.00
+    """Bump version with rollover based on segment widths.
+
+    Examples:
+    - 01.04.003 -> 01.04.004
+    - 01.04.999 -> 01.05.000
+    - 01.99.999 -> 02.00.000
     """
     parts = version.split('.')
     if len(parts) < 3:
@@ -1071,11 +1081,14 @@ def _bump_patch_version(version):
         # Increment patch
         patch += 1
         
+        patch_max = (10 ** width[2]) - 1
+        minor_max = (10 ** width[1]) - 1
+
         # Rollover logic
-        if patch > 99:
+        if patch > patch_max:
             patch = 0
             minor += 1
-            if minor > 99:
+            if minor > minor_max:
                 minor = 0
                 major += 1
         
