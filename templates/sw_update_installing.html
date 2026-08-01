@@ -11,7 +11,7 @@
           </div>
           <h1 class="h3 mb-3">Software update in progress</h1>
           <p class="text-muted mb-4">
-            Stdytime is checking, downloading, and applying the newest ZIP release. When complete, you will be prompted to close and reopen the application window.
+            Stdytime is checking and downloading the newest release package. When download is complete, the app will close and you will launch the installer manually.
           </p>
 
           <div class="d-inline-flex align-items-center gap-2 px-3 py-2 rounded-pill bg-light border mb-3">
@@ -20,6 +20,11 @@
           </div>
 
           <div id="swUpdateDetail" class="small text-muted mb-3">Please keep this window open for a moment.</div>
+
+          <div id="swUpdateReleaseNotesCard" class="alert alert-light text-start border d-none" role="alert">
+            <div class="fw-semibold mb-2">What’s new in this release</div>
+            <div id="swUpdateReleaseNotes" class="small"></div>
+          </div>
 
           <div class="px-2 px-lg-4 mb-4 text-start">
             <div class="d-flex justify-content-between align-items-center mb-2">
@@ -42,11 +47,11 @@
                 <span class="badge rounded-pill text-bg-secondary">Pending</span>
               </li>
               <li class="list-group-item d-flex justify-content-between align-items-center" data-step-key="preparing">
-                <span><i class="bi bi-gear me-2"></i>Preparing installation</span>
+                <span><i class="bi bi-gear me-2"></i>Preparing package folder</span>
                 <span class="badge rounded-pill text-bg-secondary">Pending</span>
               </li>
-              <li class="list-group-item d-flex justify-content-between align-items-center" data-step-key="restarting">
-                <span><i class="bi bi-arrow-repeat me-2"></i>Restarting app</span>
+              <li class="list-group-item d-flex justify-content-between align-items-center" data-step-key="manual_install">
+                <span><i class="bi bi-box-arrow-up-right me-2"></i>Ready for manual installer launch</span>
                 <span class="badge rounded-pill text-bg-secondary">Pending</span>
               </li>
             </ol>
@@ -55,9 +60,9 @@
           <div class="alert alert-info text-start mb-0" role="alert">
             <div class="fw-semibold mb-1">What to expect</div>
             <ul class="mb-0 ps-3">
-              <li>The update will complete in this window and then ask you to restart manually.</li>
-              <li>Your local database and backup settings are preserved during the ZIP install.</li>
-              <li>When prompted, close this window and reopen Stdytime from your usual shortcut.</li>
+              <li>The package is downloaded into a new local update folder.</li>
+              <li>When download is complete, this app instance will close automatically.</li>
+              <li>After it closes, run the shown <code>.exe</code> installer file to finish update.</li>
             </ul>
           </div>
         </div>
@@ -75,31 +80,29 @@
   const etaEl = document.getElementById('swUpdateEta');
   const debugPathEl = document.getElementById('swUpdateDebugPath');
   const stepsRootEl = document.getElementById('swUpdateSteps');
+  const releaseNotesCardEl = document.getElementById('swUpdateReleaseNotesCard');
+  const releaseNotesEl = document.getElementById('swUpdateReleaseNotes');
 
   let lastKnownStatus = '';
   let lastKnownData = null;
-  let manualRestartPrompted = false;
+  let manualInstallPrompted = false;
 
-  const stepOrder = ['checking', 'downloading', 'preparing', 'restarting'];
+  const stepOrder = ['checking', 'downloading', 'preparing', 'manual_install'];
   const statusToStepKey = {
     checking: 'checking',
     downloading: 'downloading',
     preparing: 'preparing',
-    handoff_sent: 'restarting',
-    apply_in_progress: 'restarting',
-    relaunch_dispatched: 'restarting',
-    restarting: 'restarting',
-    idle: 'restarting',
-    error: 'restarting',
+    ready_for_manual_install: 'manual_install',
+    closing_for_manual_install: 'manual_install',
+    idle: 'manual_install',
+    error: 'manual_install',
   };
   const statusProgress = {
     checking: 15,
     downloading: 60,
     preparing: 85,
-    handoff_sent: 92,
-    apply_in_progress: 95,
-    relaunch_dispatched: 98,
-    restarting: 97,
+    ready_for_manual_install: 98,
+    closing_for_manual_install: 100,
     idle: 100,
     error: 100
   };
@@ -108,32 +111,108 @@
     checking: 'Usually under 1 minute',
     downloading: 'Usually 1-5 minutes (depends on internet speed)',
     preparing: 'Usually under 1 minute',
-    handoff_sent: 'Handoff sent to installer helper',
-    apply_in_progress: 'Installer is applying files now',
-    relaunch_dispatched: 'Relaunch command sent',
-    restarting: 'Usually 30-90 seconds',
-    idle: 'Update completed — restart required',
+    ready_for_manual_install: 'Package downloaded; installer details are ready',
+    closing_for_manual_install: 'Closing app for manual installer launch',
+    idle: 'Update download complete',
     error: 'Unable to estimate due to an error'
   };
 
-  function promptManualRestart(reason) {
-    if (manualRestartPrompted) {
+  function buildManualInstallMessage(data, reason) {
+    const payload = data || {};
+    const installerName = String(payload.installer_name || '').trim();
+    const installerPath = String(payload.installer_path || '').trim();
+    const downloadDir = String(payload.download_dir || '').trim();
+    const message = reason || 'Software update package downloaded successfully.';
+
+    const lines = [message, '', 'After this app closes, launch the installer manually.'];
+    if (installerName) {
+      lines.push(`Installer file: ${installerName}`);
+    }
+    if (installerPath) {
+      lines.push(`Installer path: ${installerPath}`);
+    } else if (downloadDir) {
+      lines.push(`Package folder: ${downloadDir}`);
+    }
+    return lines.join('\n');
+  }
+
+  function promptManualInstall(data, reason) {
+    if (manualInstallPrompted) {
       return;
     }
-    manualRestartPrompted = true;
+    manualInstallPrompted = true;
 
-    const message = 'Software update completed. Please close this application window and reopen Stdytime from your usual shortcut.';
+    const message = buildManualInstallMessage(data, reason);
 
     if (statusEl) {
-      statusEl.textContent = 'Update completed — please close and reopen Stdytime.';
+      statusEl.textContent = 'Download complete — launch installer after app closes.';
       statusEl.className = 'fw-semibold text-warning';
     }
     if (detailEl) {
-      detailEl.textContent = reason || message;
+      detailEl.textContent = message;
       detailEl.className = 'small text-warning mb-4';
     }
 
     window.alert(message);
+  }
+
+  function escapeHtml(value) {
+    return String(value || '')
+      .replaceAll('&', '&amp;')
+      .replaceAll('<', '&lt;')
+      .replaceAll('>', '&gt;')
+      .replaceAll('"', '&quot;')
+      .replaceAll("'", '&#39;');
+  }
+
+  function notesToHtml(notesText) {
+    const lines = String(notesText || '')
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter((line) => line.length > 0);
+
+    if (!lines.length) {
+      return '';
+    }
+
+    const listItems = [];
+    const paragraphItems = [];
+
+    lines.forEach((line) => {
+      const bulletMatch = line.match(/^[-*•]\s+(.+)$/);
+      const numberedMatch = line.match(/^\d+[.)]\s+(.+)$/);
+      if (bulletMatch) {
+        listItems.push(escapeHtml(bulletMatch[1]));
+      } else if (numberedMatch) {
+        listItems.push(escapeHtml(numberedMatch[1]));
+      } else {
+        paragraphItems.push(escapeHtml(line));
+      }
+    });
+
+    const chunks = [];
+    if (listItems.length) {
+      chunks.push(`<ul class="mb-0 ps-3">${listItems.map((item) => `<li>${item}</li>`).join('')}</ul>`);
+    }
+    if (paragraphItems.length) {
+      chunks.push(`<div class="mt-2">${paragraphItems.join('<br>')}</div>`);
+    }
+
+    return chunks.join('');
+  }
+
+  function renderReleaseNotes(data) {
+    if (!releaseNotesCardEl || !releaseNotesEl) {
+      return;
+    }
+    const notes = String((data && data.release_notes) || '').trim();
+    if (!notes) {
+      releaseNotesCardEl.classList.add('d-none');
+      releaseNotesEl.innerHTML = '';
+      return;
+    }
+    releaseNotesEl.innerHTML = notesToHtml(notes);
+    releaseNotesCardEl.classList.remove('d-none');
   }
 
   function formatDuration(totalSeconds) {
@@ -150,8 +229,9 @@
       progressBarEl.setAttribute('aria-valuenow', String(pct));
       progressBarEl.classList.toggle('bg-danger', status === 'error');
       progressBarEl.classList.toggle('bg-success', status !== 'error');
-      progressBarEl.classList.toggle('progress-bar-animated', status !== 'idle' && status !== 'error');
-      progressBarEl.classList.toggle('progress-bar-striped', status !== 'idle' && status !== 'error');
+      const isTerminal = status === 'idle' || status === 'error' || status === 'ready_for_manual_install' || status === 'closing_for_manual_install';
+      progressBarEl.classList.toggle('progress-bar-animated', !isTerminal);
+      progressBarEl.classList.toggle('progress-bar-striped', !isTerminal);
     }
     if (progressPctEl) {
       progressPctEl.textContent = `${pct}%`;
@@ -238,6 +318,7 @@
     updateProgress(status);
     updateSteps(status);
     updateEta(data);
+    renderReleaseNotes(data);
     if (debugPathEl) {
       const path = String(data.debug_log_path || '').trim();
       if (path) {
@@ -275,8 +356,13 @@
 
       refreshVisuals(data);
 
+      if (data.status === 'ready_for_manual_install' || data.status === 'closing_for_manual_install') {
+        promptManualInstall(data, data.message || 'Download complete. Launch the installer after this app closes.');
+        window.clearInterval(timerId);
+        return;
+      }
+
       if (data.status === 'idle') {
-        promptManualRestart('Update has finished. Close this window and reopen Stdytime to continue.');
         window.clearInterval(timerId);
         return;
       }
@@ -285,20 +371,20 @@
         window.clearInterval(timerId);
       }
     } catch (_error) {
-      if (statusEl) {
-        statusEl.textContent = 'Update handoff finished. Please close and reopen Stdytime.';
-      }
-      if (detailEl && lastKnownStatus && lastKnownStatus !== 'error') {
-        detailEl.textContent = 'Connection to the updater page was lost. Close this window and reopen Stdytime from your usual shortcut.';
-        detailEl.className = 'small text-warning mb-4';
-      }
-
-      if (lastKnownStatus && lastKnownStatus !== 'error') {
-        promptManualRestart('Close this window and reopen Stdytime to finish the update.');
+      if (lastKnownStatus === 'ready_for_manual_install' || lastKnownStatus === 'closing_for_manual_install') {
+        promptManualInstall(lastKnownData, 'Stdytime has closed. Launch the installer now to complete the update.');
         window.clearInterval(timerId);
+      } else {
+        if (statusEl) {
+          statusEl.textContent = 'Connection to updater lost.';
+        }
+        if (detailEl && lastKnownStatus && lastKnownStatus !== 'error') {
+          detailEl.textContent = 'Please reopen this page from Stdytime and try the update again.';
+          detailEl.className = 'small text-warning mb-4';
+        }
       }
 
-      refreshVisuals(lastKnownData || { status: lastKnownStatus || 'restarting', started_at: 0 });
+      refreshVisuals(lastKnownData || { status: lastKnownStatus || 'preparing', started_at: 0 });
     }
   }
 

@@ -7,6 +7,7 @@ import hmac
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -28,10 +29,8 @@ _ACTIVE_UPDATE_STATUSES = {
     'checking',
     'downloading',
     'preparing',
-    'handoff_sent',
-    'apply_in_progress',
-    'relaunch_dispatched',
-    'restarting',
+    'ready_for_manual_install',
+    'closing_for_manual_install',
 }
 _UPDATE_LOCK = threading.Lock()
 _UPDATE_STATE = {
@@ -44,6 +43,10 @@ _UPDATE_STATE = {
     'repo_url': '',
     'source': '',
     'debug_log_path': '',
+    'download_dir': '',
+    'installer_name': '',
+    'installer_path': '',
+    'release_notes': '',
     'started_at': 0.0,
     'updated_at': 0.0,
 }
@@ -264,7 +267,16 @@ def _normalize_signature_text(value: str) -> str:
     return text if text else ''
 
 
-def _set_update_phase(ctx: UpdateContext, *, status: str, message: str, error: str = '') -> None:
+def _normalize_release_notes(value) -> str:
+    if isinstance(value, str):
+        return value.strip()
+    if isinstance(value, (list, tuple)):
+        lines = [str(item).strip() for item in value if str(item or '').strip()]
+        return '\n'.join(lines).strip()
+    return ''
+
+
+def _set_update_phase(ctx: UpdateContext, *, status: str, message: str, error: str = '', **extra_fields) -> None:
     _set_update_state(
         status=status,
         message=message,
@@ -275,6 +287,7 @@ def _set_update_phase(ctx: UpdateContext, *, status: str, message: str, error: s
         repo_url=ctx.repo_url,
         source=ctx.source,
         debug_log_path=ctx.debug_log_path,
+        **(extra_fields or {}),
     )
 
 
@@ -387,6 +400,13 @@ def _gateway_check_for_update(current_version: str, identity: dict) -> dict:
         'minisign_public_key': str(payload.get('minisign_public_key') or '').strip(),
         'ticket_endpoint': str(payload.get('ticket_endpoint') or '').strip(),
         'release_id': str(payload.get('release_id') or '').strip(),
+        'release_notes': _normalize_release_notes(
+            payload.get('release_notes')
+            or payload.get('changelog')
+            or payload.get('notes')
+            or payload.get('release_body')
+            or ''
+        ),
         'raw': payload,
     }
 
@@ -436,6 +456,13 @@ def _gateway_request_download_ticket(update_result: dict, identity: dict) -> dic
         'signature_url': _normalize_gateway_download_url(str(ticket.get('signature_url') or ticket.get('minisign_url') or '')),
         'expected_signature': _normalize_signature_text(str(ticket.get('expected_signature') or ticket.get('minisign_signature') or '')),
         'minisign_public_key': str(ticket.get('minisign_public_key') or '').strip(),
+        'release_notes': _normalize_release_notes(
+            ticket.get('release_notes')
+            or ticket.get('changelog')
+            or ticket.get('notes')
+            or ticket.get('release_body')
+            or ''
+        ),
     }
 
 
@@ -479,6 +506,8 @@ def _list_release_assets_via_api(repo_url: str) -> list[dict]:
         if _update_channel() == 'stable' and bool(release.get('prerelease')):
             continue
 
+        release_notes = _normalize_release_notes(release.get('body') or '')
+
         release_assets = release.get('assets') if isinstance(release.get('assets'), list) else []
         download_by_name: dict[str, str] = {}
         for item in release_assets:
@@ -508,6 +537,7 @@ def _list_release_assets_via_api(repo_url: str) -> list[dict]:
             signature_name = f"{asset['name']}.minisig"
             asset['checksum_url'] = str(download_by_name.get(checksum_name.lower()) or '').strip()
             asset['signature_url'] = str(download_by_name.get(signature_name.lower()) or '').strip()
+            asset['release_notes'] = release_notes
             assets.append(asset)
 
     return assets
@@ -544,6 +574,7 @@ def _legacy_check_for_update(current_version: str) -> dict:
             'minisign_public_key': '',
             'ticket_endpoint': '',
             'release_id': '',
+            'release_notes': '',
             'raw': {},
         }
 
@@ -563,6 +594,7 @@ def _legacy_check_for_update(current_version: str) -> dict:
         'minisign_public_key': '',
         'ticket_endpoint': '',
         'release_id': '',
+        'release_notes': _normalize_release_notes(latest_asset.get('release_notes') or ''),
         'raw': latest_asset,
     }
 
@@ -590,6 +622,62 @@ def _resolve_install_dir() -> Path:
         return Path(local_appdata) / 'Stdytime'
 
     return Path(__file__).resolve().parents[1]
+
+
+def _resolve_update_download_root() -> Path:
+    local_appdata = str(os.getenv('LOCALAPPDATA', '') or '').strip()
+    if local_appdata:
+        root = Path(local_appdata) / 'Stdytime' / 'sw_update_downloads'
+    else:
+        root = Path(__file__).resolve().parents[1] / 'sw_update_downloads'
+    root.mkdir(parents=True, exist_ok=True)
+    return root
+
+
+def _find_installer_executable(package_dir: Path) -> Path | None:
+    candidates = [path for path in package_dir.rglob('*.exe') if path.is_file()]
+    if not candidates:
+        return None
+
+    def _score(path: Path) -> tuple[int, int, str]:
+        name = path.name.lower()
+        if name.startswith('stdytime_installer'):
+            priority = 0
+        elif 'installer' in name:
+            priority = 1
+        elif name == 'stdytime.exe':
+            priority = 2
+        else:
+            priority = 3
+        return (priority, len(path.parts), name)
+
+    candidates.sort(key=_score)
+    return candidates[0]
+
+
+def _stage_manual_update_payload(extract_dir: Path, *, asset_name: str, latest_version: str) -> tuple[Path, Path, Path]:
+    root = _resolve_update_download_root()
+    stamp = time.strftime('%Y%m%d_%H%M%S')
+    default_name = f'stdytime_update_{latest_version or "latest"}'
+    safe_name = re.sub(r'[^A-Za-z0-9._-]+', '_', Path(asset_name or default_name).stem).strip('._-') or default_name
+    target_dir = root / f'{stamp}_{safe_name}'
+    suffix = 1
+    while target_dir.exists():
+        suffix += 1
+        target_dir = root / f'{stamp}_{safe_name}_{suffix}'
+
+    package_dir = target_dir / 'package'
+    package_dir.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copytree(extract_dir, package_dir)
+
+    installer_path = _find_installer_executable(package_dir)
+    if installer_path is None:
+        raise _sw_error(
+            'Downloaded package does not contain a launchable Windows executable (.exe).',
+            code='installer_exe_missing',
+        )
+
+    return target_dir, package_dir, installer_path
 
 
 def _verify_minisign_signature(
@@ -856,6 +944,7 @@ def _resolve_download_spec(update_result: dict, identity: dict) -> dict:
             'expected_signature': expected_signature,
             'signature_url': signature_url,
             'minisign_public_key': minisign_public_key,
+            'release_notes': _normalize_release_notes(update_result.get('release_notes') or ''),
         }
 
     if update_result.get('source') == 'gateway':
@@ -872,6 +961,11 @@ def _resolve_download_spec(update_result: dict, identity: dict) -> dict:
             ),
             'signature_url': str(ticket.get('signature_url') or signature_url or '').strip(),
             'minisign_public_key': str(ticket.get('minisign_public_key') or minisign_public_key or '').strip(),
+            'release_notes': _normalize_release_notes(
+                ticket.get('release_notes')
+                or update_result.get('release_notes')
+                or ''
+            ),
         }
 
     raise _sw_error('No downloadable payload URL is available for this update source.', code='download_url_unavailable', retryable=True)
@@ -923,6 +1017,10 @@ def register_sw_update_routes(app, get_app_version_func, shutdown_flush_once=Non
                     ctx,
                     status='idle',
                     message=f'No newer software update found. Current version {current_version} is already up to date.',
+                    download_dir='',
+                    installer_name='',
+                    installer_path='',
+                    release_notes='',
                 )
                 return
 
@@ -930,6 +1028,10 @@ def register_sw_update_routes(app, get_app_version_func, shutdown_flush_once=Non
                 ctx,
                 status='downloading',
                 message=f"Downloading {ctx.asset_name or 'software update'} from update source...",
+                download_dir='',
+                installer_name='',
+                installer_path='',
+                release_notes='',
             )
             _sw_update_debug_log(f"Download phase entered for asset={result.get('asset_name') or ''}")
 
@@ -993,29 +1095,63 @@ def register_sw_update_routes(app, get_app_version_func, shutdown_flush_once=Non
             _set_update_phase(
                 ctx,
                 status='preparing',
-                message='Preparing release payload for installation (verifying files and staging updater)...',
+                message='Preparing downloaded package for manual installation...',
             )
             _sw_update_debug_log(f'Preparing phase entered. extract_dir={extract_dir}')
 
-            payload_root = _detect_payload_root(extract_dir)
-            _sw_update_debug_log(f'Payload root detected: {payload_root}')
-            install_dir = _resolve_install_dir()
-            install_dir.mkdir(parents=True, exist_ok=True)
-            _launch_update_helper(payload_root, install_dir, os.getpid())
+            download_dir, package_dir, installer_path = _stage_manual_update_payload(
+                extract_dir,
+                asset_name=str(result.get('asset_name') or ''),
+                latest_version=ctx.latest_version,
+            )
+            _sw_update_debug_log(
+                f'Manual install package staged. download_dir={download_dir} package_dir={package_dir} installer={installer_path}'
+            )
+
+            installer_name = installer_path.name
+            installer_path_text = str(installer_path)
+            download_dir_text = str(download_dir)
 
             _set_update_phase(
                 ctx,
-                status='handoff_sent',
-                message=f'Updater handoff dispatched. Waiting for installer helper to apply update... Debug: {debug_log_path}',
+                status='ready_for_manual_install',
+                message=(
+                    f'Download complete. Stdytime will close now. '
+                    f'After it closes, run {installer_name} from {installer_path_text}.'
+                ),
+                download_dir=download_dir_text,
+                installer_name=installer_name,
+                installer_path=installer_path_text,
+                release_notes=_normalize_release_notes(
+                    download_spec.get('release_notes')
+                    or result.get('release_notes')
+                    or ''
+                ),
             )
-            _write_handoff_state('handoff_sent', install_dir=str(install_dir), payload_root=str(payload_root))
+            _write_handoff_state(
+                'manual_install_ready',
+                download_dir=download_dir_text,
+                package_dir=str(package_dir),
+                installer_name=installer_name,
+                installer_path=installer_path_text,
+            )
 
             _set_update_phase(
                 ctx,
-                status='apply_in_progress',
-                message=f'Applying update and preparing relaunch... If this takes over 2 minutes, check debug log: {debug_log_path}',
+                status='closing_for_manual_install',
+                message=(
+                    f'Closing Stdytime now. Then launch {installer_name} manually from: {installer_path_text}'
+                ),
+                download_dir=download_dir_text,
+                installer_name=installer_name,
+                installer_path=installer_path_text,
+                release_notes=_normalize_release_notes(
+                    download_spec.get('release_notes')
+                    or result.get('release_notes')
+                    or ''
+                ),
             )
-            _sw_update_debug_log('Restarting phase entered; shutdown flush and process exit beginning.')
+            _sw_update_debug_log('Manual install ready. Beginning graceful shutdown of current app instance.')
 
             if callable(shutdown_flush_once):
                 try:
@@ -1026,14 +1162,9 @@ def register_sw_update_routes(app, get_app_version_func, shutdown_flush_once=Non
                     _sw_update_debug_log('shutdown_flush_once raised an exception (continuing).')
                     pass
 
-            _set_update_phase(
-                ctx,
-                status='relaunch_dispatched',
-                message='Relaunch dispatch in progress. If app does not reopen automatically, start Stdytime manually.',
-            )
-            _write_handoff_state('relaunch_dispatched')
-            time.sleep(1.2)
-            _sw_update_debug_log('Calling os._exit(0) to hand off to update helper.')
+            _write_handoff_state('manual_install_shutdown', installer_name=installer_name, installer_path=installer_path_text)
+            time.sleep(2.0)
+            _sw_update_debug_log('Calling os._exit(0) after manual installer handoff.')
             os._exit(0)
         except Exception as exc:
             _sw_update_debug_log(f'Worker failed with exception: {exc}')
@@ -1042,6 +1173,9 @@ def register_sw_update_routes(app, get_app_version_func, shutdown_flush_once=Non
                 message='Software update failed.',
                 error=f'[{_update_error_code(exc)}] {exc}',
                 debug_log_path=str(_sw_update_debug_log_path()),
+                installer_name='',
+                installer_path='',
+                release_notes='',
             )
             _write_handoff_state('worker_failed', error=str(exc), code=_update_error_code(exc))
 
@@ -1107,6 +1241,7 @@ def register_sw_update_routes(app, get_app_version_func, shutdown_flush_once=Non
             ),
             'install_url': url_for('sw_update_install'),
             'repo_url': result.get('repo_url') or '',
+            'release_notes': _normalize_release_notes(result.get('release_notes') or ''),
         })
 
     @app.route('/api/sw-update/status', methods=['GET'])
@@ -1144,6 +1279,10 @@ def register_sw_update_routes(app, get_app_version_func, shutdown_flush_once=Non
                 repo_url=_gateway_base_url() or _repo_url(),
                 source='gateway' if _gateway_enabled() else 'github-fallback',
                 debug_log_path=str(_sw_update_debug_log_path()),
+                download_dir='',
+                installer_name='',
+                installer_path='',
+                release_notes='',
                 started_at=time.time(),
             )
             worker = threading.Thread(

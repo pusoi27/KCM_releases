@@ -54,6 +54,7 @@ def main() -> int:
     simulated_payload_root = Path(tempfile.mkdtemp(prefix="stdytime_sw_sim_payload_"))
     (simulated_payload_root / "VERSION").write_text("99.99.999", encoding="utf-8")
     (simulated_payload_root / "app.py").write_text("# simulated payload\n", encoding="utf-8")
+    (simulated_payload_root / "stdytime_installer_v99_99_999.exe").write_text("fake-binary", encoding="utf-8")
 
     def fake_check_for_update(current_version: str, identity: dict) -> dict:
         return {
@@ -72,20 +73,12 @@ def main() -> int:
             "minisign_public_key": "",
             "ticket_endpoint": "",
             "release_id": "v99.99.999",
+            "release_notes": "- Added manual installer handoff\n- Improved update package staging\n- Better status messaging",
             "raw": {},
         }
 
     def fake_download_release_zip(*_args, **_kwargs):
         return simulated_payload_root
-
-    launched = {"called": False}
-
-    def fake_launch_update_helper(source_dir, install_dir, wait_pid):
-        launched["called"] = True
-        print(f"[SIM] launch helper called")
-        print(f"[SIM] source_dir={source_dir}")
-        print(f"[SIM] install_dir={install_dir}")
-        print(f"[SIM] wait_pid={wait_pid}")
 
     exit_calls: list[int] = []
 
@@ -94,7 +87,6 @@ def main() -> int:
 
     sw_update._check_for_update = fake_check_for_update
     sw_update._download_release_zip = fake_download_release_zip
-    sw_update._launch_update_helper = fake_launch_update_helper
     sw_update.os._exit = fake_exit
 
     with flask_app.test_client() as client:
@@ -107,7 +99,7 @@ def main() -> int:
         if install_resp.status_code in (301, 302, 303, 307, 308):
             print(f"[SIM] install redirect location: {install_resp.headers.get('Location')}")
 
-        terminal_statuses = {"restarting", "relaunch_dispatched", "error", "idle"}
+        terminal_statuses = {"ready_for_manual_install", "closing_for_manual_install", "error", "idle"}
         seen = []
         final_state = None
 
@@ -136,13 +128,22 @@ def main() -> int:
             print("[SIM] Timed out waiting for terminal update state.")
             return 3
 
-        if final_state.get("status") not in {"restarting", "relaunch_dispatched"}:
-            print(f"[SIM] Expected 'restarting' or 'relaunch_dispatched', got '{final_state.get('status')}'.")
+        if final_state.get("status") not in {"ready_for_manual_install", "closing_for_manual_install"}:
+            print(
+                f"[SIM] Expected 'ready_for_manual_install' or 'closing_for_manual_install', "
+                f"got '{final_state.get('status')}'."
+            )
             return 4
 
-        if not launched["called"]:
-            print("[SIM] launch helper was not called.")
+        installer_name = str(final_state.get("installer_name") or "").strip()
+        installer_path = str(final_state.get("installer_path") or "").strip()
+        release_notes = str(final_state.get("release_notes") or "").strip()
+        if not installer_name or not installer_path:
+            print("[SIM] expected installer_name and installer_path to be populated.")
             return 5
+        if "manual installer handoff" not in release_notes.lower():
+            print("[SIM] expected release_notes to include update summary text.")
+            return 7
 
         for _ in range(15):
             if exit_calls:

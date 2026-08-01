@@ -486,7 +486,7 @@ async function triggerSoftwareUpdate(event) {
     }
 
     const confirmed = window.confirm(
-      `A newer Stdytime software update is available.\n\nCurrent version: ${data.current_version}\nLatest version: ${data.latest_version}\nRelease file: ${data.asset_name}\n\nDownload, install, and restart now?`
+      `A newer Stdytime software update is available.\n\nCurrent version: ${data.current_version}\nLatest version: ${data.latest_version}\nRelease file: ${data.asset_name}\n\nDownload package now? After download, Stdytime will close and you will launch the installer (.exe) manually.`
     );
 
     if (confirmed) {
