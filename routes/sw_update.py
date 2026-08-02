@@ -33,6 +33,7 @@ _ACTIVE_UPDATE_STATUSES = {
     'closing_for_manual_install',
 }
 _UPDATE_LOCK = threading.Lock()
+_CONFIRM_INSTALL_EVENT = threading.Event()
 _UPDATE_STATE = {
     'status': 'idle',
     'message': '',
@@ -1116,8 +1117,7 @@ def register_sw_update_routes(app, get_app_version_func, shutdown_flush_once=Non
                 ctx,
                 status='ready_for_manual_install',
                 message=(
-                    f'Download complete. Stdytime will close now. '
-                    f'After it closes, run {installer_name} from {installer_path_text}.'
+                    f'Download complete. Click "Open Folder & Close Stdytime" to open the installer folder and exit.'
                 ),
                 download_dir=download_dir_text,
                 installer_name=installer_name,
@@ -1136,11 +1136,16 @@ def register_sw_update_routes(app, get_app_version_func, shutdown_flush_once=Non
                 installer_path=installer_path_text,
             )
 
+            _sw_update_debug_log('Waiting for user confirmation to open installer folder and close...')
+            confirmed = _CONFIRM_INSTALL_EVENT.wait(timeout=600.0)
+            if not confirmed:
+                _sw_update_debug_log('User confirmation timed out after 10 minutes; proceeding anyway.')
+
             _set_update_phase(
                 ctx,
                 status='closing_for_manual_install',
                 message=(
-                    f'Closing Stdytime now. Then launch {installer_name} manually from: {installer_path_text}'
+                    f'Opening installer folder and closing Stdytime now...'
                 ),
                 download_dir=download_dir_text,
                 installer_name=installer_name,
@@ -1151,7 +1156,7 @@ def register_sw_update_routes(app, get_app_version_func, shutdown_flush_once=Non
                     or ''
                 ),
             )
-            _sw_update_debug_log('Manual install ready. Beginning graceful shutdown of current app instance.')
+            _sw_update_debug_log('User confirmed. Beginning graceful shutdown of current app instance.')
 
             if callable(shutdown_flush_once):
                 try:
@@ -1254,6 +1259,15 @@ def register_sw_update_routes(app, get_app_version_func, shutdown_flush_once=Non
     def sw_update_status_api():
         return jsonify({'ok': True, **_get_update_state()})
 
+    @app.route('/api/sw-update/confirm-install', methods=['POST'])
+    @require_login
+    def sw_update_confirm_install():
+        state = _get_update_state()
+        if state.get('status') != 'ready_for_manual_install':
+            return jsonify({'ok': False, 'error': 'No pending install to confirm.'}), 409
+        _CONFIRM_INSTALL_EVENT.set()
+        return jsonify({'ok': True})
+
     @app.route('/api/sw-update/diagnostics', methods=['GET'])
     @require_admin
     def sw_update_diagnostics_api():
@@ -1296,6 +1310,7 @@ def register_sw_update_routes(app, get_app_version_func, shutdown_flush_once=Non
                 daemon=True,
                 name='sw-update-worker',
             )
+            _CONFIRM_INSTALL_EVENT.clear()
             worker.start()
 
         return render_template('sw_update_installing.html')

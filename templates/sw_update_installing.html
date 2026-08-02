@@ -11,7 +11,7 @@
           </div>
           <h1 class="h3 mb-3">Software update in progress</h1>
           <p class="text-muted mb-4">
-            Stdytime is checking and downloading the newest release package. When download is complete, the app will close and you will launch the installer manually.
+            Stdytime is checking and downloading the newest release package. When the download is complete, you will be prompted to open the installer folder, then Stdytime will close.
           </p>
 
           <div class="d-inline-flex align-items-center gap-2 px-3 py-2 rounded-pill bg-light border mb-3">
@@ -61,11 +61,39 @@
             <div class="fw-semibold mb-1">What to expect</div>
             <ul class="mb-0 ps-3">
               <li>The package is downloaded into a new local update folder.</li>
-              <li>When download is complete, this app instance will close automatically.</li>
-              <li>After it closes, run the shown <code>.exe</code> installer file to finish update.</li>
+              <li>When download is complete, a confirmation prompt will appear.</li>
+              <li>Click <strong>Open Folder &amp; Close Stdytime</strong> — the installer folder opens and Stdytime exits.</li>
+              <li>Run the shown <code>.exe</code> installer file to finish the update.</li>
             </ul>
           </div>
         </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Download-complete confirmation modal -->
+<div class="modal fade" id="swUpdateReadyModal" tabindex="-1" aria-labelledby="swUpdateReadyModalLabel" aria-modal="true" role="dialog" data-bs-backdrop="static" data-bs-keyboard="false">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content">
+      <div class="modal-header border-0 pb-0">
+        <h2 class="modal-title h5" id="swUpdateReadyModalLabel"><i class="bi bi-check-circle-fill text-success me-2"></i>Download complete</h2>
+      </div>
+      <div class="modal-body">
+        <p class="mb-2">The installer package is ready. Click the button below to:</p>
+        <ul class="mb-3">
+          <li>Open the download folder with the installer highlighted</li>
+          <li>Close Stdytime automatically</li>
+        </ul>
+        <div id="swReadyInstallerInfo" class="alert alert-light border small text-start mb-0 d-none">
+          <div><span class="text-muted">Installer:</span> <span id="swReadyInstallerName" class="fw-semibold"></span></div>
+          <div class="text-truncate"><span class="text-muted">Path:</span> <span id="swReadyInstallerPath" class="font-monospace small"></span></div>
+        </div>
+      </div>
+      <div class="modal-footer border-0 pt-0">
+        <button type="button" id="swUpdateConfirmBtn" class="btn btn-success w-100" onclick="confirmInstall()">
+          <i class="bi bi-folder2-open me-1"></i>Open Folder &amp; Close Stdytime
+        </button>
       </div>
     </div>
   </div>
@@ -86,6 +114,7 @@
   let lastKnownStatus = '';
   let lastKnownData = null;
   let manualInstallPrompted = false;
+  let modalInstance = null;
 
   const stepOrder = ['checking', 'downloading', 'preparing', 'manual_install'];
   const statusToStepKey = {
@@ -117,43 +146,51 @@
     error: 'Unable to estimate due to an error'
   };
 
-  function buildManualInstallMessage(data, reason) {
-    const payload = data || {};
-    const installerName = String(payload.installer_name || '').trim();
-    const installerPath = String(payload.installer_path || '').trim();
-    const downloadDir = String(payload.download_dir || '').trim();
-    const message = reason || 'Software update package downloaded successfully.';
-
-    const lines = [message, '', 'After this app closes, launch the installer manually.'];
-    if (installerName) {
-      lines.push(`Installer file: ${installerName}`);
-    }
-    if (installerPath) {
-      lines.push(`Installer path: ${installerPath}`);
-    } else if (downloadDir) {
-      lines.push(`Package folder: ${downloadDir}`);
-    }
-    return lines.join('\n');
-  }
-
-  function promptManualInstall(data, reason) {
-    if (manualInstallPrompted) {
-      return;
-    }
+  function showReadyModal(data) {
+    if (manualInstallPrompted) return;
     manualInstallPrompted = true;
 
-    const message = buildManualInstallMessage(data, reason);
+    const installerName = String((data && data.installer_name) || '').trim();
+    const installerPath = String((data && data.installer_path) || '').trim();
+    const nameEl = document.getElementById('swReadyInstallerName');
+    const pathEl = document.getElementById('swReadyInstallerPath');
+    const infoEl = document.getElementById('swReadyInstallerInfo');
 
+    if (installerName && nameEl) nameEl.textContent = installerName;
+    if (installerPath && pathEl) pathEl.textContent = installerPath;
+    if ((installerName || installerPath) && infoEl) infoEl.classList.remove('d-none');
+
+    const modalEl = document.getElementById('swUpdateReadyModal');
+    if (modalEl && window.bootstrap) {
+      modalInstance = new window.bootstrap.Modal(modalEl);
+      modalInstance.show();
+    }
+  }
+
+  async function confirmInstall() {
+    const btn = document.getElementById('swUpdateConfirmBtn');
+    if (btn) {
+      btn.disabled = true;
+      btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1" role="status" aria-hidden="true"></span>Opening folder...';
+    }
+    try {
+      await fetch('{{ url_for("sw_update_confirm_install") }}', {
+        method: 'POST',
+        headers: { 'Accept': 'application/json' },
+        cache: 'no-store',
+      });
+    } catch (_err) {
+      // Server closed — expected once os._exit fires
+    }
+    if (modalInstance) modalInstance.hide();
     if (statusEl) {
-      statusEl.textContent = 'Download complete — launch installer after app closes.';
+      statusEl.textContent = 'Opening installer folder — Stdytime is closing...';
       statusEl.className = 'fw-semibold text-warning';
     }
     if (detailEl) {
-      detailEl.textContent = message;
+      detailEl.textContent = 'The installer folder has been opened. Run the .exe file to complete the update.';
       detailEl.className = 'small text-warning mb-4';
     }
-
-    window.alert(message);
   }
 
   function escapeHtml(value) {
@@ -356,8 +393,13 @@
 
       refreshVisuals(data);
 
-      if (data.status === 'ready_for_manual_install' || data.status === 'closing_for_manual_install') {
-        promptManualInstall(data, data.message || 'Download complete. Launch the installer after this app closes.');
+      if (data.status === 'ready_for_manual_install') {
+        showReadyModal(data);
+        // Keep polling to detect closing_for_manual_install
+        return;
+      }
+
+      if (data.status === 'closing_for_manual_install') {
         window.clearInterval(timerId);
         return;
       }
@@ -371,8 +413,11 @@
         window.clearInterval(timerId);
       }
     } catch (_error) {
-      if (lastKnownStatus === 'ready_for_manual_install' || lastKnownStatus === 'closing_for_manual_install') {
-        promptManualInstall(lastKnownData, 'Stdytime has closed. Launch the installer now to complete the update.');
+      if (lastKnownStatus === 'closing_for_manual_install') {
+        // Server closed after user confirmed — expected
+        window.clearInterval(timerId);
+      } else if (lastKnownStatus === 'ready_for_manual_install') {
+        showReadyModal(lastKnownData);
         window.clearInterval(timerId);
       } else {
         if (statusEl) {
