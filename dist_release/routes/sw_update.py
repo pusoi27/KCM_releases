@@ -1163,6 +1163,11 @@ def register_sw_update_routes(app, get_app_version_func, shutdown_flush_once=Non
                     pass
 
             _write_handoff_state('manual_install_shutdown', installer_name=installer_name, installer_path=installer_path_text)
+            try:
+                subprocess.Popen(['explorer', f'/select,{installer_path_text}'])
+                _sw_update_debug_log(f'Opened Explorer to installer: {installer_path_text}')
+            except Exception as _exp_exc:
+                _sw_update_debug_log(f'Could not open Explorer: {_exp_exc}')
             time.sleep(2.0)
             _sw_update_debug_log('Calling os._exit(0) after manual installer handoff.')
             os._exit(0)
