@@ -1,4 +1,4 @@
-﻿# routes/api.py
+# routes/api.py
 from flask import jsonify, request, g
 from modules import student_manager, assistant_manager, timer_manager, auth_manager, license_manager
 from modules import server_cache
@@ -7,8 +7,6 @@ from modules.email_manager import get_email_manager, render_branded_email_shell,
 from modules import instructor_profile_manager
 from modules.database import (
     DB_PATH,
-    GDRIVE_SYNC_PATH,
-    sync_to_gdrive,
     is_station_mailbox_mode_enabled,
     get_station_runtime_config,
 )
@@ -379,64 +377,6 @@ def _force_reset_all_open_assistant_sessions(conn: sqlite3.Connection) -> int:
     if closed_count:
         conn.commit()
     return closed_count
-
-
-def _push_cloud_backup_after_staff_change(aid: int, action: str) -> None:
-    """Best-effort immediate cloud push after staff duty writes.
-
-    This reduces stale cross-machine duty state when a second machine starts
-    before the 9-minute background sync cycle runs.
-    """
-    try:
-        if _runtime_backup_mode() == "instructor_snapshots_only":
-            _trace_staff_duty("snapshot_mode_skip_direct_cloud_push", aid=aid, action=action)
-            return
-
-        if is_station_mailbox_mode_enabled():
-            _trace_staff_duty("mailbox_mode_enabled_skip_direct_cloud_push", aid=aid, action=action)
-            return
-
-        if not GDRIVE_SYNC_PATH:
-            _trace_staff_duty("cloud_push_skipped_no_path", aid=aid, action=action)
-            return
-
-        pushed = sync_to_gdrive(
-            DB_PATH,
-            GDRIVE_SYNC_PATH,
-            retries=1,
-            retry_delay=1,
-            silent=True,
-        )
-        _trace_staff_duty("cloud_push_result", aid=aid, action=action, pushed=bool(pushed))
-    except Exception as exc:
-        _trace_staff_duty("cloud_push_error", aid=aid, action=action, error=str(exc))
-
-
-def _push_cloud_backup_after_student_change(student_id: int, action: str, source: str) -> None:
-    """Best-effort immediate cloud push after main-class checkin/checkout writes."""
-    try:
-        if _runtime_backup_mode() == "instructor_snapshots_only":
-            _trace_column3("snapshot_mode_skip_direct_cloud_push", sid=student_id, action=action, source=source)
-            return
-
-        if is_station_mailbox_mode_enabled():
-            _trace_column3("mailbox_mode_enabled_skip_direct_cloud_push", sid=student_id, action=action, source=source)
-            return
-
-        if not GDRIVE_SYNC_PATH:
-            _trace_column3("cloud_push_skipped_no_path", sid=student_id, action=action, source=source)
-            return
-
-        pushed = sync_to_gdrive(
-            DB_PATH,
-            GDRIVE_SYNC_PATH,
-            retries=1,
-            retry_delay=1,
-            silent=True,
-        )
-        _trace_column3("cloud_push_result", sid=student_id, action=action, source=source, pushed=bool(pushed))
-    except Exception as exc:
-        _trace_column3("cloud_push_error", sid=student_id, action=action, source=source, error=str(exc))
 
 
 def _students_list_cache_key() -> str:
@@ -1419,7 +1359,6 @@ def register_api_routes(app):
                         (end, duration, sess_id),
                     )
                     conn.commit()
-                    _push_cloud_backup_after_student_change(student_id, "checkout", "api_bridge_sessions_toggle")
                     email_result = _send_checkout_email(student, start, end) or {}
                     checkout_email_status = email_result.get("status")
                     checkout_email_message = email_result.get("message")
@@ -1434,7 +1373,6 @@ def register_api_routes(app):
             }), 200
 
         timer_manager.start_session(student_id)
-        _push_cloud_backup_after_student_change(student_id, "checkin", "api_bridge_sessions_toggle")
         server_cache.invalidate(_students_list_cache_key())
         return jsonify({
             "action": "started",
@@ -1768,7 +1706,6 @@ def register_api_routes(app):
         if not student:
             return jsonify({"error": "Student not found"}), 404
         timer_manager.start_session(sid)
-        _push_cloud_backup_after_student_change(sid, "checkin", "api_students_start")
         server_cache.invalidate(_students_list_cache_key())
         if _scanner_api_client_enabled():
             scanner_sync.enqueue_mutation(
@@ -1833,7 +1770,6 @@ def register_api_routes(app):
                     (end, duration, sess_id),
                 )
                 conn.commit()
-                _push_cloud_backup_after_student_change(sid, "checkout", "api_students_stop")
                 _trace_column3(
                     "checkout_db_updated",
                     sid=sid,
@@ -2096,7 +2032,6 @@ def register_api_routes(app):
                             (end, duration, sess_id),
                         )
                         conn.commit()
-                        _push_cloud_backup_after_student_change(student_id, "checkout", "api_sessions_toggle")
                         _trace_column3(
                             "toggle_checkout_db_updated",
                             student_id=student_id,
@@ -2135,7 +2070,6 @@ def register_api_routes(app):
             else:
                 # Start a new session
                 timer_manager.start_session(student_id)
-                _push_cloud_backup_after_student_change(student_id, "checkin", "api_sessions_toggle")
                 server_cache.invalidate(_students_list_cache_key())
                 if _scanner_api_client_enabled() and bool(getattr(g, "scanner_bridge_fallback", False)):
                     scanner_sync.enqueue_mutation(
@@ -2340,7 +2274,6 @@ def register_api_routes(app):
                         (end_dt.isoformat(), duration, sess_id),
                     )
                     conn.commit()
-                    _push_cloud_backup_after_staff_change(aid, "checkout")
                     server_cache.invalidate(_assistants_duty_cache_key())
                     if _scanner_api_client_enabled():
                         scanner_sync.enqueue_mutation(
@@ -2372,7 +2305,6 @@ def register_api_routes(app):
                         (aid, now.isoformat()),
                     )
                     conn.commit()
-                    _push_cloud_backup_after_staff_change(aid, "checkin")
                     server_cache.invalidate(_assistants_duty_cache_key())
                     if _scanner_api_client_enabled():
                         scanner_sync.enqueue_mutation(
@@ -2398,7 +2330,6 @@ def register_api_routes(app):
         try:
             with sqlite3.connect(DB_PATH) as conn:
                 closed = _force_reset_all_open_assistant_sessions(conn)
-            _push_cloud_backup_after_staff_change(-1, "reset_all")
             server_cache.invalidate(_assistants_duty_cache_key())
             _trace_staff_duty("reset_duty_done", closed=closed)
             return jsonify({"success": True, "closed": closed}), 200

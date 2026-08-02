@@ -8,7 +8,7 @@ from flask import flash, jsonify, redirect, render_template, request, url_for, g
 
 from modules import auth_manager, db_backup_recovery, server_cache
 from modules import scanner_sync
-from modules.database import DB_PATH, sync_to_gdrive_now, get_station_runtime_config
+from modules.database import DB_PATH, get_station_runtime_config
 from modules.database import qr_token_exists
 from modules.materials_manager import (
     add_material,
@@ -862,13 +862,6 @@ def register_material_routes(app):
             checkout_date = loan_material(int(material_id), int(resolved_student_id))
             if not checkout_date:
                 return jsonify({'error': 'Material or student not found.'}), 404
-
-            try:
-                pushed = sync_to_gdrive_now()
-                if not pushed:
-                    print('[sync] WARNING: immediate cloud push after device loan was skipped/failed.')
-            except Exception as push_exc:
-                print(f'[sync] WARNING: immediate cloud push after device loan error: {push_exc}')
 
             _invalidate_materials_cache()
             if _scanner_api_client_enabled() and bool(getattr(g, 'scanner_bridge_fallback', False)):

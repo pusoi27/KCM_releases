@@ -26,7 +26,7 @@ from modules import scanner_sync
 from routes.auth import require_login, require_admin, require_feature
 from routes.operation_utils import invalidate_scoped_cache, json_scoped_failure
 import sqlite3
-from modules.database import DB_PATH, sync_to_gdrive_now, get_station_runtime_config
+from modules.database import DB_PATH, get_station_runtime_config
 import requests
 import re
 import time
@@ -1259,13 +1259,6 @@ def register_book_routes(app):
             checkout_date = loan_book(book_id, student_id)
             if not checkout_date:
                 return jsonify({'error': 'Book or student not found for current user.'}), 404
-
-            try:
-                pushed = sync_to_gdrive_now()
-                if not pushed:
-                    print("[sync] WARNING: immediate cloud push after book loan was skipped/failed.")
-            except Exception as push_exc:
-                print(f"[sync] WARNING: immediate cloud push after book loan error: {push_exc}")
 
             _invalidate_books_cache()
             if _scanner_api_client_enabled() and bool(getattr(g, 'scanner_bridge_fallback', False)):

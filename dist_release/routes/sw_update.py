@@ -990,7 +990,7 @@ def _should_retry_download_resolution(exc: RuntimeError, update_result: dict) ->
     return any(marker in message for marker in retry_markers)
 
 
-def register_sw_update_routes(app, get_app_version_func, shutdown_flush_once=None):
+def register_sw_update_routes(app, get_app_version_func):
     def _background_install_worker(identity: dict) -> None:
         try:
             current_version = get_app_version_func()
@@ -1157,15 +1157,6 @@ def register_sw_update_routes(app, get_app_version_func, shutdown_flush_once=Non
                 ),
             )
             _sw_update_debug_log('User confirmed. Beginning graceful shutdown of current app instance.')
-
-            if callable(shutdown_flush_once):
-                try:
-                    _sw_update_debug_log('Invoking shutdown_flush_once("software update").')
-                    shutdown_flush_once('software update')
-                    _sw_update_debug_log('shutdown_flush_once completed successfully.')
-                except Exception:
-                    _sw_update_debug_log('shutdown_flush_once raised an exception (continuing).')
-                    pass
 
             _write_handoff_state('manual_install_shutdown', installer_name=installer_name, installer_path=installer_path_text)
             try:

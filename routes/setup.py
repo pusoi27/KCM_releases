@@ -8,7 +8,6 @@ import os
 import sys
 
 from modules.database import get_db_config_status, save_db_config_paths, get_station_runtime_config
-from modules.database import sync_to_gdrive_now, sync_from_gdrive_now, get_last_sync_error
 from modules.database import get_database_health_report, backup_database_now, restore_database_now
 from modules.database import run_manual_wal_checkpoint
 from modules import instructor_profile_manager
@@ -253,12 +252,8 @@ def register_setup_routes(app):
         is_multi_station_license = _is_multi_station_license_active()
 
         if request.method == 'POST':
-            cloud_provider = (request.form.get('cloud_provider') or 'onedrive').strip().lower()
-            gdrive_sync_path = (request.form.get('gdrive_sync_path') or '').strip()
-            onedrive_sync_path = (request.form.get('onedrive_sync_path') or '').strip()
             requested_station_mode = (request.form.get('station_mode') or 'instructor_server').strip().lower()
             station_mode = requested_station_mode if is_multi_station_license else 'instructor_server'
-            backup_mode = 'instructor_snapshots_only'
             instructor_api_base_url = _normalize_base_url(request.form.get('instructor_api_base_url') or '')
             station_pairing_token = (request.form.get('station_pairing_token') or '').strip()
             snapshot_interval_minutes_raw = (request.form.get('snapshot_interval_minutes') or '15').strip()
@@ -299,11 +294,11 @@ def register_setup_routes(app):
 
             status = save_db_config_paths(
                 db_path=None,
-                gdrive_sync_path=gdrive_sync_path,
-                onedrive_sync_path=onedrive_sync_path,
-                cloud_provider=cloud_provider,
+                gdrive_sync_path='',
+                onedrive_sync_path='',
+                cloud_provider='onedrive',
                 station_mode=station_mode,
-                backup_mode=backup_mode,
+                backup_mode='instructor_snapshots_only',
                 instructor_api_base_url=instructor_api_base_url,
                 station_pairing_token=station_pairing_token,
                 snapshot_interval_minutes=snapshot_interval_minutes,
@@ -435,8 +430,8 @@ def register_setup_routes(app):
         save_db_config_paths(
             db_path=None,
             gdrive_sync_path='',
-            onedrive_sync_path=(cfg.get('onedrive_sync_path') or ''),
-            cloud_provider=(cfg.get('cloud_provider') or 'onedrive'),
+            onedrive_sync_path='',
+            cloud_provider='onedrive',
             station_mode='scanner_api_client',
             backup_mode='instructor_snapshots_only',
             instructor_api_base_url=resolved_base,
@@ -473,8 +468,8 @@ def register_setup_routes(app):
         save_db_config_paths(
             db_path=None,
             gdrive_sync_path='',
-            onedrive_sync_path=(cfg.get('onedrive_sync_path') or ''),
-            cloud_provider=(cfg.get('cloud_provider') or 'onedrive'),
+            onedrive_sync_path='',
+            cloud_provider='onedrive',
             station_mode='scanner_api_client',
             backup_mode='instructor_snapshots_only',
             instructor_api_base_url=resolved_base,
@@ -784,24 +779,6 @@ def register_setup_routes(app):
         """Return scanner offline queue + reconcile telemetry for observability."""
         return jsonify(scanner_sync.get_queue_observability()), 200
 
-    @app.route('/setup/storage/push-backup', methods=['POST'])
-    @require_login
-    def setup_storage_push_backup():
-        runtime = get_station_runtime_config()
-        if runtime.get('backup_mode') == 'instructor_snapshots_only':
-            flash('Cloud push is disabled in Instructor snapshots-only mode.', 'info')
-            return redirect(url_for('setup_storage'))
-        pushed = sync_to_gdrive_now()
-        if pushed:
-            flash('Backup push completed: local database copied to cloud backup.', 'success')
-        else:
-            detail = get_last_sync_error()
-            if detail:
-                flash(f'Backup push failed: {detail}', 'warning')
-            else:
-                flash('Backup push skipped or failed. Verify DB Backup path is configured and available.', 'warning')
-        return redirect(url_for('setup_storage'))
-
     @app.route('/setup/storage/health-check', methods=['POST'])
     @require_login
     def setup_storage_health_check():
@@ -829,119 +806,6 @@ def register_setup_routes(app):
             flash(f"Local DB snapshot created: {result.get('path')}", 'success')
         else:
             flash(f"Local DB snapshot failed: {result.get('error') or 'unknown error'}", 'warning')
-        return redirect(url_for('setup_storage'))
-
-    @app.route('/setup/storage/backup-cloud', methods=['POST'])
-    @require_login
-    def setup_storage_backup_cloud():
-        runtime = get_station_runtime_config()
-        if runtime.get('backup_mode') == 'instructor_snapshots_only':
-            flash('Cloud snapshots are disabled in Instructor snapshots-only mode.', 'info')
-            return redirect(url_for('setup_storage'))
-        result = backup_database_now(source='cloud', label='setup_manual')
-        if result.get('ok'):
-            flash(f"Cloud DB snapshot created: {result.get('path')}", 'success')
-        else:
-            flash(f"Cloud DB snapshot failed: {result.get('error') or 'unknown error'}", 'warning')
-        return redirect(url_for('setup_storage'))
-
-    @app.route('/setup/storage/restore-local-from-cloud', methods=['POST'])
-    @require_login
-    def setup_storage_restore_local_from_cloud():
-        runtime = get_station_runtime_config()
-        if runtime.get('backup_mode') == 'instructor_snapshots_only':
-            flash('Cloud restore is disabled in Instructor snapshots-only mode.', 'info')
-            return redirect(url_for('setup_storage'))
-        result = restore_database_now(target='local', source='cloud')
-        if result.get('ok'):
-            flash('Restore completed: cloud backup copied to local DB.', 'success')
-        else:
-            flash(f"Restore failed: {result.get('error') or 'unknown error'}", 'warning')
-        return redirect(url_for('setup_storage'))
-
-    @app.route('/setup/storage/restore-cloud-from-local', methods=['POST'])
-    @require_login
-    def setup_storage_restore_cloud_from_local():
-        runtime = get_station_runtime_config()
-        if runtime.get('backup_mode') == 'instructor_snapshots_only':
-            flash('Cloud restore is disabled in Instructor snapshots-only mode.', 'info')
-            return redirect(url_for('setup_storage'))
-        result = restore_database_now(target='cloud', source='local')
-        if result.get('ok'):
-            flash('Restore completed: local DB copied to cloud backup.', 'success')
-        else:
-            flash(f"Restore failed: {result.get('error') or 'unknown error'}", 'warning')
-        return redirect(url_for('setup_storage'))
-
-    @app.route('/api/cloud/push-backup', methods=['POST'])
-    @require_login
-    def api_cloud_push_backup():
-        """Trigger an immediate best-effort cloud backup push from client-side UI flows."""
-        runtime = get_station_runtime_config()
-        if runtime.get('backup_mode') == 'instructor_snapshots_only':
-            return jsonify({
-                "success": False,
-                "pushed": False,
-                "error": "Cloud push disabled in Instructor snapshots-only mode.",
-            }), 200
-
-        pushed = sync_to_gdrive_now()
-        if pushed:
-            return jsonify({"success": True, "pushed": True}), 200
-
-        detail = get_last_sync_error()
-        return jsonify({
-            "success": False,
-            "pushed": False,
-            "error": detail or "Backup push skipped or failed.",
-        }), 200
-
-    @app.route('/setup/storage/pull-backup', methods=['POST'])
-    @require_login
-    def setup_storage_pull_backup():
-        runtime = get_station_runtime_config()
-        if runtime.get('backup_mode') == 'instructor_snapshots_only':
-            flash('Cloud pull is disabled in Instructor snapshots-only mode.', 'info')
-            return redirect(url_for('setup_storage'))
-        pulled = sync_from_gdrive_now(force=True)
-        if pulled:
-            flash('Backup read completed: cloud backup copied to local database.', 'success')
-        else:
-            detail = get_last_sync_error()
-            if detail:
-                flash(f'Backup read failed: {detail}', 'warning')
-            else:
-                flash('Backup read skipped or failed. Verify cloud backup file exists and is reachable.', 'warning')
-        return redirect(url_for('setup_storage'))
-
-    @app.route('/setup/storage/force-sync-to-cloud', methods=['POST'])
-    @require_login
-    def setup_storage_force_sync_to_cloud():
-        """Force WAL checkpoint (merge to main DB) then sync to OneDrive.
-        
-        This ensures the main .db file on OneDrive gets updated with current timestamp.
-        """
-        runtime = get_station_runtime_config()
-        if runtime.get('backup_mode') == 'instructor_snapshots_only':
-            flash('Force cloud sync is disabled in Instructor snapshots-only mode.', 'info')
-            return redirect(url_for('setup_storage'))
-
-        # Step 1: Checkpoint WAL with TRUNCATE to merge pending writes into main DB and shrink WAL file
-        checkpoint_ok = run_manual_wal_checkpoint("TRUNCATE")
-        if not checkpoint_ok:
-            flash('Force sync failed: could not checkpoint WAL.', 'warning')
-            return redirect(url_for('setup_storage'))
-        
-        # Step 2: Push the updated main DB to OneDrive
-        pushed = sync_to_gdrive_now()
-        if pushed:
-            flash('Force sync completed: WAL merged and main DB synced to OneDrive with current timestamp.', 'success')
-        else:
-            detail = get_last_sync_error()
-            if detail:
-                flash(f'Force sync failed: {detail}', 'warning')
-            else:
-                flash('Force sync failed. Verify cloud backup path is configured and accessible.', 'warning')
         return redirect(url_for('setup_storage'))
 
     @app.route('/api/setup/status', methods=['GET'])

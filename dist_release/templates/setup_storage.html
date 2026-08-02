@@ -69,12 +69,6 @@
                                     <span class="text-danger">— {{ health.local.error }}</span>
                                     {% endif %}
                                 </li>
-                                <li>
-                                    Cloud: <strong>{{ health.cloud.status if health.cloud else 'unknown' }}</strong>
-                                    {% if health.cloud and health.cloud.error %}
-                                    <span class="text-danger">— {{ health.cloud.error }}</span>
-                                    {% endif %}
-                                </li>
                                 {% if health.station_mode %}
                                 <li>
                                     Peer ({{ health.peer.role if health.peer else 'peer' }}):
@@ -92,11 +86,6 @@
                     <form method="POST" action="{{ url_for('setup_storage') }}">
                         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
 
-                        <input type="hidden" name="cloud_provider" value="onedrive">
-                        <input type="hidden" name="gdrive_sync_path" value="">
-                        <input type="hidden" name="backup_mode" value="instructor_snapshots_only">
-                        <input type="hidden" name="onedrive_sync_path" value="">
-
                         {% if is_multi_station_license %}
                         <div class="mb-3">
                             <label class="form-label" for="station_mode">Station mode</label>
@@ -110,10 +99,6 @@
                         <input type="hidden" name="station_mode" value="instructor_server">
                         {% endif %}
 
-                        <div class="alert alert-secondary" role="alert">
-                            <div class="fw-semibold mb-1">Backup mode</div>
-                            <div class="small">Instructor snapshots-only (fixed). Legacy OneDrive live-sync options are disabled.</div>
-                        </div>
 
                         {% if is_multi_station_license %}
                         <div class="row g-3">
