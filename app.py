@@ -99,6 +99,9 @@ _ORIGINAL_STDOUT = sys.stdout
 _ORIGINAL_STDERR = sys.stderr
 _EXIT_SHUTDOWN_IN_PROGRESS = False
 _POST_LAUNCH_STARTUP_DONE = threading.Event()
+_STARTUP_MINIMIZE_DONE = False
+_STARTUP_MINIMIZE_TIMER = None
+_STARTUP_MINIMIZE_LOCK = threading.Lock()
 
 
 def _minimize_console_window_once():
