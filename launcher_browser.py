@@ -193,12 +193,32 @@ def _stop_browser_process(proc: subprocess.Popen | None) -> None:
         return
     if proc.poll() is not None:
         return
+
+    pid = int(getattr(proc, 'pid', 0) or 0)
+
     try:
         proc.terminate()
-        proc.wait(timeout=5)
+        proc.wait(timeout=2.5)
         return
     except Exception:
         pass
+
+    # On Windows, browser launchers may spawn child processes that keep the
+    # UI alive after the parent exits. Kill the process tree when needed.
+    if os.name == 'nt' and pid > 0:
+        try:
+            subprocess.run(
+                ['taskkill', '/PID', str(pid), '/T', '/F'],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                check=False,
+                timeout=5,
+            )
+            if proc.poll() is not None:
+                return
+        except Exception:
+            pass
+
     try:
         proc.kill()
     except Exception:
