@@ -1230,11 +1230,15 @@ def _clear_state_on_startup():
 # ================================================================
 
 def _check_version_on_startup():
-    """Bump and log app version on every startup."""
+    """Bump and log app version on every startup (development only)."""
+    if IS_PRODUCTION:
+        current_version = get_app_version()
+        print(f"[startup] Stdytime version: {current_version}")
+        return
+
     # In Flask debug reloader mode, skip parent process to avoid double-bumps.
     if (
-        not IS_PRODUCTION
-        and os.getenv("FLASK_USE_RELOADER", "true").lower() == "true"
+        os.getenv("FLASK_USE_RELOADER", "true").lower() == "true"
         and os.getenv("WERKZEUG_RUN_MAIN") != "true"
     ):
         print("[version] Skipping startup bump in Flask reloader parent process.")

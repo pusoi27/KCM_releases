@@ -186,6 +186,24 @@ def _stop_backend_process(proc: subprocess.Popen | None) -> None:
     except Exception:
         pass
 
+
+def _stop_browser_process(proc: subprocess.Popen | None) -> None:
+    """Best-effort close of dedicated browser process launched by this script."""
+    if not proc:
+        return
+    if proc.poll() is not None:
+        return
+    try:
+        proc.terminate()
+        proc.wait(timeout=5)
+        return
+    except Exception:
+        pass
+    try:
+        proc.kill()
+    except Exception:
+        pass
+
 def main():
     _load_local_env()
 
@@ -285,31 +303,47 @@ def main():
             print("\nClose this window to stop the app and free port 5000.")
         print("\n" + "="*50 + "\n")
         
-        # Keep the script running until the dedicated browser process exits.
-        # If we couldn't get a process handle (fallback browser), stay alive until Ctrl+C.
+        # Keep the script running while backend/browser are active.
+        # If backend exits first (for example during software update handoff),
+        # force-close the dedicated browser process so the user isn't left on a stale page.
         try:
             if browser_proc:
-                browser_proc.wait()
-                if _should_shutdown_on_browser_exit():
-                    delay = _shutdown_delay_seconds()
-                    if delay > 0:
-                        print(f"\nBrowser closed. Stopping backend in {delay} seconds unless browser is reopened.")
-                        deadline = time.monotonic() + delay
-                        while time.monotonic() < deadline:
-                            # If user re-opens and a tracked dedicated browser process is alive,
-                            # cancel pending shutdown.
-                            if browser_proc.poll() is None:
-                                break
-                            time.sleep(0.5)
-                    if browser_proc.poll() is not None:
-                        _stop_backend_process(backend_proc)
+                while True:
+                    browser_exited = browser_proc.poll() is not None
+                    backend_exited = (backend_proc is not None) and (backend_proc.poll() is not None)
+
+                    if backend_exited:
+                        print("\nBackend exited. Closing dedicated browser window...")
+                        _stop_browser_process(browser_proc)
+                        break
+
+                    if browser_exited:
+                        if _should_shutdown_on_browser_exit():
+                            delay = _shutdown_delay_seconds()
+                            if delay > 0:
+                                print(f"\nBrowser closed. Stopping backend in {delay} seconds unless browser is reopened.")
+                                deadline = time.monotonic() + delay
+                                while time.monotonic() < deadline:
+                                    # If user re-opens and a tracked dedicated browser process is alive,
+                                    # cancel pending shutdown.
+                                    if browser_proc.poll() is None:
+                                        break
+                                    time.sleep(0.5)
+                            if browser_proc.poll() is not None:
+                                _stop_backend_process(backend_proc)
+                        break
+
+                    time.sleep(0.35)
             else:
                 while True:
+                    if backend_proc is not None and backend_proc.poll() is not None:
+                        break
                     time.sleep(1)
         except KeyboardInterrupt:
             print("\nShutting down...")
             _stop_backend_process(backend_proc)
         finally:
+            _stop_browser_process(browser_proc)
             _stop_backend_process(backend_proc)
             sys.exit(0)
             
