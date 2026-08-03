@@ -1276,7 +1276,7 @@ def register_sw_update_routes(app, get_app_version_func):
                 ctx,
                 status='ready_for_manual_install',
                 message=(
-                    f'Download complete. Click "Open Folder & Close Stdytime" to open the installer folder and exit.'
+                    'Download complete. Confirm the prompt, then close this browser window to continue.'
                 ),
                 download_dir=download_dir_text,
                 installer_name=installer_name,
@@ -1298,7 +1298,9 @@ def register_sw_update_routes(app, get_app_version_func):
             _sw_update_debug_log('Waiting for user confirmation to open installer folder and close...')
             confirmed = _CONFIRM_INSTALL_EVENT.wait(timeout=600.0)
             if not confirmed:
-                _sw_update_debug_log('User confirmation timed out after 10 minutes; proceeding anyway.')
+                _sw_update_debug_log('User confirmation timed out after 10 minutes; continuing to wait for explicit confirmation.')
+                while not _CONFIRM_INSTALL_EVENT.wait(timeout=30.0):
+                    _sw_update_debug_log('Still waiting for user confirmation to continue manual install handoff...')
 
             _set_update_phase(
                 ctx,
@@ -1313,11 +1315,32 @@ def register_sw_update_routes(app, get_app_version_func):
                     or ''
                 ),
             )
-            close_detected, close_reason = _wait_for_browser_close_signal()
-            if close_detected:
-                _sw_update_debug_log(f'Browser closure detected. reason={close_reason}')
-            else:
-                _sw_update_debug_log('Browser closure signal not detected after retry window; proceeding anyway.')
+            close_detected = False
+            close_reason = 'not_checked'
+            wait_round = 0
+            while not close_detected:
+                close_detected, close_reason = _wait_for_browser_close_signal()
+                if close_detected:
+                    _sw_update_debug_log(f'Browser closure detected. reason={close_reason}')
+                    break
+
+                wait_round += 1
+                _sw_update_debug_log(
+                    f'Browser closure not detected yet (round {wait_round}); continuing to wait before opening installer folder.'
+                )
+                _set_update_phase(
+                    ctx,
+                    status='awaiting_browser_close',
+                    message='Waiting for browser window to close. Installer folder will open immediately after closure is detected.',
+                    download_dir=download_dir_text,
+                    installer_name=installer_name,
+                    installer_path=installer_path_text,
+                    release_notes=_normalize_release_notes(
+                        download_spec.get('release_notes')
+                        or result.get('release_notes')
+                        or ''
+                    ),
+                )
 
             _set_update_phase(
                 ctx,

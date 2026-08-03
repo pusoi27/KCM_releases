@@ -11,7 +11,7 @@
           </div>
           <h1 class="h3 mb-3">Software update in progress</h1>
           <p class="text-muted mb-4">
-            Stdytime is checking and downloading the newest release package. When the download is complete, you will be prompted to open the installer folder, then Stdytime will close.
+            Stdytime is checking and downloading the newest release package. After download completes, confirm the final prompt, close this browser window, and only then will the installer folder open.
           </p>
 
           <div class="d-inline-flex align-items-center gap-2 px-3 py-2 rounded-pill bg-light border mb-3">
@@ -62,7 +62,8 @@
             <ul class="mb-0 ps-3">
               <li>The package is downloaded into a new local update folder.</li>
               <li>When download is complete, a confirmation prompt will appear.</li>
-              <li>Click <strong>Open Folder &amp; Close Stdytime</strong> — the installer folder opens and Stdytime exits.</li>
+              <li>Click <strong>OK — I Will Close Browser</strong>, then close this browser window.</li>
+              <li>The installer folder opens only after browser closure is detected.</li>
               <li>Run the shown <code>.exe</code> installer file to finish the update.</li>
             </ul>
           </div>
@@ -80,10 +81,10 @@
         <h2 class="modal-title h5" id="swUpdateReadyModalLabel"><i class="bi bi-check-circle-fill text-success me-2"></i>Download complete</h2>
       </div>
       <div class="modal-body">
-        <p class="mb-2">The installer package is ready. Click the button below to:</p>
+        <p class="mb-2">The installer package is ready:</p>
         <ul class="mb-3">
-          <li>Open the download folder with the installer highlighted</li>
-          <li>Close Stdytime automatically</li>
+          <li>Exit StdyTime browser window</li>
+          <li>Launch the installation file from the download folder</li>
         </ul>
         <div id="swReadyInstallerInfo" class="alert alert-light border small text-start mb-0 d-none">
           <div><span class="text-muted">Installer:</span> <span id="swReadyInstallerName" class="fw-semibold"></span></div>
@@ -92,7 +93,7 @@
       </div>
       <div class="modal-footer border-0 pt-0">
         <button type="button" id="swUpdateConfirmBtn" class="btn btn-success w-100" onclick="confirmInstall()">
-          <i class="bi bi-folder2-open me-1"></i>Open Folder &amp; Close Stdytime
+          <i class="bi bi-check2-circle me-1"></i>OK — I Will Close Browser
         </button>
       </div>
     </div>
@@ -260,7 +261,7 @@
     const btn = document.getElementById('swUpdateConfirmBtn');
     if (btn) {
       btn.disabled = true;
-      btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1" role="status" aria-hidden="true"></span>Opening folder...';
+      btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1" role="status" aria-hidden="true"></span>Waiting for browser close...';
     }
     try {
       await fetch('{{ url_for("sw_update_confirm_install") }}', {
@@ -278,7 +279,7 @@
     await sendHeartbeat({ event: 'confirm_clicked' });
     if (modalInstance) modalInstance.hide();
 
-    window.alert('Download is complete. Click OK, then close this browser window to continue the update.');
+    window.alert('Download is complete. Click OK, then close this browser window. The installer folder opens only after closure is detected.');
 
     if (statusEl) {
       statusEl.textContent = 'Waiting for browser to close before opening installer folder...';
@@ -305,8 +306,8 @@
     window.setTimeout(tryCloseWindow, 1200);
     window.setTimeout(tryCloseWindow, 2500);
 
-    // Explicit close signal to backend in case browser blocks script-close.
-    window.setTimeout(() => sendBrowserClosedBeacon('confirm_close_prompted'), 3000);
+    // Do NOT emit a synthetic "closed" signal here.
+    // Backend must only proceed when real close is detected (pagehide/beforeunload or stale heartbeat).
   }
 
   function escapeHtml(value) {
