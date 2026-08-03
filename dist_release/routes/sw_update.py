@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from flask import jsonify, render_template, url_for
+from flask import jsonify, render_template, request, url_for
 from dataclasses import dataclass
 import hashlib
 import hmac
@@ -30,10 +30,19 @@ _ACTIVE_UPDATE_STATUSES = {
     'downloading',
     'preparing',
     'ready_for_manual_install',
+    'awaiting_browser_close',
     'closing_for_manual_install',
 }
 _UPDATE_LOCK = threading.Lock()
 _CONFIRM_INSTALL_EVENT = threading.Event()
+_BROWSER_MONITOR_LOCK = threading.Lock()
+_BROWSER_MONITOR_STATE = {
+    'client_id': '',
+    'last_seen': 0.0,
+    'closed': False,
+    'close_signal_at': 0.0,
+    'confirmed_at': 0.0,
+}
 _UPDATE_STATE = {
     'status': 'idle',
     'message': '',
@@ -147,6 +156,156 @@ def _env_int(name: str, default: int, minimum: int, maximum: int) -> int:
     except ValueError:
         parsed = default
     return max(minimum, min(maximum, parsed))
+
+
+def _manual_install_exit_delay_seconds() -> float:
+    """Delay between handoff UI update and hard process exit.
+
+    A short grace period gives the browser enough time to process the final
+    confirm-click handler and attempt self-close before backend termination.
+    """
+    raw = str(os.getenv('SW_UPDATE_MANUAL_EXIT_DELAY_SECONDS', '4.0') or '4.0').strip()
+    try:
+        parsed = float(raw)
+    except (TypeError, ValueError):
+        parsed = 4.0
+    return max(1.0, min(30.0, parsed))
+
+
+def _browser_close_wait_seconds() -> float:
+    raw = str(os.getenv('SW_UPDATE_BROWSER_CLOSE_WAIT_SECONDS', '25') or '25').strip()
+    try:
+        parsed = float(raw)
+    except (TypeError, ValueError):
+        parsed = 25.0
+    return max(3.0, min(180.0, parsed))
+
+
+def _browser_close_retry_wait_seconds() -> float:
+    raw = str(os.getenv('SW_UPDATE_BROWSER_CLOSE_RETRY_SECONDS', '8') or '8').strip()
+    try:
+        parsed = float(raw)
+    except (TypeError, ValueError):
+        parsed = 8.0
+    return max(1.0, min(60.0, parsed))
+
+
+def _browser_heartbeat_grace_seconds() -> float:
+    raw = str(os.getenv('SW_UPDATE_BROWSER_HEARTBEAT_GRACE_SECONDS', '6') or '6').strip()
+    try:
+        parsed = float(raw)
+    except (TypeError, ValueError):
+        parsed = 6.0
+    return max(1.5, min(30.0, parsed))
+
+
+def _reset_browser_monitor_state() -> None:
+    with _BROWSER_MONITOR_LOCK:
+        _BROWSER_MONITOR_STATE.update({
+            'client_id': '',
+            'last_seen': 0.0,
+            'closed': False,
+            'close_signal_at': 0.0,
+            'confirmed_at': 0.0,
+        })
+
+
+def _set_browser_confirmed(client_id: str = '') -> None:
+    now = time.time()
+    with _BROWSER_MONITOR_LOCK:
+        clean_id = str(client_id or '').strip()
+        if clean_id:
+            _BROWSER_MONITOR_STATE['client_id'] = clean_id
+            _BROWSER_MONITOR_STATE['last_seen'] = now
+        _BROWSER_MONITOR_STATE['confirmed_at'] = now
+
+
+def _register_browser_heartbeat(client_id: str = '') -> None:
+    now = time.time()
+    with _BROWSER_MONITOR_LOCK:
+        clean_id = str(client_id or '').strip()
+        if clean_id:
+            _BROWSER_MONITOR_STATE['client_id'] = clean_id
+        _BROWSER_MONITOR_STATE['last_seen'] = now
+
+
+def _register_browser_close_signal(client_id: str = '') -> None:
+    now = time.time()
+    with _BROWSER_MONITOR_LOCK:
+        clean_id = str(client_id or '').strip()
+        if clean_id:
+            _BROWSER_MONITOR_STATE['client_id'] = clean_id
+        _BROWSER_MONITOR_STATE['closed'] = True
+        _BROWSER_MONITOR_STATE['close_signal_at'] = now
+
+
+def _get_browser_monitor_state() -> dict:
+    with _BROWSER_MONITOR_LOCK:
+        return dict(_BROWSER_MONITOR_STATE)
+
+
+def _wait_for_browser_close_signal() -> tuple[bool, str]:
+    """Wait for explicit close signal or heartbeat-stale inference."""
+    grace = _browser_heartbeat_grace_seconds()
+
+    def _attempt(wait_seconds: float) -> tuple[bool, str]:
+        wait_for = max(0.5, float(wait_seconds))
+        deadline = time.monotonic() + wait_for
+        while time.monotonic() < deadline:
+            state = _get_browser_monitor_state()
+            if bool(state.get('closed')):
+                return True, 'explicit_close_signal'
+
+            now = time.time()
+            confirmed_at = float(state.get('confirmed_at') or 0.0)
+            last_seen = float(state.get('last_seen') or 0.0)
+
+            # Inferred close: after user confirmation, heartbeat stopped for a
+            # full grace window.
+            if confirmed_at > 0 and last_seen > 0 and last_seen >= confirmed_at:
+                stale_for = now - last_seen
+                if stale_for >= grace:
+                    return True, f'heartbeat_stale_{stale_for:.1f}s'
+
+            time.sleep(0.35)
+
+        return False, 'timeout'
+
+    primary_wait = _browser_close_wait_seconds()
+    detected, reason = _attempt(primary_wait)
+    if detected:
+        return detected, reason
+
+    retry_wait = _browser_close_retry_wait_seconds()
+    _sw_update_debug_log(
+        f'No browser-close signal after {primary_wait:.1f}s. Retrying for {retry_wait:.1f}s.'
+    )
+    return _attempt(retry_wait)
+
+
+def _open_installer_folder_with_retry(installer_path_text: str) -> bool:
+    """Open Explorer with installer selected; retry once on immediate failure."""
+    for attempt in (1, 2):
+        try:
+            proc = subprocess.Popen(['explorer', f'/select,{installer_path_text}'])
+            time.sleep(0.45)
+            rc = proc.poll()
+            # explorer may remain running (None) or delegate and exit 0 quickly.
+            if rc is None or rc == 0:
+                _sw_update_debug_log(
+                    f'Opened Explorer to installer (attempt {attempt}): {installer_path_text}'
+                )
+                return True
+            _sw_update_debug_log(
+                f'Explorer attempt {attempt} returned code {rc}; retrying if possible.'
+            )
+        except Exception as exp_exc:
+            _sw_update_debug_log(f'Could not open Explorer on attempt {attempt}: {exp_exc}')
+
+        if attempt == 1:
+            time.sleep(0.8)
+
+    return False
 
 
 def _gateway_base_url() -> str:
@@ -1143,6 +1302,25 @@ def register_sw_update_routes(app, get_app_version_func):
 
             _set_update_phase(
                 ctx,
+                status='awaiting_browser_close',
+                message='Please close this browser window now. Stdytime will continue once closure is detected.',
+                download_dir=download_dir_text,
+                installer_name=installer_name,
+                installer_path=installer_path_text,
+                release_notes=_normalize_release_notes(
+                    download_spec.get('release_notes')
+                    or result.get('release_notes')
+                    or ''
+                ),
+            )
+            close_detected, close_reason = _wait_for_browser_close_signal()
+            if close_detected:
+                _sw_update_debug_log(f'Browser closure detected. reason={close_reason}')
+            else:
+                _sw_update_debug_log('Browser closure signal not detected after retry window; proceeding anyway.')
+
+            _set_update_phase(
+                ctx,
                 status='closing_for_manual_install',
                 message=(
                     f'Opening installer folder and closing Stdytime now...'
@@ -1159,12 +1337,18 @@ def register_sw_update_routes(app, get_app_version_func):
             _sw_update_debug_log('User confirmed. Beginning graceful shutdown of current app instance.')
 
             _write_handoff_state('manual_install_shutdown', installer_name=installer_name, installer_path=installer_path_text)
-            try:
-                subprocess.Popen(['explorer', f'/select,{installer_path_text}'])
-                _sw_update_debug_log(f'Opened Explorer to installer: {installer_path_text}')
-            except Exception as _exp_exc:
-                _sw_update_debug_log(f'Could not open Explorer: {_exp_exc}')
-            time.sleep(2.0)
+            explorer_opened = _open_installer_folder_with_retry(installer_path_text)
+            _write_handoff_state(
+                'manual_install_explorer_dispatch',
+                installer_name=installer_name,
+                installer_path=installer_path_text,
+                explorer_opened=bool(explorer_opened),
+            )
+            if not explorer_opened:
+                _sw_update_debug_log('Explorer open could not be verified; continuing shutdown fallback.')
+            exit_delay = _manual_install_exit_delay_seconds()
+            _sw_update_debug_log(f'Waiting {exit_delay:.1f}s before process exit to allow browser close handoff.')
+            time.sleep(exit_delay)
             _sw_update_debug_log('Calling os._exit(0) after manual installer handoff.')
             os._exit(0)
         except Exception as exc:
@@ -1256,8 +1440,41 @@ def register_sw_update_routes(app, get_app_version_func):
         state = _get_update_state()
         if state.get('status') != 'ready_for_manual_install':
             return jsonify({'ok': False, 'error': 'No pending install to confirm.'}), 409
+        payload = request.get_json(silent=True) if request.is_json else {}
+        payload = payload if isinstance(payload, dict) else {}
+        _set_browser_confirmed(str(payload.get('client_id') or ''))
         _CONFIRM_INSTALL_EVENT.set()
         return jsonify({'ok': True})
+
+    @app.route('/api/sw-update/heartbeat', methods=['POST'])
+    @require_login
+    def sw_update_heartbeat_api():
+        payload = request.get_json(silent=True) if request.is_json else {}
+        payload = payload if isinstance(payload, dict) else {}
+        client_id = str(payload.get('client_id') or '').strip()
+        _register_browser_heartbeat(client_id)
+        if bool(payload.get('closed')):
+            _register_browser_close_signal(client_id)
+        return jsonify({'ok': True, 'ts': time.time()})
+
+    @app.route('/api/sw-update/browser-closed', methods=['POST'])
+    @require_login
+    def sw_update_browser_closed_api():
+        payload = request.get_json(silent=True)
+        if not isinstance(payload, dict):
+            payload = {}
+            try:
+                raw_body = request.get_data(cache=False, as_text=True) or ''
+                if raw_body.strip().startswith('{'):
+                    parsed = json.loads(raw_body)
+                    if isinstance(parsed, dict):
+                        payload = parsed
+            except Exception:
+                payload = {}
+
+        client_id = str(payload.get('client_id') or '').strip()
+        _register_browser_close_signal(client_id)
+        return ('', 204)
 
     @app.route('/api/sw-update/diagnostics', methods=['GET'])
     @require_admin
@@ -1302,6 +1519,7 @@ def register_sw_update_routes(app, get_app_version_func):
                 name='sw-update-worker',
             )
             _CONFIRM_INSTALL_EVENT.clear()
+            _reset_browser_monitor_state()
             worker.start()
 
         return render_template('sw_update_installing.html')

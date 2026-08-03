@@ -63,9 +63,6 @@
       <i class="bi bi-hdd-network me-1"></i>Data Source: Instructor API
     </span>
     {% endif %}
-    <a class="btn btn-sm btn-outline-light" href="{{ url_for('license_page') }}" style="margin-right:.5rem;">
-      <i class="bi bi-key"></i> License
-    </a>
     <button class="dash-icon-btn" data-bs-toggle="offcanvas" data-bs-target="#dashNav" title="Menu">
       <i class="bi bi-list" style="font-size:1.6rem; line-height:1;"></i>
     </button>
@@ -105,14 +102,17 @@
       <li class="list-group-item offcanvas-section-header">Utilities</li>
       <li class="list-group-item"><a href="{% if subscription_access.can_access_utilities_profile %}{{ url_for('instructor_profile') }}{% else %}#{% endif %}" class="offcanvas-link{% if not subscription_access.can_access_utilities_profile %} disabled text-muted menu-item-disabled{% endif %}" {% if not subscription_access.can_access_utilities_profile %}aria-disabled="true" tabindex="-1"{% endif %}>Center Profile</a></li>
       <li class="list-group-item"><a href="{% if subscription_access.can_access_utilities_students_calendar %}{{ url_for('center_calendar') }}{% else %}#{% endif %}" class="offcanvas-link{% if not subscription_access.can_access_utilities_students_calendar %} disabled text-muted menu-item-disabled{% endif %}" {% if not subscription_access.can_access_utilities_students_calendar %}aria-disabled="true" tabindex="-1"{% endif %}>Students Calendar</a></li>
-      {% if subscription_access.can_access_assistants %}
       <li class="list-group-item"><a href="{% if subscription_access.can_access_utilities_manage_staff %}{{ url_for('assistants_list') }}{% else %}#{% endif %}" class="offcanvas-link{% if not subscription_access.can_access_utilities_manage_staff %} disabled text-muted menu-item-disabled{% endif %}" {% if not subscription_access.can_access_utilities_manage_staff %}aria-disabled="true" tabindex="-1"{% endif %}>Manage Staff</a></li>
       <li class="list-group-item"><a href="{% if subscription_access.can_access_utilities_staff_calendar %}{{ url_for('schedule_assistants') }}{% else %}#{% endif %}" class="offcanvas-link{% if not subscription_access.can_access_utilities_staff_calendar %} disabled text-muted menu-item-disabled{% endif %}" {% if not subscription_access.can_access_utilities_staff_calendar %}aria-disabled="true" tabindex="-1"{% endif %}>Staff Calendar</a></li>
-      {% endif %}
-      {% if subscription_access.can_access_instructor_settings %}
+      <li class="list-group-item"><a href="{{ url_for('cancellation_notice_page') }}" target="_blank" rel="noopener" class="offcanvas-link">Cancellation Notice</a></li>
       <li class="list-group-item offcanvas-section-header ps-4 text-muted small">Settings</li>
-      <li class="list-group-item"><a href="{{ url_for('qr_scanner') }}" class="offcanvas-link ps-4">Scanner</a></li>
+      <li class="list-group-item"><a href="{% if subscription_access.can_access_scanner %}{{ url_for('qr_scanner') }}{% else %}#{% endif %}" class="offcanvas-link ps-4{% if not subscription_access.can_access_scanner %} disabled text-muted menu-item-disabled{% endif %}" {% if not subscription_access.can_access_scanner %}aria-disabled="true" tabindex="-1"{% endif %}>Scanner</a></li>
       <li class="list-group-item"><a href="{{ url_for('setup_storage') }}" class="offcanvas-link ps-4">DB Backup</a></li>
+      <li class="list-group-item"><a href="#" class="offcanvas-link ps-4{% if not subscription_access.can_access_sw_update %} disabled text-muted menu-item-disabled{% endif %}" onclick="{% if subscription_access.can_access_sw_update %}return triggerSoftwareUpdate(event);{% else %}return false;{% endif %}" {% if not subscription_access.can_access_sw_update %}aria-disabled="true" tabindex="-1"{% endif %}>SW Update</a></li>
+      {% if dev_trace_enabled %}
+      <li class="list-group-item offcanvas-section-header ps-4 text-muted small">Diagnostics</li>
+      <li class="list-group-item"><a href="{{ url_for('instructor_dev_trace') }}" class="offcanvas-link ps-4">Dev Trace{% if dev_trace_filename %} ({{ dev_trace_filename }}){% endif %}</a></li>
+      <li class="list-group-item"><a href="{{ url_for('instructor_dev_trace_folder') }}" class="offcanvas-link ps-4 small">Open trace folder</a></li>
       {% endif %}
       {% endif %}
       <li class="list-group-item offcanvas-section-header">License</li>
@@ -121,6 +121,65 @@
     </ul>
   </div>
 </div>
+
+<script>
+async function triggerSoftwareUpdate(event) {
+  if (event) {
+    event.preventDefault();
+  }
+
+  const trigger = event && event.currentTarget ? event.currentTarget : null;
+  const originalLabel = trigger ? trigger.textContent : 'SW Update';
+
+  if (trigger) {
+    if (trigger.dataset.busy === '1') {
+      return false;
+    }
+    trigger.dataset.busy = '1';
+    trigger.textContent = 'SW Update...';
+  }
+
+  try {
+    const response = await fetch('{{ url_for("sw_update_check_api") }}', {
+      cache: 'no-store',
+      headers: { 'Accept': 'application/json' }
+    });
+    const data = await response.json();
+
+    if (!response.ok || !data.ok) {
+      alert(data.error || 'Unable to check for a software update right now.');
+      return false;
+    }
+
+    if (data.busy) {
+      window.location.href = data.install_url;
+      return false;
+    }
+
+    if (!data.update_available) {
+      alert(data.message || `Stdytime is already up to date at version ${data.current_version || 'current'}.`);
+      return false;
+    }
+
+    const confirmed = window.confirm(
+      `A newer Stdytime software update is available.\n\nCurrent version: ${data.current_version}\nLatest version: ${data.latest_version}\nRelease file: ${data.asset_name}\n\nDownload package now? After download, Stdytime will close and you will launch the installer (.exe) manually.`
+    );
+
+    if (confirmed) {
+      window.location.href = data.install_url;
+    }
+  } catch (error) {
+    alert(`Unable to check for a software update right now. ${error}`);
+  } finally {
+    if (trigger) {
+      trigger.dataset.busy = '0';
+      trigger.textContent = originalLabel;
+    }
+  }
+
+  return false;
+}
+</script>
 {% endblock %}
 
 {% block content %}

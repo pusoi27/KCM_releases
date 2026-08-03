@@ -110,11 +110,23 @@
   const stepsRootEl = document.getElementById('swUpdateSteps');
   const releaseNotesCardEl = document.getElementById('swUpdateReleaseNotesCard');
   const releaseNotesEl = document.getElementById('swUpdateReleaseNotes');
+  const heartbeatUrl = '{{ url_for("sw_update_heartbeat_api") }}';
+  const browserClosedUrl = '{{ url_for("sw_update_browser_closed_api") }}';
 
   let lastKnownStatus = '';
   let lastKnownData = null;
   let manualInstallPrompted = false;
   let modalInstance = null;
+  let heartbeatTimerId = null;
+
+  const browserClientId = (() => {
+    try {
+      if (window.crypto && typeof window.crypto.randomUUID === 'function') {
+        return window.crypto.randomUUID();
+      }
+    } catch (_ignore) {}
+    return `sw-client-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  })();
 
   const stepOrder = ['checking', 'downloading', 'preparing', 'manual_install'];
   const statusToStepKey = {
@@ -122,6 +134,7 @@
     downloading: 'downloading',
     preparing: 'preparing',
     ready_for_manual_install: 'manual_install',
+    awaiting_browser_close: 'manual_install',
     closing_for_manual_install: 'manual_install',
     idle: 'manual_install',
     error: 'manual_install',
@@ -131,6 +144,7 @@
     downloading: 60,
     preparing: 85,
     ready_for_manual_install: 98,
+    awaiting_browser_close: 99,
     closing_for_manual_install: 100,
     idle: 100,
     error: 100
@@ -141,10 +155,85 @@
     downloading: 'Usually 1-5 minutes (depends on internet speed)',
     preparing: 'Usually under 1 minute',
     ready_for_manual_install: 'Package downloaded; installer details are ready',
+    awaiting_browser_close: 'Waiting for browser-close confirmation before opening installer folder',
     closing_for_manual_install: 'Closing app for manual installer launch',
     idle: 'Update download complete',
     error: 'Unable to estimate due to an error'
   };
+
+  async function sendHeartbeat(extraPayload) {
+    const payload = Object.assign({
+      client_id: browserClientId,
+      status: lastKnownStatus || 'unknown',
+      ts: Date.now(),
+    }, extraPayload || {});
+    try {
+      await fetch(heartbeatUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept': 'application/json',
+        },
+        cache: 'no-store',
+        keepalive: true,
+        body: JSON.stringify(payload),
+      });
+    } catch (_ignore) {
+      // best effort only
+    }
+  }
+
+  function sendBrowserClosedBeacon(reason) {
+    const payload = JSON.stringify({
+      client_id: browserClientId,
+      reason: String(reason || 'pagehide'),
+      ts: Date.now(),
+    });
+    try {
+      if (navigator.sendBeacon) {
+        const blob = new Blob([payload], { type: 'application/json' });
+        navigator.sendBeacon(browserClosedUrl, blob);
+        return;
+      }
+    } catch (_ignore) {}
+
+    try {
+      fetch(browserClosedUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+        keepalive: true,
+        body: payload,
+      });
+    } catch (_ignore) {
+      // best effort only
+    }
+  }
+
+  function ensureHeartbeatLoop() {
+    if (heartbeatTimerId) {
+      return;
+    }
+    heartbeatTimerId = window.setInterval(() => {
+      sendHeartbeat();
+    }, 1500);
+  }
+
+  ensureHeartbeatLoop();
+  sendHeartbeat({ event: 'page_loaded' });
+
+  window.addEventListener('pagehide', function () {
+    sendBrowserClosedBeacon('pagehide');
+  });
+
+  window.addEventListener('beforeunload', function () {
+    sendBrowserClosedBeacon('beforeunload');
+  });
+
+  document.addEventListener('visibilitychange', function () {
+    if (document.visibilityState === 'visible') {
+      sendHeartbeat({ event: 'tab_visible' });
+    }
+  });
 
   function showReadyModal(data) {
     if (manualInstallPrompted) return;
@@ -176,21 +265,48 @@
     try {
       await fetch('{{ url_for("sw_update_confirm_install") }}', {
         method: 'POST',
-        headers: { 'Accept': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept': 'application/json'
+        },
         cache: 'no-store',
+        body: JSON.stringify({ client_id: browserClientId }),
       });
     } catch (_err) {
       // Server closed — expected once os._exit fires
     }
+    await sendHeartbeat({ event: 'confirm_clicked' });
     if (modalInstance) modalInstance.hide();
+
+    window.alert('Download is complete. Click OK, then close this browser window to continue the update.');
+
     if (statusEl) {
-      statusEl.textContent = 'Opening installer folder — Stdytime is closing...';
+      statusEl.textContent = 'Waiting for browser to close before opening installer folder...';
       statusEl.className = 'fw-semibold text-warning';
     }
     if (detailEl) {
-      detailEl.textContent = 'The installer folder has been opened. Run the .exe file to complete the update.';
+      detailEl.textContent = 'Please close this current browser window now. The installer folder opens right after closure is detected.';
       detailEl.className = 'small text-warning mb-4';
     }
+
+    // Best-effort auto-close after user-confirm click.
+    // Some browsers allow this only for script-opened windows, but invoking
+    // near the click handler gives the highest chance of success.
+    const tryCloseWindow = () => {
+      try {
+        window.open('', '_self');
+      } catch (_ignore) {}
+      try {
+        window.close();
+      } catch (_ignore) {}
+    };
+
+    window.setTimeout(tryCloseWindow, 450);
+    window.setTimeout(tryCloseWindow, 1200);
+    window.setTimeout(tryCloseWindow, 2500);
+
+    // Explicit close signal to backend in case browser blocks script-close.
+    window.setTimeout(() => sendBrowserClosedBeacon('confirm_close_prompted'), 3000);
   }
 
   function escapeHtml(value) {
@@ -385,6 +501,9 @@
         if (data.error) {
           detailEl.textContent = data.error;
           detailEl.className = 'small text-danger mb-4';
+        } else if (data.status === 'awaiting_browser_close') {
+          detailEl.textContent = 'Please close this current browser window. Stdytime will detect closure, open the installer folder, then close itself.';
+          detailEl.className = 'small text-warning mb-4';
         } else if (data.latest_version) {
           detailEl.textContent = `Current: ${data.current_version || 'n/a'} · Latest: ${data.latest_version}`;
           detailEl.className = 'small text-muted mb-4';
