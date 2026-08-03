@@ -7,20 +7,18 @@
     padding: 0 0.75rem;
   }
 
-  .student-form-hero {
-    background: linear-gradient(135deg, #1f3c88 0%, #3e7bfa 60%, #6fa8ff 100%);
-    color: #fff;
-    border-radius: 16px;
-    padding: 0.55rem 0.85rem;
-    box-shadow: 0 10px 24px rgba(28, 57, 122, 0.2);
-    margin-bottom: 1rem;
-    max-width: 280px;
+  .secondary-contact-toggle {
+    width: 100%;
+    min-height: calc(1.5em + .75rem + 2px);
+    padding: .375rem .5rem;
+    font-weight: 700;
+    line-height: 1;
   }
 
-  .student-form-hero h4 {
-    margin: 0;
-    font-weight: 700;
-    font-size: 1.05rem;
+  .secondary-contact-row {
+    border-top: 1px dashed #d7e4ff;
+    margin-top: 0.5rem;
+    padding-top: 0.5rem;
   }
 
   .form-card {
@@ -546,10 +544,6 @@
 </style>
 
 <div class="student-form-shell">
-  <div class="student-form-hero">
-    <h4>{{ action }} Student</h4>
-  </div>
-
   <form method="post" id="studentForm" enctype="multipart/form-data">
     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
 
@@ -596,8 +590,18 @@
             >
             <small class="text-muted">Supports IDs with 15+ letters/numbers.</small>
           </div>
-          <div class="row g-2">
-            <div class="col-md-4">
+          <div class="row g-2 align-items-end">
+            <div class="col-md-1">
+              <label class="form-label fw-semibold mb-1">&nbsp;</label>
+              <button
+                type="button"
+                id="addSecondaryContactBtn"
+                class="btn btn-outline-primary secondary-contact-toggle"
+                aria-expanded="false"
+                title="Add second parent/guardian contact"
+              >+</button>
+            </div>
+            <div class="col-md-3">
               <label for="email" class="form-label fw-semibold mb-1">Email</label>
               <input id="email" name="email" type="email" class="form-control" value="{{ student[3] if student else '' }}">
             </div>
@@ -608,6 +612,20 @@
             <div class="col-md-4">
               <label for="guardian" class="form-label fw-semibold mb-1">Guardian</label>
               <input id="guardian" name="guardian" class="form-control" value="{{ student[22] if student and student|length > 22 else '' }}">
+            </div>
+          </div>
+          <div id="secondaryContactRow" class="row g-2 secondary-contact-row d-none">
+            <div class="col-md-4">
+              <label for="email_secondary" class="form-label fw-semibold mb-1">Email (2)</label>
+              <input id="email_secondary" name="email_secondary" type="email" class="form-control" value="{{ student[34] if student and student|length > 34 else '' }}">
+            </div>
+            <div class="col-md-4">
+              <label for="phone_secondary" class="form-label fw-semibold mb-1">Phone (2)</label>
+              <input id="phone_secondary" name="phone_secondary" class="form-control" value="{{ student[35] if student and student|length > 35 else '' }}">
+            </div>
+            <div class="col-md-4">
+              <label for="guardian_secondary" class="form-label fw-semibold mb-1">Guardian (2)</label>
+              <input id="guardian_secondary" name="guardian_secondary" class="form-control" value="{{ student[36] if student and student|length > 36 else '' }}">
             </div>
           </div>
         </div>
@@ -1159,6 +1177,36 @@
     initSubjectsSection();
     initDayPicker();
     initExclusiveClassification();
+
+    const secondaryBtn = document.getElementById('addSecondaryContactBtn');
+    const secondaryRow = document.getElementById('secondaryContactRow');
+    const secondaryEmail = document.getElementById('email_secondary');
+    const secondaryPhone = document.getElementById('phone_secondary');
+    const secondaryGuardian = document.getElementById('guardian_secondary');
+
+    function secondaryHasData() {
+      return Boolean(
+        (secondaryEmail && secondaryEmail.value && secondaryEmail.value.trim()) ||
+        (secondaryPhone && secondaryPhone.value && secondaryPhone.value.trim()) ||
+        (secondaryGuardian && secondaryGuardian.value && secondaryGuardian.value.trim())
+      );
+    }
+
+    function showSecondaryRow(show) {
+      if (!secondaryRow || !secondaryBtn) return;
+      secondaryRow.classList.toggle('d-none', !show);
+      secondaryBtn.setAttribute('aria-expanded', show ? 'true' : 'false');
+      secondaryBtn.textContent = show ? '−' : '+';
+    }
+
+    if (secondaryBtn && secondaryRow) {
+      showSecondaryRow(secondaryHasData());
+      secondaryBtn.addEventListener('click', function () {
+        const willShow = secondaryRow.classList.contains('d-none');
+        showSecondaryRow(willShow);
+        if (willShow && secondaryEmail) secondaryEmail.focus();
+      });
+    }
 
     document.getElementById('studentForm').addEventListener('submit', function (e) {
       updateScheduleHidden();

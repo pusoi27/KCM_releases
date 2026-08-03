@@ -3142,6 +3142,9 @@ def _remove_legacy_student_columns(db_path: str) -> None:
                 email TEXT,
                 phone TEXT,
                 guardian TEXT DEFAULT '',
+                secondary_email TEXT DEFAULT '',
+                secondary_phone TEXT DEFAULT '',
+                secondary_guardian TEXT DEFAULT '',
                 active INTEGER DEFAULT 1,
                 el INTEGER DEFAULT 0,
                 pi INTEGER DEFAULT 0,
@@ -3178,7 +3181,7 @@ def _remove_legacy_student_columns(db_path: str) -> None:
 
         insert_cols = [
             "id", "name", "student_identifier", "subject", "subjects_json", "subject_minutes_json", "total_study_minutes",
-            "book_loaned", "email", "phone", "guardian", "active", "el", "pi", "v",
+            "book_loaned", "email", "phone", "guardian", "secondary_email", "secondary_phone", "secondary_guardian", "active", "el", "pi", "v",
             "day1", "day1_time", "day2", "day2_time", "day3", "day3_time", "day4", "day4_time",
             "day5", "day5_time", "day6", "day6_time", "checkout_notify_enabled", "photo_blob",
             "photo_mime", "schedule_json", "qr_code", "device_loaned", "ind",
@@ -3196,6 +3199,9 @@ def _remove_legacy_student_columns(db_path: str) -> None:
             _src("email", "''"),
             _src("phone", "''"),
             _src("guardian", "''"),
+            _src("secondary_email", "''"),
+            _src("secondary_phone", "''"),
+            _src("secondary_guardian", "''"),
             _src("active", "1"),
             _src("el", "0"),
             _src("pi", "0"),
@@ -3945,6 +3951,9 @@ def init_db():
             email TEXT,
             phone TEXT,
             guardian TEXT DEFAULT '',
+            secondary_email TEXT DEFAULT '',
+            secondary_phone TEXT DEFAULT '',
+            secondary_guardian TEXT DEFAULT '',
             active INTEGER DEFAULT 1,
             el INTEGER DEFAULT 0,
             pi INTEGER DEFAULT 0,
@@ -4214,6 +4223,12 @@ def init_db():
             cur.execute("ALTER TABLE students ADD COLUMN schedule_json TEXT DEFAULT ''")
         if "guardian" not in cols:
             cur.execute("ALTER TABLE students ADD COLUMN guardian TEXT DEFAULT ''")
+        if "secondary_email" not in cols:
+            cur.execute("ALTER TABLE students ADD COLUMN secondary_email TEXT DEFAULT ''")
+        if "secondary_phone" not in cols:
+            cur.execute("ALTER TABLE students ADD COLUMN secondary_phone TEXT DEFAULT ''")
+        if "secondary_guardian" not in cols:
+            cur.execute("ALTER TABLE students ADD COLUMN secondary_guardian TEXT DEFAULT ''")
         if "qr_code" not in cols:
             cur.execute("ALTER TABLE students ADD COLUMN qr_code BLOB")
         if "device_loaned" not in cols:

@@ -555,6 +555,27 @@ def _student_photo_url(student_row):
     return url_for('students_photo', sid=student_row[0]) if has_blob else ''
 
 
+def _guardian_contacts_from_student_row(row):
+    """Return deduplicated guardian contacts from primary + secondary fields."""
+    contacts = []
+    seen = set()
+    candidates = [
+        (str(row[3] or '').strip() if len(row) > 3 else '', str(row[22] or '').strip() if len(row) > 22 else ''),
+        (str(row[34] or '').strip() if len(row) > 34 else '', str(row[36] or '').strip() if len(row) > 36 else ''),
+    ]
+
+    for email, guardian in candidates:
+        if not email or '@' not in email:
+            continue
+        key = email.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        contacts.append({'email': email, 'guardian': guardian})
+
+    return contacts
+
+
 def register_student_routes(app, upload_folder):
     """Register student CRUD and CSV routes."""
     
@@ -620,39 +641,47 @@ def register_student_routes(app, upload_folder):
                 skipped.append(f"ID {sid} (not found)")
                 continue
             student_name = str(row[1] or "Student").strip()
-            recipient_email = str(row[3] or "").strip()
-            guardian = str(row[22] or "").strip() if len(row) > 22 else ""
-
-            if not recipient_email or "@" not in recipient_email:
+            contacts = _guardian_contacts_from_student_row(row)
+            if not contacts:
                 skipped.append(student_name)
                 continue
 
-            salutation = f"Dear {guardian}," if guardian else "Dear Parent/Guardian,"
-            plain_body = (
-                f"{salutation}\n\n"
-                f"{message}\n\n"
-                f"— {center_name}"
-            )
-            html_body = render_branded_email_shell(
-                title=subject,
-                center_name=center_name,
-                body_html=(
-                    f"<p>{salutation}</p>"
-                    f"<p>{'<br>'.join(line if line.strip() else '&nbsp;' for line in message.splitlines())}</p>"
-                ),
-                footer_note=f"This message was sent from {center_name}. Please do not reply to this email.",
-            )
+            sent_any = False
+            failed_details = []
+            for contact in contacts:
+                recipient_email = contact['email']
+                guardian = contact['guardian']
+                salutation = f"Dear {guardian}," if guardian else "Dear Parent/Guardian,"
+                plain_body = (
+                    f"{salutation}\n\n"
+                    f"{message}\n\n"
+                    f"— {center_name}"
+                )
+                html_body = render_branded_email_shell(
+                    title=subject,
+                    center_name=center_name,
+                    body_html=(
+                        f"<p>{salutation}</p>"
+                        f"<p>{'<br>'.join(line if line.strip() else '&nbsp;' for line in message.splitlines())}</p>"
+                    ),
+                    footer_note=f"This message was sent from {center_name}. Please do not reply to this email.",
+                )
 
-            result = email_manager.send_email(
-                recipient_email=recipient_email,
-                subject=f"{center_name} — {subject}",
-                body=plain_body,
-                html_body=html_body,
-            )
-            if result.get("success"):
+                result = email_manager.send_email(
+                    recipient_email=recipient_email,
+                    subject=f"{center_name} — {subject}",
+                    body=plain_body,
+                    html_body=html_body,
+                )
+                if result.get("success"):
+                    sent_any = True
+                else:
+                    failed_details.append(f"{recipient_email}: {result.get('error', 'unknown error')}")
+
+            if sent_any:
                 sent.append(student_name)
-            else:
-                failed.append(f"{student_name} ({result.get('error', 'unknown error')})")
+            if failed_details:
+                failed.append(f"{student_name} ({'; '.join(failed_details)})")
 
         parts = []
         if sent:
@@ -775,6 +804,9 @@ def register_student_routes(app, upload_folder):
                 schedule_json=_sched_json,
                 guardian=request.form.get("guardian", ""),
                 student_identifier=student_identifier,
+                secondary_email=request.form.get("email_secondary", ""),
+                secondary_phone=request.form.get("phone_secondary", ""),
+                secondary_guardian=request.form.get("guardian_secondary", ""),
             )
             # Invalidate tenant-scoped student list lane.
             _invalidate_student_caches()
@@ -834,6 +866,9 @@ def register_student_routes(app, upload_folder):
                 schedule_json=_sched_json,
                 guardian=request.form.get("guardian", ""),
                 student_identifier=student_identifier,
+                secondary_email=request.form.get("email_secondary", ""),
+                secondary_phone=request.form.get("phone_secondary", ""),
+                secondary_guardian=request.form.get("guardian_secondary", ""),
             )
             # Invalidate tenant-scoped student list lane.
             _invalidate_student_caches()

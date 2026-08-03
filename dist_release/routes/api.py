@@ -1069,10 +1069,23 @@ def _send_checkout_email(student_row, start_time: str, end_time: str):
             print(f"[checkout-email] Skipped for {student_name}: checkout notifications disabled")
             return {"status": "disabled", "message": "Checkout notification disabled for this student"}
 
-        recipient_email = (student_row[3] if len(student_row) > 3 else "") or ""
-        recipient_email = recipient_email.strip()
+        contacts = []
+        seen = set()
+        candidates = [
+            ((student_row[3] if len(student_row) > 3 else "") or "", str(student_row[22] or '').strip() if len(student_row) > 22 else ''),
+            ((student_row[34] if len(student_row) > 34 else "") or "", str(student_row[36] or '').strip() if len(student_row) > 36 else ''),
+        ]
+        for email_raw, guardian in candidates:
+            email = str(email_raw or '').strip()
+            if not email or '@' not in email:
+                continue
+            key = email.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            contacts.append((email, guardian))
 
-        if not recipient_email or "@" not in recipient_email:
+        if not contacts:
             print(f"[checkout-email] Skipped for {student_name}: no valid email on file")
             return {"status": "no_email", "message": "No email on file"}
 
@@ -1090,54 +1103,64 @@ def _send_checkout_email(student_row, start_time: str, end_time: str):
 
         profile = instructor_profile_manager.get_instructor_profile() or {}
         center_name = str(profile.get('center_location') or '').strip() or resolve_center_name()
-        salutation = f"Dear {guardian_name}," if guardian_name else "Dear Parent/Guardian,"
-
         email_subject = f"{center_name} - Class Checkout - {student_name}"
 
-        body = (
-            f"{salutation}\n\n"
-            f"{student_name} has checked out from class.\n\n"
-            f"Guardian:       {guardian_name or 'Parent/Guardian'}\n"
-            f"Start Time:       {start_display}\n"
-            f"End Time:         {end_display}\n"
-            f"Session Duration: {duration_display}\n\n"
-            f"Center: {center_name}\n\n"
-            f"This is an automated message. Please do not reply."
-        )
-
-        html_body = render_branded_email_shell(
-            title=f"{center_name} Class Checkout Confirmation",
-            center_name=center_name,
-            subtitle=center_name,
-            footer_note=f"This is an automated checkout message from {center_name}. Please do not reply to this email.",
-            body_html=f"""
-                <p>{salutation}</p>
-                <div class="highlight"><strong>{student_name}</strong> has checked out from class.</div>
-                <table class="report-table">
-                    <tr><th>Guardian</th><td>{guardian_name or 'Parent/Guardian'}</td></tr>
-                    <tr><th>Start Time</th><td>{start_display}</td></tr>
-                    <tr><th>End Time</th><td>{end_display}</td></tr>
-                    <tr><th>Session Duration</th><td>{duration_display}</td></tr>
-                    <tr><th>Center</th><td>{center_name}</td></tr>
-                </table>
-            """
-        )
-
-        # Use the same email_manager pattern as utilities/report-card/send-email
         email_manager = get_email_manager()
-        result = email_manager.send_email(
-            recipient_email=recipient_email,
-            subject=email_subject,
-            body=body,
-            html_body=html_body,
-        )
-        if result.get('success', False):
-            print(f"[checkout-email] Sent to {recipient_email} for {student_name}")
+        sent_any = False
+        failures = []
+
+        for recipient_email, contact_guardian in contacts:
+            salutation_name = contact_guardian or guardian_name
+            salutation = f"Dear {salutation_name}," if salutation_name else "Dear Parent/Guardian,"
+
+            body = (
+                f"{salutation}\n\n"
+                f"{student_name} has checked out from class.\n\n"
+                f"Guardian:       {salutation_name or 'Parent/Guardian'}\n"
+                f"Start Time:       {start_display}\n"
+                f"End Time:         {end_display}\n"
+                f"Session Duration: {duration_display}\n\n"
+                f"Center: {center_name}\n\n"
+                f"This is an automated message. Please do not reply."
+            )
+
+            html_body = render_branded_email_shell(
+                title=f"{center_name} Class Checkout Confirmation",
+                center_name=center_name,
+                subtitle=center_name,
+                footer_note=f"This is an automated checkout message from {center_name}. Please do not reply to this email.",
+                body_html=f"""
+                    <p>{salutation}</p>
+                    <div class="highlight"><strong>{student_name}</strong> has checked out from class.</div>
+                    <table class="report-table">
+                        <tr><th>Guardian</th><td>{salutation_name or 'Parent/Guardian'}</td></tr>
+                        <tr><th>Start Time</th><td>{start_display}</td></tr>
+                        <tr><th>End Time</th><td>{end_display}</td></tr>
+                        <tr><th>Session Duration</th><td>{duration_display}</td></tr>
+                        <tr><th>Center</th><td>{center_name}</td></tr>
+                    </table>
+                """
+            )
+
+            result = email_manager.send_email(
+                recipient_email=recipient_email,
+                subject=email_subject,
+                body=body,
+                html_body=html_body,
+            )
+            if result.get('success', False):
+                sent_any = True
+                print(f"[checkout-email] Sent to {recipient_email} for {student_name}")
+            else:
+                failure_reason = result.get('error') or 'Unknown email error'
+                failures.append(f"{recipient_email}: {failure_reason}")
+                print(f"[checkout-email] Failed for {student_name} -> {recipient_email}: {failure_reason}")
+
+        if sent_any and not failures:
             return {"status": "sent", "message": "Checkout email sent"}
-        else:
-            failure_reason = result.get('error') or 'Unknown email error'
-            print(f"[checkout-email] Failed for {student_name}: {failure_reason}")
-            return {"status": "failed", "message": f"Checkout email failed: {failure_reason}"}
+        if sent_any and failures:
+            return {"status": "sent", "message": f"Checkout email sent with partial failures: {'; '.join(failures)}"}
+        return {"status": "failed", "message": f"Checkout email failed: {'; '.join(failures) if failures else 'unknown error'}"}
 
     except Exception as e:
         print(f"[checkout-email] Unexpected error for student: {e}\n{_tb.format_exc()}")
