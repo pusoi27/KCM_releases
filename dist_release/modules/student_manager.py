@@ -489,7 +489,7 @@ def get_all_students():
         c = conn.cursor()
         # Get only active student data for this owner
         c.execute("""
-               SELECT s.id, s.name, s.subject, s.email, s.phone, COALESCE(s.guardian, '') AS guardian, '' AS legacy_contact, s.active, s.book_loaned, s.device_loaned,
+                             SELECT s.id, s.name, s.subject, s.email, s.phone, COALESCE(s.guardian, '') AS guardian, '' AS legacy_contact, s.active, s.book_loaned, s.device_loaned,
                  s.el, s.pi, s.v, s.day1, s.day1_time, s.day2, s.day2_time, s.subjects_json, s.subject_minutes_json, s.total_study_minutes,
                   s.photo_blob,
                   COALESCE(s.photo_mime, '') AS photo_mime,
