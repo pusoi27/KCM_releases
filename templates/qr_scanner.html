@@ -363,14 +363,14 @@ async function finalizeScan(){
   let type = null;
   let id = null;
   
-  // Try HID format first: "ID.{n} Name.{name} {initial}."
-  // This is the format from DS9208 in HID mode with separators between fields
-  const hidMatch = raw.match(/ID\.\s*(\d+)/i);
+  // Try HID format first: "ID.{n}" or "ASST.{n}".
+  // This is the format from DS9208 in HID mode with separators between fields.
+  const hidMatch = raw.match(/(ID|ASST|ASSISTANT)\.\s*(\d+)/i);
   if (hidMatch){
     console.log('HID MATCH:', hidMatch);
-    type = 'ID';
-    id = parseInt(hidMatch[1], 10);
-    scannerLogDebug(`HID match -> type=${type} id=${id} (from "ID.${hidMatch[1]}")`);
+    type = (hidMatch[1].toUpperCase() === 'ASSISTANT') ? 'ASST' : hidMatch[1].toUpperCase();
+    id = parseInt(hidMatch[2], 10);
+    scannerLogDebug(`HID match -> type=${type} id=${id} (from "${hidMatch[1]}.${hidMatch[2]}")`);
   }
   
   // Try direct match: ID:43, ASST:3, BOOK:12, etc.

@@ -11,7 +11,7 @@ from modules.database import (
     get_station_runtime_config,
 )
 from modules.utils import duration_seconds, time_now
-from datetime import datetime, timedelta, time
+from datetime import datetime, timedelta, time as datetime_time
 import base64
 import binascii
 from email.message import EmailMessage
@@ -309,7 +309,7 @@ def _auto_close_stale_assistant_sessions(conn: sqlite3.Connection) -> int:
         closed_today = _assistant_closed_seconds_today(cur, int(assistant_id), start_day_iso)
         remaining_for_start_day = max(0, STAFF_DUTY_MAX_DAILY_SECONDS - closed_today)
 
-        end_of_start_day = datetime.combine(start_dt.date(), time(23, 59, 59), tzinfo=start_dt.tzinfo)
+        end_of_start_day = datetime.combine(start_dt.date(), datetime_time(23, 59, 59), tzinfo=start_dt.tzinfo)
         day_boundary_elapsed = max(0, int((end_of_start_day - start_dt).total_seconds()))
         elapsed_cap = min(STAFF_DUTY_MAX_DAILY_SECONDS, remaining_for_start_day, day_boundary_elapsed)
         allowed_elapsed = min(raw_elapsed, elapsed_cap)
@@ -882,23 +882,35 @@ def _resolve_student_id_from_scan_payload(payload: dict) -> int | None:
             try:
                 row = c.execute(
                     """
-                    SELECT owner_id
+                    SELECT owner_id, owner_type
                     FROM qr_token_registry
                     WHERE LOWER(COALESCE(token, '')) = LOWER(?)
-                      AND LOWER(COALESCE(owner_type, '')) = 'student'
                     LIMIT 1
                     """,
                     (uid,),
                 ).fetchone()
             except sqlite3.OperationalError:
                 row = None
-            if row and row[0]:
+
+            if row and len(row) >= 2:
+                owner_type = str(row[1] or '').strip().lower()
+                if owner_type in {'assistant', 'staff'}:
+                    # Prevent cross-lane misrouting: assistant/staff QR must never
+                    # fall back to numeric student_id toggles.
+                    return None
+
+            if row and row[0] and str((row[1] if len(row) > 1 else '') or '').strip().lower() == 'student':
                 try:
                     resolved = int(row[0])
                 except (TypeError, ValueError):
                     resolved = 0
                 if resolved > 0:
                     return resolved
+
+        # Legacy safety: older assistant tokens may not exist in registry yet but
+        # still carry ASST-prefixed UID values.
+        if uid.upper().startswith('ASST'):
+            return None
 
     try:
         sid = int(payload.get("student_id") or 0)
@@ -932,6 +944,23 @@ def _resolve_student_id_from_scan_payload(payload: dict) -> int | None:
                     return resolved
 
     return None
+
+
+def _scan_payload_looks_like_staff(payload: dict) -> bool:
+    payload = payload or {}
+    uid = str(payload.get('student_uid') or '').strip().upper()
+    if uid.startswith('ASST'):
+        return True
+
+    for key in ('assistant_id', 'asst_id', 'asst', 'assistant'):
+        raw = payload.get(key)
+        try:
+            if int(raw or 0) > 0:
+                return True
+        except (TypeError, ValueError):
+            continue
+
+    return False
 
 
 def _bridge_send_email(data: dict) -> dict:
@@ -1328,6 +1357,8 @@ def register_api_routes(app):
         data = request.get_json(silent=True) or {}
         student_id = _resolve_student_id_from_scan_payload(data)
         if not student_id:
+            if _scan_payload_looks_like_staff(data):
+                return jsonify({"error": "Scanned QR belongs to staff. Use staff duty scan flow."}), 400
             return jsonify({"error": "Missing student_id"}), 400
 
         student = student_manager.get_student(student_id)
@@ -1978,6 +2009,8 @@ def register_api_routes(app):
             student_id = _resolve_student_id_from_scan_payload(data)
             
             if not student_id:
+                if _scan_payload_looks_like_staff(data):
+                    return jsonify({"error": "Scanned QR belongs to staff. Use staff duty scan flow."}), 400
                 return jsonify({"error": "Missing student_id"}), 400
             
             # Get student info

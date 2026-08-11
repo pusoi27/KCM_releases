@@ -1426,10 +1426,12 @@ resetIdleTimer();
 
     // Case A: all digits identical
     if(uniqCount === 1){
-      // If length <= 2, keep as-is (e.g., 44 is valid ID 44)
       if(numStr.length <= 2) return numStr;
-      // If length > 2, keep first two digits (e.g., 333333 -> 33)
-      return numStr.slice(0, 2);
+      // Guard against false positives: odd lengths like 111 are often valid
+      // IDs, while duplicated scanner payloads are typically even-length.
+      if(numStr.length % 2 !== 0) return numStr;
+      // Collapse repeated scanner duplication only (e.g., 333333 -> 333).
+      return numStr.slice(0, Math.floor(numStr.length / 2));
     }
 
     // Case B: digit-repeat-based (e.g., 5577 -> 57, each digit repeats n times)
@@ -1536,6 +1538,11 @@ resetIdleTimer();
       || ((raw.match(/UID\.\s*([A-Za-z0-9_-]+)/i) || [])[1] || '')
       || ''
     ).trim();
+
+    if(type === 'ID' && scannedUidHint.toUpperCase().startsWith('ASST')){
+      type = 'ASST';
+      logDebug(`TYPE CORRECTION -> ASST via UID prefix (${scannedUidHint})`);
+    }
 
     async function resolveAssistantName(aid){
       if(fields.NAME) return fields.NAME;

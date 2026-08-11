@@ -25,6 +25,7 @@ from routes.auth import require_admin, require_login
 
 _RELEASE_ASSET_PATTERN = re.compile(r'^stdytime_installer_v(?P<safe>\d+(?:_\d+)*)\.zip$', re.IGNORECASE)
 _SHA256_HEX_PATTERN = re.compile(r'^[0-9a-fA-F]{64}$')
+_DEFAULT_MINISIGN_PUBLIC_KEY = 'RWTDmNKd74Irpn34mwg3ZugSPVbEOcS+mf6zPTaosVkORLQcGpcufN87'
 _ACTIVE_UPDATE_STATUSES = {
     'checking',
     'downloading',
@@ -354,7 +355,10 @@ def _minisign_bin() -> str:
 
 
 def _minisign_public_key() -> str:
-    return str(os.getenv('SW_UPDATE_MINISIGN_PUBLIC_KEY', '') or '').strip()
+    configured = str(os.getenv('SW_UPDATE_MINISIGN_PUBLIC_KEY', '') or '').strip()
+    if configured:
+        return configured
+    return _DEFAULT_MINISIGN_PUBLIC_KEY
 
 
 def _normalize_repo_url(raw_url: str) -> str:
@@ -986,14 +990,22 @@ def _download_release_zip(
     signature_payload = _normalize_signature_text(expected_signature)
     signature_source_url = str(signature_url or '').strip()
     public_key = str(minisign_public_key or _minisign_public_key() or '').strip()
+    require_signature = _require_signature_verification()
+    has_signature_payload = bool(signature_payload or signature_source_url)
 
-    if _require_signature_verification() and not (signature_payload or signature_source_url):
+    if require_signature and not has_signature_payload:
         raise _sw_error(
             'Signature verification is required, but no minisign signature is available for this update.',
             code='signature_required_missing',
         )
 
-    should_verify_signature = bool(signature_payload or signature_source_url or _require_signature_verification())
+    if has_signature_payload and not public_key and not require_signature:
+        _sw_update_debug_log(
+            'Signature sidecar is present, but SW_UPDATE_MINISIGN_PUBLIC_KEY is not set; '
+            'skipping optional minisign verification.'
+        )
+
+    should_verify_signature = bool((has_signature_payload and public_key) or require_signature)
     if should_verify_signature:
         _sw_update_debug_log(f'Signature verification started for {asset_name}. signature_url={signature_source_url or "<inline>"}')
         _verify_minisign_signature(
