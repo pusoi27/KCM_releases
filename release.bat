@@ -3,7 +3,7 @@ REM Stdytime Release Helper
 REM - Bumps VERSION
 REM - Commits and pushes to GitHub
 REM - Builds NSIS installer
-REM - Generates SHA256, ZIP, and minisign signature
+REM - Generates SHA256 and ZIP
 REM - Publishes ZIP artifacts to stdytime_releases, purging older ZIP releases first
 
 setlocal
@@ -121,17 +121,14 @@ set "INSTALLER_FILE=stdytime_installer_v%APP_VERSION_SAFE%.exe"
 set "SHA_FILE=%INSTALLER_FILE%.sha256"
 set "ZIP_FILE=%INSTALLER_FILE:.exe=.zip%"
 set "ZIP_SHA_FILE=%ZIP_FILE%.sha256"
-set "ZIP_MINISIG_FILE=%ZIP_FILE%.minisig"
 set "LOCAL_INSTALLER_OUTPUT=%LOCAL_RELEASE_DIR%\%INSTALLER_FILE%"
 set "LOCAL_SHA_OUTPUT=%LOCAL_RELEASE_DIR%\%SHA_FILE%"
 set "LOCAL_ZIP_OUTPUT=%LOCAL_RELEASE_DIR%\%ZIP_FILE%"
 set "LOCAL_ZIP_SHA_OUTPUT=%LOCAL_RELEASE_DIR%\%ZIP_SHA_FILE%"
-set "LOCAL_ZIP_MINISIG_OUTPUT=%LOCAL_RELEASE_DIR%\%ZIP_MINISIG_FILE%"
 set "SECONDARY_INSTALLER_OUTPUT=%SECONDARY_RELEASE_DIR%\%INSTALLER_FILE%"
 set "SECONDARY_SHA_OUTPUT=%SECONDARY_RELEASE_DIR%\%SHA_FILE%"
 set "SECONDARY_ZIP_OUTPUT=%SECONDARY_RELEASE_DIR%\%ZIP_FILE%"
 set "SECONDARY_ZIP_SHA_OUTPUT=%SECONDARY_RELEASE_DIR%\%ZIP_SHA_FILE%"
-set "SECONDARY_ZIP_MINISIG_OUTPUT=%SECONDARY_RELEASE_DIR%\%ZIP_MINISIG_FILE%"
 
 if not exist "%INSTALLER_FILE%" (
   echo [ERROR] Expected installer not found: %INSTALLER_FILE%
@@ -174,7 +171,7 @@ if exist "%SECONDARY_RELEASE_DIR%" (
 )
 
 echo.
-echo [6/8] Generating checksums, ZIP, minisig...
+echo [6/8] Generating checksums and ZIP...
 
 set "SHA_HASH="
 for /f "tokens=1 delims= " %%H in ('certutil -hashfile "%INSTALLER_FILE%" SHA256 ^| findstr /R /I "^[0-9a-f][0-9a-f]*$"') do (
@@ -267,32 +264,9 @@ if exist "%SECONDARY_RELEASE_DIR%" (
   )
 )
 
-call :generate_zip_minisig
-if errorlevel 1 (
-  echo [ERROR] Failed to generate minisign signature for ZIP.
-  exit /b 1
-)
-
-copy /Y "%ZIP_MINISIG_FILE%" "%LOCAL_ZIP_MINISIG_OUTPUT%" >nul
-if exist "%LOCAL_ZIP_MINISIG_OUTPUT%" (
-  echo [INFO] ZIP minisig copied to: %LOCAL_ZIP_MINISIG_OUTPUT%
-) else (
-  echo [WARNING] Failed copying ZIP minisig to local release folder: %LOCAL_RELEASE_DIR%
-)
-
-if exist "%SECONDARY_RELEASE_DIR%" (
-  copy /Y "%ZIP_MINISIG_FILE%" "%SECONDARY_ZIP_MINISIG_OUTPUT%" >nul
-  if exist "%SECONDARY_ZIP_MINISIG_OUTPUT%" (
-    echo [INFO] ZIP minisig copied to: %SECONDARY_ZIP_MINISIG_OUTPUT%
-  ) else (
-    echo [WARNING] Failed copying ZIP minisig to: %SECONDARY_RELEASE_DIR%
-  )
-)
-
 echo.
 echo [TRACE] ZIP artifact ready: %ZIP_FILE%
 echo [TRACE] ZIP checksum file: %ZIP_SHA_FILE%
-echo [TRACE] ZIP minisig file: %ZIP_MINISIG_FILE%
 
 echo.
 echo [7/8] Publishing ZIP as GitHub Release assets...
@@ -315,17 +289,14 @@ echo Local installer output: %LOCAL_INSTALLER_OUTPUT%
 echo Local installer SHA256 output: %LOCAL_SHA_OUTPUT%
 echo Local ZIP output: %LOCAL_ZIP_OUTPUT%
 echo Local ZIP SHA256 output: %LOCAL_ZIP_SHA_OUTPUT%
-echo Local ZIP minisig output: %LOCAL_ZIP_MINISIG_OUTPUT%
 echo OneDrive release folder: %SECONDARY_RELEASE_DIR%
 echo OneDrive installer output: %SECONDARY_INSTALLER_OUTPUT%
 echo OneDrive installer SHA256 output: %SECONDARY_SHA_OUTPUT%
 echo OneDrive ZIP Output: %SECONDARY_ZIP_OUTPUT%
 echo OneDrive ZIP SHA256 Output: %SECONDARY_ZIP_SHA_OUTPUT%
-echo OneDrive ZIP minisig Output: %SECONDARY_ZIP_MINISIG_OUTPUT%
 echo Installer: %INSTALLER_FILE%
 echo ZIP: %ZIP_FILE%
 echo ZIP SHA256: %ZIP_SHA_FILE%
-echo ZIP minisig: %ZIP_MINISIG_FILE%
 echo ==============================================================
 
 endlocal
@@ -340,11 +311,6 @@ if not exist "%LOCAL_ZIP_SHA_OUTPUT%" (
   echo [ERROR] ZIP checksum file not found; refusing to publish: %LOCAL_ZIP_SHA_OUTPUT%
   exit /b 1
 )
-if not exist "%LOCAL_ZIP_MINISIG_OUTPUT%" (
-  echo [ERROR] ZIP minisig file not found; refusing to publish: %LOCAL_ZIP_MINISIG_OUTPUT%
-  exit /b 1
-)
-
 if "%APP_VERSION%"=="" (
   echo [ERROR] APP_VERSION is not set before release asset publishing.
   exit /b 1
@@ -362,88 +328,16 @@ set "PUBLISH_SCRIPT=%ROOT%scripts\publish_github_release_assets.py"
 set "PY_EXE=%ROOT%.venv\Scripts\python.exe"
 set "ZIP_ASSET_1=%LOCAL_ZIP_OUTPUT%"
 set "ZIP_ASSET_2=%LOCAL_ZIP_SHA_OUTPUT%"
-set "ZIP_ASSET_3=%LOCAL_ZIP_MINISIG_OUTPUT%"
 
 echo [INFO] Publishing GitHub Release assets to %RELEASES_REPO_SLUG% @ %RELEASE_TAG%...
 echo [INFO] Upload in progress... this can take a few minutes for large ZIP files.
-"%PY_EXE%" "%PUBLISH_SCRIPT%" --repo "%RELEASES_REPO_SLUG%" --tag "%RELEASE_TAG%" --title "%RELEASE_TITLE%" --asset "%ZIP_ASSET_1%" --asset "%ZIP_ASSET_2%" --asset "%ZIP_ASSET_3%"
+"%PY_EXE%" "%PUBLISH_SCRIPT%" --repo "%RELEASES_REPO_SLUG%" --tag "%RELEASE_TAG%" --title "%RELEASE_TITLE%" --asset "%ZIP_ASSET_1%" --asset "%ZIP_ASSET_2%"
 if errorlevel 1 (
   echo [ERROR] Failed to publish GitHub Release assets.
   exit /b 1
 )
 
 echo [INFO] ZIP artifacts published as GitHub Release assets.
-exit /b 0
-
-:generate_zip_minisig
-set "ALLOW_UNSIGNED=%SW_UPDATE_ALLOW_UNSIGNED_RELEASE%"
-if /I "%ALLOW_UNSIGNED%"=="1" goto :unsigned_allowed
-if /I "%ALLOW_UNSIGNED%"=="true" goto :unsigned_allowed
-if /I "%ALLOW_UNSIGNED%"=="yes" goto :unsigned_allowed
-
-where minisign >nul 2>nul
-if errorlevel 1 goto :minisign_bin_missing
-
-set "MINISIGN_SECRET_KEY="
-if exist "%ROOT%.env" (
-  for /f "usebackq tokens=1,* delims==" %%L in ("%ROOT%.env") do (
-    if /I "%%L"=="SW_UPDATE_MINISIGN_SECRET_KEY" set "MINISIGN_SECRET_KEY=%%M"
-  )
-)
-if not defined MINISIGN_SECRET_KEY set "MINISIGN_SECRET_KEY=%SW_UPDATE_MINISIGN_SECRET_KEY%"
-if not defined MINISIGN_SECRET_KEY set "MINISIGN_SECRET_KEY=%SW_UPDATE_MINISIGN_PRIVATE_KEY%"
-if not defined MINISIGN_SECRET_KEY set "MINISIGN_SECRET_KEY=%SW_UPDATE_MINISIGN_SECRET_KEY_FILE%"
-if not defined MINISIGN_SECRET_KEY set "MINISIGN_SECRET_KEY=%SW_UPDATE_MINISIGN_PRIVATE_KEY_FILE%"
-
-if defined MINISIGN_SECRET_KEY if "%MINISIGN_SECRET_KEY:~0,1%"=="\" set "MINISIGN_SECRET_KEY=%MINISIGN_SECRET_KEY:~1%"
-if defined MINISIGN_SECRET_KEY if "%MINISIGN_SECRET_KEY:~-1%"=="\" set "MINISIGN_SECRET_KEY=%MINISIGN_SECRET_KEY:~0,-1%"
-
-if not defined MINISIGN_SECRET_KEY goto :minisign_secret_missing
-if not exist "%MINISIGN_SECRET_KEY%" goto :minisign_secret_not_found
-
-echo [INFO] Using minisign secret key: %MINISIGN_SECRET_KEY%
-
-if exist "%ZIP_MINISIG_FILE%" del /f /q "%ZIP_MINISIG_FILE%" >nul 2>nul
-
-minisign -S -s "%MINISIGN_SECRET_KEY%" -m "%ZIP_FILE%" -x "%ZIP_MINISIG_FILE%"
-if errorlevel 1 goto :minisign_sign_failed
-
-if not exist "%ZIP_MINISIG_FILE%" goto :minisign_output_missing
-
-echo [INFO] ZIP minisig written: %ZIP_MINISIG_FILE%
-exit /b 0
-
-:minisign_secret_missing
-echo [ERROR] Minisign secret key path is not set.
-echo [ERROR] Set SW_UPDATE_MINISIGN_SECRET_KEY in .env or environment.
-exit /b 1
-
-:minisign_secret_not_found
-echo [ERROR] Minisign secret key file not found: %MINISIGN_SECRET_KEY%
-exit /b 1
-
-:minisign_sign_failed
-echo [ERROR] minisign signing failed for %ZIP_FILE%.
-exit /b 1
-
-:minisign_output_missing
-echo [ERROR] minisign did not produce %ZIP_MINISIG_FILE%.
-exit /b 1
-
-:unsigned_allowed
-echo [WARNING] SW_UPDATE_ALLOW_UNSIGNED_RELEASE is enabled; skipping minisign generation.
-if exist "%ZIP_MINISIG_FILE%" goto :unsigned_with_existing_signature
-echo [ERROR] No minisig file exists to publish while unsigned override is enabled.
-echo [ERROR] Provide %ZIP_MINISIG_FILE% or disable SW_UPDATE_ALLOW_UNSIGNED_RELEASE.
-exit /b 1
-
-:minisign_bin_missing
-echo [ERROR] minisign is not installed or not in PATH.
-echo [ERROR] Install minisign or set SW_UPDATE_ALLOW_UNSIGNED_RELEASE=true to bypass (not recommended).
-exit /b 1
-
-:unsigned_with_existing_signature
-echo [INFO] Existing minisig retained: %ZIP_MINISIG_FILE%
 exit /b 0
 
 :validate_release_artifacts

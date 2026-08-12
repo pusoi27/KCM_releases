@@ -47,8 +47,7 @@ If `SW_UPDATE_CLIENT_PROOF_SECRET` is set, app also sends:
   "asset_name": "stdytime_installer_v01_03_149.zip",
   "release_id": "v01.03.149",
   "ticket_endpoint": "/updates/ticket",
-  "checksum_url": "/updates/files/stdytime_installer_v01_03_149.zip.sha256",
-  "signature_url": "/updates/files/stdytime_installer_v01_03_149.zip.minisig"
+  "checksum_url": "/updates/files/stdytime_installer_v01_03_149.zip.sha256"
 }
 ```
 
@@ -57,9 +56,6 @@ Optional fast path: you may return `download_url` directly from `/updates/check`
 Optional integrity fields accepted by app on `/updates/check` and `/updates/ticket`:
 - `expected_sha256` (64-char SHA-256 hex)
 - `checksum_url` (URL to `.sha256` sidecar)
-- `expected_signature` (inline minisign signature text)
-- `signature_url` (URL to `.minisig` sidecar)
-- `minisign_public_key` (single-line public key; app may also use env-configured key)
 
 ## 2) Ticket endpoint
 
@@ -89,8 +85,7 @@ Body example:
   "download_headers": {
     "Authorization": "Bearer <short_lived_download_token>"
   },
-  "checksum_url": "https://updates.yourdomain.com/updates/files/stdytime_installer_v01_03_149.zip.sha256",
-  "signature_url": "https://updates.yourdomain.com/updates/files/stdytime_installer_v01_03_149.zip.minisig"
+  "checksum_url": "https://updates.yourdomain.com/updates/files/stdytime_installer_v01_03_149.zip.sha256"
 }
 ```
 
@@ -112,7 +107,7 @@ The `download_url` target should:
 - Rate-limit per machine/IP
 - Audit-log issued tickets and completed downloads
 - Verify HMAC proof timestamp skew on gateway if proof headers are used
-- Publish and verify `.sha256` + `.minisig` for each release package
+- Publish and verify `.sha256` for each release package
 
 ## Migration strategy
 1. Deploy gateway with `/updates/check` and `/updates/ticket`.

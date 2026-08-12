@@ -6,8 +6,7 @@ Usage (from project root):
         --tag v01.03.184 \
         --title "Stdytime 01.03.184" \
         --asset stdytime_installer_v01_03_184.zip \
-        --asset stdytime_installer_v01_03_184.zip.sha256 \
-        --asset stdytime_installer_v01_03_184.zip.minisig
+        --asset stdytime_installer_v01_03_184.zip.sha256
 """
 
 from __future__ import annotations

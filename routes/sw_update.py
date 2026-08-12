@@ -25,7 +25,6 @@ from routes.auth import require_admin, require_login
 
 _RELEASE_ASSET_PATTERN = re.compile(r'^stdytime_installer_v(?P<safe>\d+(?:_\d+)*)\.zip$', re.IGNORECASE)
 _SHA256_HEX_PATTERN = re.compile(r'^[0-9a-fA-F]{64}$')
-_DEFAULT_MINISIGN_PUBLIC_KEY = 'RWTDmNKd74Irpn34mwg3ZugSPVbEOcS+mf6zPTaosVkORLQcGpcufN87'
 _ACTIVE_UPDATE_STATUSES = {
     'checking',
     'downloading',
@@ -345,22 +344,6 @@ def _require_checksum_verification() -> bool:
     return _as_bool(os.getenv('SW_UPDATE_REQUIRE_CHECKSUM', 'true'), default=True)
 
 
-def _require_signature_verification() -> bool:
-    return _as_bool(os.getenv('SW_UPDATE_REQUIRE_SIGNATURE', 'false'), default=False)
-
-
-def _minisign_bin() -> str:
-    value = str(os.getenv('SW_UPDATE_MINISIGN_BIN', 'minisign') or 'minisign').strip()
-    return value or 'minisign'
-
-
-def _minisign_public_key() -> str:
-    configured = str(os.getenv('SW_UPDATE_MINISIGN_PUBLIC_KEY', '') or '').strip()
-    if configured:
-        return configured
-    return _DEFAULT_MINISIGN_PUBLIC_KEY
-
-
 def _normalize_repo_url(raw_url: str) -> str:
     value = str(raw_url or '').strip()
     if not value:
@@ -402,9 +385,6 @@ def _build_asset_record(name: str, download_url: str, repo_url: str) -> dict | N
         'repo_url': repo_url,
         'checksum_url': '',
         'expected_sha256': '',
-        'signature_url': '',
-        'expected_signature': '',
-        'minisign_public_key': '',
     }
 
 
@@ -559,9 +539,6 @@ def _gateway_check_for_update(current_version: str, identity: dict) -> dict:
         'expected_sha256': _normalize_sha256_text(
             str(payload.get('expected_sha256') or payload.get('sha256') or payload.get('checksum_sha256') or '')
         ),
-        'signature_url': _normalize_gateway_download_url(str(payload.get('signature_url') or payload.get('minisign_url') or '')),
-        'expected_signature': _normalize_signature_text(str(payload.get('expected_signature') or payload.get('minisign_signature') or '')),
-        'minisign_public_key': str(payload.get('minisign_public_key') or '').strip(),
         'ticket_endpoint': str(payload.get('ticket_endpoint') or '').strip(),
         'release_id': str(payload.get('release_id') or '').strip(),
         'release_notes': _normalize_release_notes(
@@ -617,9 +594,6 @@ def _gateway_request_download_ticket(update_result: dict, identity: dict) -> dic
         'expected_sha256': _normalize_sha256_text(
             str(ticket.get('expected_sha256') or ticket.get('sha256') or ticket.get('checksum_sha256') or '')
         ),
-        'signature_url': _normalize_gateway_download_url(str(ticket.get('signature_url') or ticket.get('minisign_url') or '')),
-        'expected_signature': _normalize_signature_text(str(ticket.get('expected_signature') or ticket.get('minisign_signature') or '')),
-        'minisign_public_key': str(ticket.get('minisign_public_key') or '').strip(),
         'release_notes': _normalize_release_notes(
             ticket.get('release_notes')
             or ticket.get('changelog')
@@ -698,9 +672,7 @@ def _list_release_assets_via_api(repo_url: str) -> list[dict]:
                 continue
 
             checksum_name = f"{asset['name']}.sha256"
-            signature_name = f"{asset['name']}.minisig"
             asset['checksum_url'] = str(download_by_name.get(checksum_name.lower()) or '').strip()
-            asset['signature_url'] = str(download_by_name.get(signature_name.lower()) or '').strip()
             asset['release_notes'] = release_notes
             assets.append(asset)
 
@@ -733,9 +705,6 @@ def _legacy_check_for_update(current_version: str) -> dict:
             'download_headers': {},
             'checksum_url': '',
             'expected_sha256': '',
-            'signature_url': '',
-            'expected_signature': '',
-            'minisign_public_key': '',
             'ticket_endpoint': '',
             'release_id': '',
             'release_notes': '',
@@ -753,9 +722,6 @@ def _legacy_check_for_update(current_version: str) -> dict:
         'download_headers': _github_download_headers(),
         'checksum_url': str(latest_asset.get('checksum_url') or '').strip(),
         'expected_sha256': '',
-        'signature_url': str(latest_asset.get('signature_url') or '').strip(),
-        'expected_signature': '',
-        'minisign_public_key': '',
         'ticket_endpoint': '',
         'release_id': '',
         'release_notes': _normalize_release_notes(latest_asset.get('release_notes') or ''),
@@ -844,62 +810,6 @@ def _stage_manual_update_payload(extract_dir: Path, *, asset_name: str, latest_v
     return target_dir, package_dir, installer_path
 
 
-def _verify_minisign_signature(
-    zip_path: Path,
-    *,
-    signature_text: str = '',
-    signature_url: str = '',
-    headers: dict | None = None,
-    public_key: str = '',
-) -> None:
-    pubkey = str(public_key or '').strip()
-    if not pubkey:
-        raise _sw_error('SW_UPDATE_MINISIGN_PUBLIC_KEY is required for minisign verification.', code='minisign_pubkey_missing')
-
-    signature_payload = _normalize_signature_text(signature_text)
-    if not signature_payload and signature_url:
-        sig_response = requests.get(
-            signature_url,
-            headers=headers or {'User-Agent': 'Stdytime-SW-Updater'},
-            timeout=_gateway_timeout_seconds(),
-        )
-        if sig_response.status_code in {401, 403}:
-            raise _sw_error('Signature file access was denied by the update source.', code='signature_access_denied')
-        if sig_response.status_code == 404:
-            raise _sw_error('Signature file was not found for the update payload.', code='signature_sidecar_not_found', retryable=True)
-        sig_response.raise_for_status()
-        signature_payload = _normalize_signature_text(sig_response.text)
-
-    if not signature_payload:
-        raise _sw_error('No minisign signature payload is available for this update.', code='signature_missing')
-
-    sig_path = zip_path.with_suffix(zip_path.suffix + '.minisig')
-    sig_path.write_text(signature_payload, encoding='utf-8')
-
-    try:
-        verify = subprocess.run(
-            [
-                _minisign_bin(),
-                '-Vm', str(zip_path),
-                '-P', pubkey,
-                '-x', str(sig_path),
-            ],
-            capture_output=True,
-            text=True,
-            timeout=max(10, _gateway_timeout_seconds()),
-            check=False,
-        )
-    except FileNotFoundError as exc:
-        raise _sw_error(
-            f"minisign executable '{_minisign_bin()}' was not found. Install minisign or set SW_UPDATE_MINISIGN_BIN."
-            , code='minisign_not_found'
-        ) from exc
-
-    if verify.returncode != 0:
-        details = (verify.stderr or verify.stdout or '').strip()
-        raise _sw_error(f'Minisign verification failed. {details}', code='signature_verify_failed')
-
-
 def _download_release_zip(
     download_url: str,
     *,
@@ -907,9 +817,6 @@ def _download_release_zip(
     extra_headers: dict | None = None,
     expected_sha256: str = '',
     checksum_url: str = '',
-    expected_signature: str = '',
-    signature_url: str = '',
-    minisign_public_key: str = '',
 ) -> Path:
     final_url = str(download_url or '').strip()
     if not final_url:
@@ -986,36 +893,6 @@ def _download_release_zip(
                 , code='checksum_mismatch', retryable=True
             )
         _sw_update_debug_log(f'Checksum verification passed for {asset_name}. hash={downloaded_hash}')
-
-    signature_payload = _normalize_signature_text(expected_signature)
-    signature_source_url = str(signature_url or '').strip()
-    public_key = str(minisign_public_key or _minisign_public_key() or '').strip()
-    require_signature = _require_signature_verification()
-    has_signature_payload = bool(signature_payload or signature_source_url)
-
-    if require_signature and not has_signature_payload:
-        raise _sw_error(
-            'Signature verification is required, but no minisign signature is available for this update.',
-            code='signature_required_missing',
-        )
-
-    if has_signature_payload and not public_key and not require_signature:
-        _sw_update_debug_log(
-            'Signature sidecar is present, but SW_UPDATE_MINISIGN_PUBLIC_KEY is not set; '
-            'skipping optional minisign verification.'
-        )
-
-    should_verify_signature = bool((has_signature_payload and public_key) or require_signature)
-    if should_verify_signature:
-        _sw_update_debug_log(f'Signature verification started for {asset_name}. signature_url={signature_source_url or "<inline>"}')
-        _verify_minisign_signature(
-            zip_path,
-            signature_text=signature_payload,
-            signature_url=signature_source_url,
-            headers=headers,
-            public_key=public_key,
-        )
-        _sw_update_debug_log(f'Signature verification passed for {asset_name}.')
 
     if not zipfile.is_zipfile(zip_path):
         raise _sw_error('Downloaded update is not a valid ZIP archive.', code='download_not_zip')
@@ -1104,18 +981,12 @@ def _resolve_download_spec(update_result: dict, identity: dict) -> dict:
     headers = update_result.get('download_headers') if isinstance(update_result.get('download_headers'), dict) else {}
     expected_sha256 = _normalize_sha256_text(str(update_result.get('expected_sha256') or ''))
     checksum_url = str(update_result.get('checksum_url') or '').strip()
-    expected_signature = _normalize_signature_text(str(update_result.get('expected_signature') or ''))
-    signature_url = str(update_result.get('signature_url') or '').strip()
-    minisign_public_key = str(update_result.get('minisign_public_key') or '').strip()
     if download_url:
         return {
             'download_url': download_url,
             'download_headers': {str(k): str(v) for k, v in headers.items()},
             'expected_sha256': expected_sha256,
             'checksum_url': checksum_url,
-            'expected_signature': expected_signature,
-            'signature_url': signature_url,
-            'minisign_public_key': minisign_public_key,
             'release_notes': _normalize_release_notes(update_result.get('release_notes') or ''),
         }
 
@@ -1128,11 +999,6 @@ def _resolve_download_spec(update_result: dict, identity: dict) -> dict:
                 str(ticket.get('expected_sha256') or expected_sha256 or '')
             ),
             'checksum_url': str(ticket.get('checksum_url') or checksum_url or '').strip(),
-            'expected_signature': _normalize_signature_text(
-                str(ticket.get('expected_signature') or expected_signature or '')
-            ),
-            'signature_url': str(ticket.get('signature_url') or signature_url or '').strip(),
-            'minisign_public_key': str(ticket.get('minisign_public_key') or minisign_public_key or '').strip(),
             'release_notes': _normalize_release_notes(
                 ticket.get('release_notes')
                 or update_result.get('release_notes')
@@ -1156,7 +1022,6 @@ def _should_retry_download_resolution(exc: RuntimeError, update_result: dict) ->
         'Update payload is unavailable (404).',
         'Update payload URL is missing.',
         'Checksum file was not found for the update payload.',
-        'Signature file was not found for the update payload.',
     )
     return any(marker in message for marker in retry_markers)
 
@@ -1210,7 +1075,7 @@ def register_sw_update_routes(app, get_app_version_func):
             download_spec = _resolve_download_spec(result, identity)
             _sw_update_debug_log(
                 f"Download spec resolved. url={download_spec.get('download_url') or ''} "
-                f"checksum_url={download_spec.get('checksum_url') or ''} signature_url={download_spec.get('signature_url') or ''}"
+                f"checksum_url={download_spec.get('checksum_url') or ''}"
             )
             try:
                 extract_dir = _download_release_zip(
@@ -1219,9 +1084,6 @@ def register_sw_update_routes(app, get_app_version_func):
                     extra_headers=download_spec.get('download_headers') if isinstance(download_spec.get('download_headers'), dict) else None,
                     expected_sha256=str(download_spec.get('expected_sha256') or ''),
                     checksum_url=str(download_spec.get('checksum_url') or ''),
-                    expected_signature=str(download_spec.get('expected_signature') or ''),
-                    signature_url=str(download_spec.get('signature_url') or ''),
-                    minisign_public_key=str(download_spec.get('minisign_public_key') or ''),
                 )
             except RuntimeError as first_exc:
                 if not _should_retry_download_resolution(first_exc, result):
@@ -1237,9 +1099,6 @@ def register_sw_update_routes(app, get_app_version_func):
                     retry_reason = 'download URL is missing'
                 elif 'Checksum file was not found for the update payload.' in first_message:
                     retry_reason = 'checksum sidecar returned 404'
-                elif 'Signature file was not found for the update payload.' in first_message:
-                    retry_reason = 'signature sidecar returned 404'
-
                 # Transient cache/race hardening: refresh ticket/spec once and retry.
                 _set_update_phase(
                     ctx,
@@ -1251,7 +1110,7 @@ def register_sw_update_routes(app, get_app_version_func):
                 download_spec = _resolve_download_spec(result, identity)
                 _sw_update_debug_log(
                     f"Retry download spec resolved. url={download_spec.get('download_url') or ''} "
-                    f"checksum_url={download_spec.get('checksum_url') or ''} signature_url={download_spec.get('signature_url') or ''}"
+                    f"checksum_url={download_spec.get('checksum_url') or ''}"
                 )
                 extract_dir = _download_release_zip(
                     download_spec.get('download_url') or '',
@@ -1259,9 +1118,6 @@ def register_sw_update_routes(app, get_app_version_func):
                     extra_headers=download_spec.get('download_headers') if isinstance(download_spec.get('download_headers'), dict) else None,
                     expected_sha256=str(download_spec.get('expected_sha256') or ''),
                     checksum_url=str(download_spec.get('checksum_url') or ''),
-                    expected_signature=str(download_spec.get('expected_signature') or ''),
-                    signature_url=str(download_spec.get('signature_url') or ''),
-                    minisign_public_key=str(download_spec.get('minisign_public_key') or ''),
                 )
 
             _set_update_phase(

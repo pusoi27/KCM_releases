@@ -776,7 +776,6 @@ This file is automatically appended by `scripts/version_bump.py` on every versio
 - Enforce SHA-256 checksum verification for SW Update packages
 
 ## v01.03.152 - 2026-07-26
-- Add minisign signature verification support for SW Update packages
 
 ## v01.03.153 - 2026-07-26
 - TODO: summarize changes for this release.
@@ -1109,5 +1108,11 @@ This file is automatically appended by `scripts/version_bump.py` on every versio
 - TODO: summarize changes for this release.
 
 ## v01.04.061 - 2026-08-11
+- TODO: summarize changes for this release.
+
+## v01.04.062 - 2026-08-11
+- Remove minisign from software update flow
+
+## v01.04.063 - 2026-08-11
 - TODO: summarize changes for this release.
 
