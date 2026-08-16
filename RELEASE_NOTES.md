@@ -1119,3 +1119,12 @@ This file is automatically appended by `scripts/version_bump.py` on every versio
 ## v01.04.064 - 2026-08-11
 - TODO: summarize changes for this release.
 
+## v01.04.065 - 2026-08-16
+- Replaced CSV student import with protected XLSX import and full last-name storage.
+
+## v01.04.068 - 2026-08-16
+- Fixed Excel importer runtime dependency and updated workbook error messaging.
+
+## v01.04.071 - 2026-08-16
+- TODO: summarize changes for this release.
+

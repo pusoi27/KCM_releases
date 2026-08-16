@@ -270,8 +270,8 @@
     </button>
     <form action="{{ url_for('students_import') }}" method="post" enctype="multipart/form-data" id="importForm">
       <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-      <input type="file" name="csvfile" accept=".csv" required style="display:none;" id="csvFileInput" onchange="this.form.submit()">
-      <button type="button" class="btn btn-outline-secondary btn-sm" onclick="document.getElementById('csvFileInput').click()">Import CSV</button>
+      <input type="file" name="xlsxfile" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" required style="display:none;" id="xlsxFileInput" onchange="this.form.submit()">
+      <button type="button" class="btn btn-outline-secondary btn-sm" onclick="document.getElementById('xlsxFileInput').click()">Import Excel</button>
     </form>
     <form action="{{ url_for('students_import_vcf') }}" method="post" enctype="multipart/form-data" id="importVcfForm">
       <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
@@ -287,9 +287,8 @@
     </button>
   </div>
   <div class="small text-muted mb-2">
-    CSV format: <code>name,email,phone,guardian,student_id,M,R,W,classification</code>.
-    Mark selected subjects with <code>x</code> under <code>M</code> (Math), <code>R</code> (Reading), and <code>W</code> (Writing).
-    For classification use: <code>a</code> = Assisted, <code>m</code> = Monitored, <code>i</code> = Independent, <code>v</code> = Virtual.
+    Excel format requires <code>Student First Name</code> and <code>Student Last Name</code>.
+    Existing students matching first name plus last-name initial are protected and never modified.
   </div>
 
   <div class="table-container">

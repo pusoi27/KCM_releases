@@ -980,140 +980,178 @@ def reactivate_student(sid):
         conn.commit()
 
 
-def import_csv(file_path):
-    """Import students from CSV with ownership assignment.
-    
-    Args:
-        file_path: Path to CSV file
-    """
+def _xlsx_key(value):
+    """Normalize Excel headers and matching names for safe comparisons."""
+    return ''.join(ch for ch in str(value or '').strip().casefold() if ch.isalnum())
+
+
+def _xlsx_text(value):
+    """Convert an Excel cell to trimmed text without turning blanks into 'None'."""
+    if value is None:
+        return ''
+    if isinstance(value, float) and value.is_integer():
+        return str(int(value))
+    return str(value).strip()
+
+
+def _student_name_match_key(first_name, last_name):
+    """Match on first name plus complete last-name initial."""
+    first = ' '.join(_xlsx_text(first_name).casefold().split())
+    last = ' '.join(_xlsx_text(last_name).casefold().split())
+    return f"{first}|{last[:1]}" if first and last else ''
+
+
+def _xlsx_header(row, *aliases):
+    values = {_xlsx_key(alias) for alias in aliases}
+    for key, value in row.items():
+        if _xlsx_key(key) in values:
+            return _xlsx_text(value)
+    return ''
+
+
+def import_students_from_xlsx(file_path):
+    """Insert new students from Excel while protecting existing matches."""
     if not os.path.exists(file_path):
-        return {"added": 0, "updated": 0, "deleted": 0}
-    added=0
-    updated=0
-    
-    with sqlite3.connect(DB_PATH) as conn, open(file_path,newline="",encoding="utf-8-sig") as f:
-        reader=csv.DictReader(f)
-        
-        # Debug: Log column headers
-        first_row = True
-        for row in reader:
-            if first_row:
-                print(f"CSV Columns: {list(row.keys())}")
-                first_row = False
-            
-            name = str(_csv_get(row, 'name', 'student_name', default='') or '').strip()
-            if not name.strip(): continue
-            
-            email = str(_csv_get(row, 'email', default='') or '').strip()
-            phone = str(_csv_get(row, 'phone', default='') or '').strip()
-            guardian = str(_csv_get(row, 'guardian', 'guardian_name', 'parent', default='') or '').strip()
-            student_identifier = normalize_student_identifier(
-                _csv_get(row, 'student_id', 'student_identifier', 'studentid', default='')
+        return {"error": "The selected Excel file could not be found."}
+
+    try:
+        from openpyxl import load_workbook
+    except ImportError as exc:
+        return {"error": "Excel import requires the openpyxl package.", "detail": str(exc)}
+
+    try:
+        workbook = load_workbook(file_path, read_only=True, data_only=True)
+        worksheet = workbook.active
+        rows = worksheet.iter_rows(values_only=True)
+        raw_headers = next(rows, None)
+        if not raw_headers:
+            return {"error": "The Excel worksheet is empty."}
+
+        headers = [_xlsx_text(value) for value in raw_headers]
+        header_keys = {_xlsx_key(header) for header in headers if header}
+        first_aliases = {'studentfirstname', 'firstname', 'studentfirst'}
+        last_aliases = {'studentlastname', 'lastname', 'studentlast', 'surname'}
+        if not header_keys.intersection(first_aliases) or not header_keys.intersection(last_aliases):
+            return {"error": "The Excel file must contain Student First Name and Student Last Name columns."}
+
+        incoming = []
+        invalid = []
+        for row_number, values in enumerate(rows, start=2):
+            row = dict(zip(headers, values))
+            first_name = _xlsx_header(row, 'Student First Name', 'First Name', 'Student First')
+            last_name = _xlsx_header(row, 'Student Last Name', 'Last Name', 'Student Last', 'Surname')
+            if not first_name and not last_name and not any(values):
+                continue
+            if not first_name or not last_name:
+                invalid.append({"row": row_number, "reason": "Student first and last name are required."})
+                continue
+
+            mother_first = _xlsx_header(row, 'Mother First Name', 'Mother First')
+            father_first = _xlsx_header(row, 'Father First Name', 'Father First')
+            mother = {
+                'name': f"Ms. {mother_first}" if mother_first else '',
+                'phone': _xlsx_header(row, 'Mother cell phone', 'Mother Cell Phone', 'Mother Phone'),
+                'email': _xlsx_header(row, 'Mother Email'),
+            }
+            father = {
+                'name': f"Mr. {father_first}" if father_first else '',
+                'phone': _xlsx_header(row, 'Father cell phone', 'Father Cell Phone', 'Father Phone'),
+                'email': _xlsx_header(row, 'Father Email'),
+            }
+            incoming.append({
+                'row': row_number,
+                'first_name': first_name,
+                'last_name': last_name,
+                'name': f"{first_name} {last_name}".strip(),
+                'match_key': _student_name_match_key(first_name, last_name),
+                'student_identifier': normalize_student_identifier(
+                    _xlsx_header(row, 'Student ID', 'Student Identifier', 'StudentID')
+                ),
+                'mother': mother,
+                'father': father,
+            })
+        workbook.close()
+    except Exception as exc:
+        return {"error": f"Could not read the Excel workbook: {exc}"}
+
+    result = {'added': 0, 'skipped_existing': 0, 'skipped_ambiguous': 0,
+              'skipped_duplicate_input': 0, 'invalid': len(invalid), 'rows': invalid}
+    incoming_keys = {}
+    new_students_for_qr = []
+    for item in incoming:
+        incoming_keys.setdefault(item['match_key'], []).append(item)
+
+    with sqlite3.connect(DB_PATH) as conn:
+        existing = {}
+        for student_id, name, stored_last_name in conn.execute(
+            "SELECT id, COALESCE(name, ''), COALESCE(last_name, '') FROM students"
+        ):
+            parts = str(name or '').strip().split()
+            derived_last = stored_last_name or (parts[-1] if len(parts) >= 2 else '')
+            key = _student_name_match_key(parts[0] if parts else '', derived_last)
+            if key:
+                existing.setdefault(key, []).append((student_id, name))
+
+        for key, items in incoming_keys.items():
+            if len(items) > 1:
+                for item in items:
+                    result['skipped_duplicate_input'] += 1
+                    result['rows'].append({'row': item['row'], 'student': item['name'],
+                                           'action': 'skipped_duplicate_input',
+                                           'reason': 'Duplicate first-name and last-initial key in workbook.'})
+                continue
+
+            item = items[0]
+            matches = existing.get(key, [])
+            if len(matches) == 1:
+                result['skipped_existing'] += 1
+                result['rows'].append({'row': item['row'], 'student': item['name'],
+                                       'action': 'skipped_existing',
+                                       'reason': f"Protected existing match: {matches[0][1]} (ID {matches[0][0]})."})
+                continue
+            if len(matches) > 1:
+                result['skipped_ambiguous'] += 1
+                result['rows'].append({'row': item['row'], 'student': item['name'],
+                                       'action': 'skipped_ambiguous',
+                                       'reason': 'Multiple existing students share the same first name and last initial.'})
+                continue
+
+            mother = item['mother']
+            father = item['father']
+            primary = mother if mother['name'] else father
+            secondary = father if mother['name'] and father['name'] else {'name': '', 'phone': '', 'email': ''}
+            _advance_student_id_sequence_past_repeating_digits(conn)
+            cursor = conn.execute(
+                """
+                INSERT INTO students (
+                    name, last_name, student_identifier, subject, subjects_json,
+                    subject_minutes_json, total_study_minutes, email, phone, guardian,
+                    secondary_email, secondary_phone, secondary_guardian, active, pi
+                ) VALUES (?, ?, ?, 'Math', '[\"Math\"]', '[30]', 30, ?, ?, ?, ?, ?, ?, 1, 1)
+                """,
+                (item['name'], item['last_name'], item['student_identifier'],
+                 primary['email'], primary['phone'], primary['name'],
+                 secondary['email'], secondary['phone'], secondary['name']),
             )
-
-            subjects = _parse_subjects_from_csv(row)
-            subject_minutes = [30] * len(subjects)
-            total_study_minutes = sum(subject_minutes)
-            primary_subject = subjects[0]
-
-            el, pi, v, ind = _parse_classification_from_csv(row)
-            
-            # Check if student exists (owned by this user)
-            student_record=conn.execute("SELECT id FROM students WHERE LOWER(TRIM(name))=LOWER(?)",(name.strip(),)).fetchone()
-            
-            if student_record:
-                # UPDATE existing student - set all fields from CSV
-                student_id = student_record[0]
-                print(f"UPDATING student ID {student_id}: {name}")
-                conn.execute(
-                    """
-                    UPDATE students
-                    SET
-                        name=?,
-                        subject=?,
-                        subjects_json=?,
-                        subject_minutes_json=?,
-                        total_study_minutes=?,
-                        email=?,
-                        phone=?,
-                        student_identifier=?,
-                        guardian=?,
-                        active=1,
-                        el=?,
-                        pi=?,
-                        v=?,
-                        ind=?
-                    WHERE id=?
-                    """,
-                    (
-                        name,
-                        primary_subject,
-                        json.dumps(subjects),
-                        json.dumps(subject_minutes),
-                        total_study_minutes,
-                        email,
-                        phone,
-                        student_identifier,
-                        guardian,
-                        el,
-                        pi,
-                        v,
-                        ind,
-                        student_id,
-                    ),
-                )
-                updated+=1
-            else:
-                print(f"INSERTING new student: {name}")
-                _advance_student_id_sequence_past_repeating_digits(conn)
-                conn.execute(
-                    """
-                    INSERT INTO students(
-                        name,
-                        subject,
-                        subjects_json,
-                        subject_minutes_json,
-                        total_study_minutes,
-                        email,
-                        phone,
-                        student_identifier,
-                        guardian,
-                        active,
-                        el,
-                        pi,
-                        v,
-                        ind
-                    )
-                    VALUES(?,?,?,?,?,?,?,?,?,1,?,?,?,?)
-                    """,
-                    (
-                        name,
-                        primary_subject,
-                        json.dumps(subjects),
-                        json.dumps(subject_minutes),
-                        total_study_minutes,
-                        email,
-                        phone,
-                        student_identifier,
-                        guardian,
-                        el,
-                        pi,
-                        v,
-                        ind,
-                    ),
-                )
-                student_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
-                try:
-                    unique_token = issue_unique_qr_token("STU", "student", student_id)
-                    qr_data = f"ID:{student_id}\nName:{name}\nUID:{unique_token}"
-                    qr_blob = qr_generator.generate_qr_bytes(qr_data)
-                    conn.execute("UPDATE students SET qr_code=? WHERE id=?", (sqlite3.Binary(qr_blob), student_id))
-                except Exception as qr_err:
-                    print(f"Warning: Failed to generate QR for new student {student_id}: {qr_err}")
-                added+=1
-        
+            student_id = cursor.lastrowid
+            new_students_for_qr.append((student_id, item['name']))
+            result['added'] += 1
+            result['rows'].append({'row': item['row'], 'student': item['name'], 'action': 'added', 'student_id': student_id})
+            existing.setdefault(key, []).append((student_id, item['name']))
         conn.commit()
-    return {"added": added, "updated": updated}
+
+    # Generate QR codes only after the import transaction closes.  The QR
+    # registry uses its own SQLite connection and must not nest inside this one.
+    for student_id, student_name in new_students_for_qr:
+        try:
+            unique_token = issue_unique_qr_token("STU", "student", student_id)
+            qr_data = f"ID:{student_id}\nName:{student_name}\nUID:{unique_token}"
+            qr_blob = qr_generator.generate_qr_bytes(qr_data)
+            with sqlite3.connect(DB_PATH) as qr_conn:
+                qr_conn.execute("UPDATE students SET qr_code=? WHERE id=?", (sqlite3.Binary(qr_blob), student_id))
+        except Exception as qr_err:
+            print(f"Warning: Failed to generate QR for new student {student_id}: {qr_err}")
+    return result
 
 def export_csv(path):
     """Export active students in the same shape used by the student edit form CSV import."""
