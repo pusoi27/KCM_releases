@@ -44,6 +44,16 @@ OutFile "stdytime_installer_v${APP_VERSION_SAFE}.exe"
 InstallDir "$LOCALAPPDATA\\${APP_NAME}"
 RequestExecutionLevel user
 
+; --- Version resource (shown in Explorer Properties > Details, and some SmartScreen dialogs) ---
+VIProductVersion "${APP_VERSION}.0"
+VIFileVersion "${APP_VERSION}.0"
+VIAddVersionKey "ProductName" "${APP_NAME}"
+VIAddVersionKey "CompanyName" "${COMPANY_NAME}"
+VIAddVersionKey "LegalCopyright" "Copyright (C) Adocta Tech LLC"
+VIAddVersionKey "FileDescription" "${APP_NAME} Setup"
+VIAddVersionKey "FileVersion" "${APP_VERSION}"
+VIAddVersionKey "ProductVersion" "${APP_VERSION}"
+
 ; --- Modern UI ---
 !define MUI_ABORTWARNING
 !define MUI_ICON "assets\\stdytime.ico"
