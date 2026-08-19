@@ -1222,9 +1222,11 @@ def _read_station_sync_state() -> tuple[int, str]:
 
 
 def is_station_mailbox_mode_enabled() -> bool:
-    """True when 2+ activation license should use Inbox/Outbox file sync."""
-    activation_limit, _ = _read_station_sync_state()
-    return activation_limit >= 2
+    """True only when a multi-station role is explicitly selected for Inbox/Outbox sync."""
+    activation_limit, role = _read_station_sync_state()
+    if activation_limit < 2:
+        return False
+    return role in {"checkin", "instructor"}
 
 
 def _onedrive_mailbox_root(sync_path: str) -> str:

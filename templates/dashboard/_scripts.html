@@ -13,6 +13,7 @@ let activeSeatCards = new Map(); // student_id -> { card, timerId }
 let overflowTimers = new Map(); // student_id -> timerId  (for students beyond SEAT_LIMIT)
 let dashboardFetchInFlight = false;
 let dashboardRefreshQueued = false;
+let dashboardFetchPromise = null; // resolves only once the in-flight refresh (and any queued follow-up) has completed
 let dashboardPollTimer = null;
 let dashboardDataDegraded = false;
 let dashboardDataDegradedReason = '';
@@ -433,9 +434,16 @@ async function fetchDashboardData(options = {}){
     if(priority){
       dashboardRefreshQueued = true;
     }
-    return;
+    // Wait for the in-flight refresh (and any queued follow-up it chains into) to finish,
+    // so callers never resolve before the dashboard data actually reflects the latest scan.
+    return dashboardFetchPromise;
   }
   dashboardFetchInFlight = true;
+  dashboardFetchPromise = _runDashboardDataRefresh(priority);
+  return dashboardFetchPromise;
+}
+
+async function _runDashboardDataRefresh(priority){
   const refreshToken = ++dashboardRefreshToken;
   try {
     const [studentsBundle, sessionsBundle, assistantsBundle] = await Promise.all([
@@ -516,7 +524,11 @@ async function fetchDashboardData(options = {}){
     dashboardFetchInFlight = false;
     if(dashboardRefreshQueued){
       dashboardRefreshQueued = false;
-      fetchDashboardData({ priority: true });
+      // Chain the queued refresh so the promise callers are awaiting only resolves
+      // once this follow-up refresh has also completed.
+      dashboardFetchInFlight = true;
+      dashboardFetchPromise = _runDashboardDataRefresh(true);
+      await dashboardFetchPromise;
     }
   }
 }
@@ -1728,7 +1740,7 @@ resetIdleTimer();
             loadAssistants();
           }
         }
-        fetchDashboardData({ priority: true });
+        await fetchDashboardData({ priority: true });
       }catch(err){
         console.error('[dashboard] staff toggle error', err);
         showQuickToast('Error toggling staff '+ident, true);
@@ -1761,7 +1773,7 @@ resetIdleTimer();
         }
         logDebug(`TOGGLE OK id=${ident} action=${action}`);
       }
-      fetchDashboardData({ priority: true });
+      await fetchDashboardData({ priority: true });
     }catch(err){
       console.error('[dashboard] toggle error', err);
       logDebug(`ERROR id=${ident} msg=${err.message}`);

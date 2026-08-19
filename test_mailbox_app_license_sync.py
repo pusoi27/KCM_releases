@@ -198,6 +198,72 @@ def test_mailbox_app_license_shared_fields_sync_preserve_machine_local() -> None
             pass
 
 
+def test_default_high_activation_limit_does_not_force_station_role_selection() -> None:
+    tmp = tempfile.mkdtemp(prefix="stdytime_default_limit_test_")
+    try:
+        db_path = os.path.join(tmp, "license_defaults.db")
+        with sqlite3.connect(db_path) as conn:
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS app_license (
+                    id INTEGER PRIMARY KEY CHECK (id = 1),
+                    license_key TEXT,
+                    licensee TEXT,
+                    email TEXT,
+                    issued_at TEXT,
+                    expires_at TEXT,
+                    machine_fingerprint TEXT,
+                    metadata_json TEXT DEFAULT '{}',
+                    updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                    ls_instance_id TEXT DEFAULT '',
+                    ls_status TEXT DEFAULT '',
+                    ls_last_verified_at TEXT DEFAULT '',
+                    activation_limit INTEGER DEFAULT 0,
+                    activation_usage INTEGER DEFAULT 0,
+                    station_role TEXT DEFAULT ''
+                )
+                """
+            )
+            conn.execute(
+                "INSERT INTO app_license (id, license_key, ls_instance_id, ls_status, activation_limit, station_role) VALUES (?, ?, ?, ?, ?, ?)",
+                (1, "DEFAULT-LIMIT-KEY", "inst_default", "active", 3, ""),
+            )
+            conn.commit()
+
+        old_db = database.DB_PATH
+        database.DB_PATH = db_path
+        try:
+            assert database.is_station_mailbox_mode_enabled() is False
+            assert __import__("modules.ls_license", fromlist=["requires_station_role_selection"]).requires_station_role_selection() is False
+        finally:
+            database.DB_PATH = old_db
+    finally:
+        try:
+            shutil.rmtree(tmp)
+        except Exception:
+            pass
+
+
+def test_single_station_role_is_valid_selection() -> None:
+    import modules.ls_license as ls_license
+
+    row = {"ls_instance_id": "inst_single", "station_role": ""}
+    old_get_row = ls_license._get_ls_row
+    old_connect = ls_license.sqlite3.connect
+    ls_license._get_ls_row = lambda: row
+    ls_license.sqlite3.connect = lambda *args, **kwargs: old_connect(*args, **kwargs)
+    try:
+        ok, msg = ls_license.set_station_role("single")
+        assert ok is True, msg
+        row["station_role"] = "single"
+        assert ls_license.get_station_role() == "single"
+    finally:
+        ls_license._get_ls_row = old_get_row
+        ls_license.sqlite3.connect = old_connect
+
+
 if __name__ == "__main__":
     test_mailbox_app_license_shared_fields_sync_preserve_machine_local()
+    test_default_high_activation_limit_does_not_force_station_role_selection()
+    test_single_station_role_is_valid_selection()
     print("✓ Mailbox app_license sync regression test passed")

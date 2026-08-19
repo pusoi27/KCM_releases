@@ -103,15 +103,44 @@
               <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
               <button type="submit" class="btn btn-outline-secondary btn-sm">Re-check License Now</button>
             </form>
-            {% if license_status.activation_limit and license_status.activation_limit >= 2 %}
-            <a href="{{ url_for('license_station_role') }}" class="btn btn-outline-primary btn-sm">
-              Configure Machine Role
-            </a>
-            {% endif %}
-          <form method="POST" action="{{ url_for('remove_license') }}" onsubmit="return confirm('Remove the saved license from this machine?');">
-            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-            <button type="submit" class="btn btn-outline-danger">Remove Saved License</button>
-          </form>
+            <form method="POST" action="{{ url_for('remove_license') }}" onsubmit="return confirm('Remove the saved license from this machine?');">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+              <button type="submit" class="btn btn-outline-danger">Remove Saved License</button>
+            </form>
+          </div>
+
+          <div class="border rounded p-3 bg-light mb-4">
+            <h3 class="h6 mb-3">Machine setup</h3>
+            <p class="text-muted mb-3">Choose how this machine should operate for the current license.</p>
+            <form method="POST" action="{{ url_for('license_station_role') }}">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+              <div class="row g-3">
+                <div class="col-md-4">
+                  <label class="border rounded p-3 d-block h-100 bg-white">
+                    <input class="form-check-input me-2" type="radio" name="station_role" value="single" {% if license_status.station_role == 'single' %}checked{% endif %} required>
+                    <strong>Single Station</strong>
+                    <div class="small text-muted mt-2">All functionality runs on this machine.</div>
+                  </label>
+                </div>
+                <div class="col-md-4">
+                  <label class="border rounded p-3 d-block h-100 bg-white">
+                    <input class="form-check-input me-2" type="radio" name="station_role" value="instructor" {% if license_status.station_role == 'instructor' %}checked{% endif %} required>
+                    <strong>Instructor Station</strong>
+                    <div class="small text-muted mt-2">Management and instructor workflows.</div>
+                  </label>
+                </div>
+                <div class="col-md-4">
+                  <label class="border rounded p-3 d-block h-100 bg-white">
+                    <input class="form-check-input me-2" type="radio" name="station_role" value="checkin" {% if license_status.station_role == 'checkin' %}checked{% endif %} required>
+                    <strong>Check In/Out Station</strong>
+                    <div class="small text-muted mt-2">Scanner and check-in flow.</div>
+                  </label>
+                </div>
+              </div>
+              <div class="mt-3">
+                <button type="submit" class="btn btn-success">Save Machine Setup</button>
+              </div>
+            </form>
           </div>
           {% endif %}
         </div>
