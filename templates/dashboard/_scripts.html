@@ -348,6 +348,7 @@ function renderDashboardFromState(){
   buildSeatGrid(uniqueSessions);
   buildCheckedList(checkedOnly, daySessionCount);
   buildAssistantsList(assistants);
+  checkStaffContinuousDutyPrompts(assistants);
 }
 
 function applyLocalCheckin(studentId, fallbackName){
@@ -528,6 +529,161 @@ function startDashboardPolling(){
   }, DASHBOARD_POLL_MS);
 }
 // ---------- Column 2 (Staff) ----------
+
+// Continuous on-duty "still active?" prompt (4h15m boundary, 2min grace before auto checkout)
+let dutyPromptActive = null; // { id, name, tickInterval, modalInstance }
+let dutyPromptQueue = [];
+const localDutyConfirmedAt = new Map(); // assistantId -> ms timestamp (optimistic, until server catches up)
+
+function ensureStaffDutyPromptModal(){
+  let el = document.getElementById('staffDutyPromptModal');
+  if (el) return el;
+  el = document.createElement('div');
+  el.id = 'staffDutyPromptModal';
+  el.className = 'modal fade';
+  el.tabIndex = -1;
+  el.setAttribute('data-bs-backdrop', 'static');
+  el.setAttribute('data-bs-keyboard', 'false');
+  el.innerHTML = `
+    <div class="modal-dialog modal-dialog-centered">
+      <div class="modal-content">
+        <div class="modal-header bg-warning-subtle">
+          <h5 class="modal-title"><i class="bi bi-exclamation-triangle-fill text-warning me-1"></i> Still on duty?</h5>
+        </div>
+        <div class="modal-body">
+          <p id="staffDutyPromptMessage" class="mb-2"></p>
+          <p class="small text-muted mb-0">Auto checkout in <strong id="staffDutyPromptCountdown">02:00</strong> if no response.</p>
+        </div>
+        <div class="modal-footer">
+          <button type="button" id="staffDutyPromptConfirmBtn" class="btn btn-success">
+            <i class="bi bi-check-circle"></i> Yes, still working
+          </button>
+        </div>
+      </div>
+    </div>`;
+  document.body.appendChild(el);
+  document.getElementById('staffDutyPromptConfirmBtn').addEventListener('click', onStaffDutyPromptConfirm);
+  return el;
+}
+
+async function onStaffDutyPromptConfirm(){
+  if(!dutyPromptActive) return;
+  const { id } = dutyPromptActive;
+  const btn = document.getElementById('staffDutyPromptConfirmBtn');
+  if(btn) btn.disabled = true;
+  try {
+    await fetch(`/api/assistants/confirm-duty/${id}`, { method: 'POST' });
+    localDutyConfirmedAt.set(id, Date.now());
+  } catch (_) {
+    // ignore; server-side safety net still enforces the boundary
+  }
+  if(btn) btn.disabled = false;
+  closeStaffDutyPrompt();
+}
+
+function closeStaffDutyPrompt(){
+  if(!dutyPromptActive) return;
+  const { tickInterval, modalInstance } = dutyPromptActive;
+  if(tickInterval) clearInterval(tickInterval);
+  if(modalInstance) modalInstance.hide();
+  dutyPromptActive = null;
+  processDutyPromptQueue();
+}
+
+function processDutyPromptQueue(){
+  if(dutyPromptActive || dutyPromptQueue.length === 0) return;
+  showStaffDutyPrompt(dutyPromptQueue.shift());
+}
+
+function showStaffDutyPrompt(entry){
+  const { id, name, graceRemainingMs } = entry;
+  const modalEl = ensureStaffDutyPromptModal();
+  const messageEl = document.getElementById('staffDutyPromptMessage');
+  if(messageEl){
+    messageEl.textContent = `${name} has been on duty continuously for over 4h15m. Are they still active?`;
+  }
+
+  const deadlineTs = Date.now() + Math.max(1000, graceRemainingMs);
+  const countdownEl = document.getElementById('staffDutyPromptCountdown');
+
+  function tick(){
+    const remainingMs = Math.max(0, deadlineTs - Date.now());
+    const totalSec = Math.ceil(remainingMs / 1000);
+    const mm = String(Math.floor(totalSec / 60)).padStart(2, '0');
+    const ss = String(totalSec % 60).padStart(2, '0');
+    if(countdownEl) countdownEl.textContent = `${mm}:${ss}`;
+    if(remainingMs <= 0){
+      autoCheckoutStaffFromPrompt(id, name);
+    }
+  }
+  tick();
+  const tickInterval = setInterval(tick, 1000);
+
+  const modalInstance = new bootstrap.Modal(modalEl);
+  modalInstance.show();
+
+  dutyPromptActive = { id, name, tickInterval, modalInstance };
+}
+
+async function autoCheckoutStaffFromPrompt(id, name){
+  if(!dutyPromptActive || dutyPromptActive.id !== id) return;
+  clearInterval(dutyPromptActive.tickInterval);
+  const modalInstance = dutyPromptActive.modalInstance;
+  dutyPromptActive = null;
+  try {
+    await fetch(`/api/assistants/select/${id}`, { method: 'POST' });
+  } catch (_) {
+    // backend safety net will also auto-close stale continuous sessions
+  }
+  if(modalInstance) modalInstance.hide();
+  if (typeof window.showQuickToast === 'function') {
+    window.showQuickToast(`${name} was auto checked out after no response.`, true);
+  }
+  fetchDashboardData({ priority: true });
+  processDutyPromptQueue();
+}
+
+function checkStaffContinuousDutyPrompts(assistants){
+  const list = Array.isArray(assistants) ? assistants : [];
+  const onDutyIds = new Set();
+  const now = Date.now();
+
+  list.forEach(a => {
+    if(!a || !a.on_duty || !Number.isFinite(Number(a.id))) return;
+    const id = Number(a.id);
+    onDutyIds.add(id);
+
+    const startMs = a.start_time ? parseSessionStartTime(a.start_time).getTime() : NaN;
+    if(!Number.isFinite(startMs)) return;
+
+    const serverConfirmedMs = a.duty_last_confirmed_at ? parseSessionStartTime(a.duty_last_confirmed_at).getTime() : NaN;
+    const localConfirmedMs = localDutyConfirmedAt.get(id) || 0;
+    const continuousSinceMs = Math.max(startMs, Number.isFinite(serverConfirmedMs) ? serverConfirmedMs : 0, localConfirmedMs);
+
+    const limitMs = (Number(a.duty_continuous_limit_seconds) || 15300) * 1000;
+    const graceMs = (Number(a.duty_confirm_grace_seconds) || 120) * 1000;
+    const elapsedMs = now - continuousSinceMs;
+
+    if(elapsedMs < limitMs) return;
+    if(dutyPromptActive && dutyPromptActive.id === id) return;
+    if(dutyPromptQueue.some(e => e.id === id)) return;
+
+    const graceRemainingMs = Math.max(0, limitMs + graceMs - elapsedMs);
+    dutyPromptQueue.push({ id, name: a.name || `Staff ${id}`, graceRemainingMs });
+  });
+
+  for(const id of Array.from(localDutyConfirmedAt.keys())){
+    if(!onDutyIds.has(id)) localDutyConfirmedAt.delete(id);
+  }
+
+  if(dutyPromptActive && !onDutyIds.has(dutyPromptActive.id)){
+    closeStaffDutyPrompt();
+  }
+  dutyPromptQueue = dutyPromptQueue.filter(e => onDutyIds.has(e.id));
+
+  processDutyPromptQueue();
+}
+
 function buildAssistantsList(assistants){
   const list = document.getElementById("assistantsDutyList");
   const onDuty = assistants.filter(a => a.on_duty);

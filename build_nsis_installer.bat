@@ -67,6 +67,9 @@ if not exist "stdytime_installer_v%APP_VERSION_SAFE%.exe" (
 	exit /b 1
 )
 
+call signing\sign_file.bat "stdytime_installer_v%APP_VERSION_SAFE%.exe"
+if errorlevel 1 exit /b 1
+
 echo.
 echo NSIS installer build complete.
 echo Output: %CD%\stdytime_installer_v%APP_VERSION_SAFE%.exe

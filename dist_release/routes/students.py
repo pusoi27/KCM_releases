@@ -982,9 +982,12 @@ def register_student_routes(app, upload_folder):
     @app.route("/students/import", methods=["POST"])
     @require_login
     def students_import():
-        file = request.files.get("csvfile")
+        file = request.files.get("xlsxfile")
         if not file or file.filename == "":
-            flash("No file selected.", "danger")
+            flash("No Excel file selected.", "danger")
+            return redirect(url_for("students_list"))
+        if not str(file.filename).lower().endswith('.xlsx'):
+            flash("Please select an .xlsx Excel workbook.", "danger")
             return redirect(url_for("students_list"))
         path = os.path.join(upload_folder, secure_filename(file.filename))
         file.save(path)
@@ -993,7 +996,7 @@ def register_student_routes(app, upload_folder):
             lambda: _invalidate_student_caches()
         ]
         try:
-            result = student_manager.import_csv(path)
+            result = student_manager.import_students_from_xlsx(path)
             if isinstance(result, dict) and result.get("error"):
                 flash_scoped_failure(
                     backup_path=backup_path,
@@ -1002,7 +1005,7 @@ def register_student_routes(app, upload_folder):
                     invalidators=cache_invalidators,
                     category="danger",
                 )
-                flash("Import failed. Please check the CSV file and try again.", "danger")
+                flash("Import failed. Please check the Excel workbook and try again.", "danger")
                 return redirect(url_for("students_list"))
         except Exception as e:
             flash_scoped_failure(
@@ -1012,14 +1015,20 @@ def register_student_routes(app, upload_folder):
                 invalidators=cache_invalidators,
                 category="danger",
             )
-            flash("Import failed. Please check the CSV file and try again.", "danger")
+            flash("Import failed. Please check the Excel workbook and try again.", "danger")
             return redirect(url_for("students_list"))
-        added = result.get("added", 0) if isinstance(result, dict) else result
-        updated = result.get("updated", 0) if isinstance(result, dict) else 0
+        added = result.get("added", 0) if isinstance(result, dict) else 0
+        skipped_existing = result.get("skipped_existing", 0) if isinstance(result, dict) else 0
+        skipped_ambiguous = result.get("skipped_ambiguous", 0) if isinstance(result, dict) else 0
+        skipped_duplicate = result.get("skipped_duplicate_input", 0) if isinstance(result, dict) else 0
+        invalid = result.get("invalid", 0) if isinstance(result, dict) else 0
         parts = []
         if added: parts.append(f"{added} added")
-        if updated: parts.append(f"{updated} updated")
-        message = "Import successful" + (f": {', '.join(parts)}" if parts else "") + "."
+        if skipped_existing: parts.append(f"{skipped_existing} existing protected")
+        if skipped_ambiguous: parts.append(f"{skipped_ambiguous} ambiguous skipped")
+        if skipped_duplicate: parts.append(f"{skipped_duplicate} duplicate workbook rows skipped")
+        if invalid: parts.append(f"{invalid} invalid skipped")
+        message = "Excel import complete" + (f": {', '.join(parts)}" if parts else ".")
         invalidate_scoped_cache(*cache_invalidators)
         flash(message, "success")
         return redirect(url_for("students_list"))

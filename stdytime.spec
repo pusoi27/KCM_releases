@@ -13,7 +13,8 @@ a = Analysis(
         ('templates', 'templates'),
         ('static', 'static'),
         ('assets', 'assets'),
-        ('data', 'data'),
+        ('data/award_rules.json', 'data'),
+        ('data/grade_level_criteria.json', 'data'),
     ],
     hiddenimports=[
         'app',
@@ -48,7 +49,7 @@ a = Analysis(
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    excludedimports=[],
+    excludes=['numpy', 'pandas'],
     win_no_prefer_redirects=False,
     win_private_assemblies=False,
     cipher=block_cipher,

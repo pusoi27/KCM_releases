@@ -34,3 +34,12 @@ db_config.json
 
 # Windows binaries/installers (never commit)
 *.exe
+*.zip
+*.zip.sha256
+*.exe.sha256
+*.zip.minisig
+releases/
+
+# Vendored Azure Trusted Signing client (fetched via NuGet, not committed)
+signing/dlib_x64/
+

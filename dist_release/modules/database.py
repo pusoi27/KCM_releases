@@ -3942,6 +3942,7 @@ def init_db():
         CREATE TABLE IF NOT EXISTS students (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             name TEXT,
+            last_name TEXT DEFAULT '',
             student_identifier TEXT DEFAULT '',
             subject TEXT,
             subjects_json TEXT DEFAULT '[]',
@@ -3973,6 +3974,11 @@ def init_db():
             checkout_notify_enabled INTEGER DEFAULT 1
         )
     """)
+
+    # Additive migration for Excel student imports; existing data is preserved.
+    student_columns = {row[1] for row in c.execute("PRAGMA table_info(students)").fetchall()}
+    if "last_name" not in student_columns:
+        c.execute("ALTER TABLE students ADD COLUMN last_name TEXT DEFAULT ''")
 
     # Staff
     c.execute("""

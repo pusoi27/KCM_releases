@@ -11,13 +11,8 @@ This module provides utilities for:
 from pathlib import Path
 from datetime import datetime
 from typing import Dict, Any, Optional, List, Set
+import csv
 import re
-
-try:
-    import pandas as pd
-    HAS_PANDAS = True
-except ImportError:
-    HAS_PANDAS = False
 
 try:
     from docx import Document
@@ -152,7 +147,7 @@ def generate_diplomas(
     Returns:
         List of dictionaries with 'Full Name', 'Diploma', and 'Certificate' (file path)
     """
-    if not HAS_DOCX or not HAS_PANDAS:
+    if not HAS_DOCX:
         return []
     
     csv_path = Path(classified_csv)
@@ -162,7 +157,8 @@ def generate_diplomas(
     
     # Read CSV
     try:
-        df = pd.read_csv(csv_path)
+        with open(csv_path, newline="", encoding="utf-8-sig") as f:
+            rows = list(csv.DictReader(f))
     except Exception as e:
         print(f"Error reading CSV {csv_path}: {e}")
         return []
@@ -170,20 +166,27 @@ def generate_diplomas(
     # Filter by students if provided
     if students_filter:
         names_set: Set[str] = {n.strip() for n in students_filter}
-        df = df[df['Full Name'].isin(names_set)]
+        rows = [r for r in rows if r.get("Full Name") in names_set]
+    
+    # Group rows by Full Name (mirrors pandas groupby's sorted-key iteration order)
+    groups: Dict[str, List[Dict[str, str]]] = {}
+    for r in rows:
+        groups.setdefault(r.get("Full Name", ""), []).append(r)
     
     # Aggregate subjects per student
     subjects_map: Dict[str, str] = {}
-    for name, group in df.groupby("Full Name"):
-        subs = sorted(set(str(s).strip() for s in group.get("Subject", []) if pd.notna(s)))
+    for name in sorted(groups.keys()):
+        group = groups[name]
+        subs = sorted(set(str(r.get("Subject", "")).strip() for r in group if r.get("Subject") not in (None, "")))
         subjects_map[name] = ", ".join(subs) if subs else ""
     
     outputs: List[Dict[str, str]] = []
     today_str = datetime.now().strftime("%b %d, %Y")
     
-    for name, group in df.groupby("Full Name"):
+    for name in sorted(groups.keys()):
+        group = groups[name]
         # Get diploma type
-        diploma = str(group["Diploma"].iloc[0]).strip() if "Diploma" in group.columns and len(group) > 0 else ""
+        diploma = str(group[0].get("Diploma", "")).strip() if group else ""
         
         if not diploma:
             continue  # Skip students without diploma assignment
@@ -213,7 +216,7 @@ def generate_diplomas(
         math_current = None
         reading_current = None
         
-        for _, row in group.iterrows():
+        for row in group:
             subj = str(row.get('Subject', '')).strip().lower()
             norm_level = row.get('NormalizedLevel') or row.get('Highest WS Completed This Month')
             

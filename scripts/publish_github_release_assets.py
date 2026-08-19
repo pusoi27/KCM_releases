@@ -161,6 +161,57 @@ def _delete_existing_asset_if_any(repo: str, release: dict[str, Any], asset_name
         _github_request("DELETE", delete_url, token=token, expected=(204,))
 
 
+class _ProgressFileReader:
+    """File-like wrapper that prints a text progress bar as bytes are read/uploaded."""
+
+    def __init__(self, path: Path, chunk_size: int = 256 * 1024) -> None:
+        self._path = path
+        self._size = path.stat().st_size
+        self._handle = path.open("rb")
+        self._read_bytes = 0
+        self._chunk_size = chunk_size
+        self._last_percent = -1
+
+    def __len__(self) -> int:
+        return self._size
+
+    def read(self, size: int = -1) -> bytes:
+        chunk = self._handle.read(size if size and size > 0 else self._chunk_size)
+        if chunk:
+            self._read_bytes += len(chunk)
+            self._report_progress()
+        return chunk
+
+    def _report_progress(self) -> None:
+        if self._size <= 0:
+            return
+        percent = min(100, int(self._read_bytes * 100 / self._size))
+        if percent == self._last_percent:
+            return
+        self._last_percent = percent
+        bar_width = 30
+        filled = int(bar_width * percent / 100)
+        bar = "#" * filled + "-" * (bar_width - filled)
+        mb_done = self._read_bytes / (1024 * 1024)
+        mb_total = self._size / (1024 * 1024)
+        sys.stdout.write(
+            f"\r  Uploading {self._path.name}: [{bar}] {percent:3d}% ({mb_done:.1f}/{mb_total:.1f} MB)"
+        )
+        sys.stdout.flush()
+        if percent >= 100:
+            sys.stdout.write("\n")
+            sys.stdout.flush()
+
+    def close(self) -> None:
+        self._handle.close()
+
+    def __enter__(self) -> "_ProgressFileReader":
+        return self
+
+    def __exit__(self, exc_type: Any, exc: Any, tb: Any) -> None:
+        self.close()
+
+
 def _upload_asset(repo: str, release: dict[str, Any], asset_path: Path, *, token: str) -> str:
     upload_url_template = str(release.get("upload_url") or "").strip()
     if not upload_url_template:
@@ -184,15 +235,16 @@ def _upload_asset(repo: str, release: dict[str, Any], asset_path: Path, *, token
     last_error: Exception | None = None
     for attempt in range(1, upload_retries + 1):
         try:
-            with asset_path.open("rb") as handle:
+            with _ProgressFileReader(asset_path) as reader:
                 response = _github_request(
                     "POST",
                     upload_url,
                     token=token,
                     headers={
                         "Content-Type": "application/octet-stream",
+                        "Content-Length": str(len(reader)),
                     },
-                    data=handle,
+                    data=reader,
                     expected=(201,),
                     timeout=(30, upload_timeout_seconds),
                 )

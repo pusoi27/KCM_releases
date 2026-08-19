@@ -22,6 +22,8 @@ if errorlevel 1 exit /b 1
 REM Copy release files
 mkdir %RELEASE_DIR%
 copy %DIST_DIR%\Stdytime.exe %RELEASE_DIR%\
+call signing\sign_file.bat %RELEASE_DIR%\Stdytime.exe
+if errorlevel 1 exit /b 1
 copy app.py %RELEASE_DIR%\
 copy launcher.py %RELEASE_DIR%\
 copy launcher_browser.py %RELEASE_DIR%\

@@ -331,6 +331,7 @@ set "ZIP_ASSET_2=%LOCAL_ZIP_SHA_OUTPUT%"
 
 echo [INFO] Publishing GitHub Release assets to %RELEASES_REPO_SLUG% @ %RELEASE_TAG%...
 echo [INFO] Upload in progress... this can take a few minutes for large ZIP files.
+echo [INFO] Progress bar below reflects upload of each asset.
 "%PY_EXE%" "%PUBLISH_SCRIPT%" --repo "%RELEASES_REPO_SLUG%" --tag "%RELEASE_TAG%" --title "%RELEASE_TITLE%" --asset "%ZIP_ASSET_1%" --asset "%ZIP_ASSET_2%"
 if errorlevel 1 (
   echo [ERROR] Failed to publish GitHub Release assets.

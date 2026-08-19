@@ -23,16 +23,27 @@ import sqlite3
 import json
 import traceback
 import requests
+import threading
 import time
 from routes.auth import require_login, require_admin, require_feature
 
 
 CHECKOUT_COOLDOWN_SECONDS = 60
+RECHECKIN_COOLDOWN_SECONDS = 60
 STAFF_DUTY_MAX_DAILY_SECONDS = 6 * 60 * 60
+# Continuous on-duty window before prompting "are you still active?" (4h15m), plus a grace
+# period to respond before the shift is auto-closed.
+STAFF_DUTY_CONTINUOUS_LIMIT_SECONDS = 4 * 60 * 60 + 15 * 60
+STAFF_DUTY_CONFIRM_GRACE_SECONDS = 2 * 60
 BRIDGE_GET_TIMEOUT_SECONDS = 4
 BRIDGE_POST_TIMEOUT_SECONDS = 5
 BRIDGE_OFFLINE_COOLDOWN_SECONDS = 20
 _BRIDGE_RETRY_AFTER_MONOTONIC = 0.0
+
+# In-memory "still active" confirmations for the staff continuous-duty prompt.
+# Keyed by assistant_id -> last confirmation datetime (naive, local time).
+_assistant_duty_confirm_lock = threading.Lock()
+_assistant_duty_last_confirmed: dict[int, datetime] = {}
 
 
 def _runtime_station_mode() -> str:
@@ -313,11 +324,25 @@ def _auto_close_stale_assistant_sessions(conn: sqlite3.Connection) -> int:
         day_boundary_elapsed = max(0, int((end_of_start_day - start_dt).total_seconds()))
         elapsed_cap = min(STAFF_DUTY_MAX_DAILY_SECONDS, remaining_for_start_day, day_boundary_elapsed)
         allowed_elapsed = min(raw_elapsed, elapsed_cap)
+
+        # No-response safety net: if the "still active?" prompt window (4h15m) plus the
+        # 2-minute grace period elapses with no client confirmation, auto-close the shift.
+        with _assistant_duty_confirm_lock:
+            last_confirmed = _assistant_duty_last_confirmed.get(int(assistant_id))
+        continuous_since = start_dt
+        if last_confirmed and last_confirmed.tzinfo == start_dt.tzinfo and last_confirmed > start_dt:
+            continuous_since = last_confirmed
+        continuous_elapsed = max(0, int((now_dt - continuous_since).total_seconds()))
+        continuous_timeout = (
+            continuous_elapsed >= STAFF_DUTY_CONTINUOUS_LIMIT_SECONDS + STAFF_DUTY_CONFIRM_GRACE_SECONDS
+        )
+
         should_close = (
             start_day_iso != today_iso
             or raw_elapsed >= STAFF_DUTY_MAX_DAILY_SECONDS
             or remaining_for_start_day <= 0
             or allowed_elapsed < raw_elapsed
+            or continuous_timeout
         )
 
         if not should_close:
@@ -333,6 +358,8 @@ def _auto_close_stale_assistant_sessions(conn: sqlite3.Connection) -> int:
             (end_dt.isoformat(), final_duration, session_id),
         )
         closed_count += int(cur.rowcount or 0)
+        with _assistant_duty_confirm_lock:
+            _assistant_duty_last_confirmed.pop(int(assistant_id), None)
 
     if closed_count:
         conn.commit()
@@ -567,6 +594,20 @@ def _elapsed_seconds_since(start_value: str) -> int:
         return max(0, int((now_dt - start_dt).total_seconds()))
     except Exception:
         return 0
+
+
+def _student_recheckin_wait_seconds(student_id) -> int:
+    """Seconds remaining before a just-checked-out student may check in again (0 if none)."""
+    with sqlite3.connect(DB_PATH) as conn:
+        c = conn.cursor()
+        row = c.execute(
+            "SELECT end_time FROM sessions WHERE student_id=? AND end_time IS NOT NULL ORDER BY id DESC LIMIT 1",
+            (student_id,),
+        ).fetchone()
+    if not row or not row[0]:
+        return 0
+    elapsed = _elapsed_seconds_since(row[0])
+    return max(0, RECHECKIN_COOLDOWN_SECONDS - elapsed)
 
 
 def _bridge_allowed_hosts() -> set[str]:
@@ -1426,6 +1467,16 @@ def register_api_routes(app):
                 "checkout_email_message": checkout_email_message,
             }), 200
 
+        wait_seconds = _student_recheckin_wait_seconds(student_id)
+        if wait_seconds > 0:
+            return jsonify({
+                "error": f"Please wait {wait_seconds} seconds before checking in again.",
+                "action": "checkin_blocked",
+                "student_id": student_id,
+                "name": student_name,
+                "wait_seconds": wait_seconds,
+            }), 429
+
         timer_manager.start_session(student_id)
         server_cache.invalidate(_students_list_cache_key())
         return jsonify({
@@ -2124,6 +2175,16 @@ def register_api_routes(app):
                     "checkout_email_message": checkout_email_message,
                 }), 200
             else:
+                wait_seconds = _student_recheckin_wait_seconds(student_id)
+                if wait_seconds > 0:
+                    return jsonify({
+                        "error": f"Please wait {wait_seconds} seconds before checking in again.",
+                        "action": "checkin_blocked",
+                        "student_id": student_id,
+                        "name": student_name,
+                        "wait_seconds": wait_seconds,
+                    }), 429
+
                 # Start a new session
                 timer_manager.start_session(student_id)
                 server_cache.invalidate(_students_list_cache_key())
@@ -2259,9 +2320,12 @@ def register_api_routes(app):
                 open_rows_count=len(open_rows),
             )
             open_map = {aid: start for (aid, start) in open_rows}
+            with _assistant_duty_confirm_lock:
+                confirm_map = dict(_assistant_duty_last_confirmed)
             result = []
             for a in assistants:
                 aid = a[0]
+                last_confirmed = confirm_map.get(aid)
                 result.append(
                     dict(
                         id=aid,
@@ -2272,6 +2336,9 @@ def register_api_routes(app):
                         loading=a[5] if len(a) > 5 else 1,
                         on_duty=aid in open_map,
                         start_time=open_map.get(aid),
+                        duty_last_confirmed_at=last_confirmed.isoformat() if last_confirmed else None,
+                        duty_continuous_limit_seconds=STAFF_DUTY_CONTINUOUS_LIMIT_SECONDS,
+                        duty_confirm_grace_seconds=STAFF_DUTY_CONFIRM_GRACE_SECONDS,
                     )
                 )
             _trace_staff_duty("list_build_done", payload_count=len(result))
@@ -2331,6 +2398,8 @@ def register_api_routes(app):
                     )
                     conn.commit()
                     server_cache.invalidate(_assistants_duty_cache_key())
+                    with _assistant_duty_confirm_lock:
+                        _assistant_duty_last_confirmed.pop(int(aid), None)
                     if _scanner_api_client_enabled():
                         scanner_sync.enqueue_mutation(
                             "assistant_set_duty",
@@ -2362,6 +2431,8 @@ def register_api_routes(app):
                     )
                     conn.commit()
                     server_cache.invalidate(_assistants_duty_cache_key())
+                    with _assistant_duty_confirm_lock:
+                        _assistant_duty_last_confirmed.pop(int(aid), None)
                     if _scanner_api_client_enabled():
                         scanner_sync.enqueue_mutation(
                             "assistant_set_duty",
@@ -2377,6 +2448,27 @@ def register_api_routes(app):
             _trace_staff_duty("select_error", aid=aid, error=str(e))
             print(traceback.format_exc())
             return jsonify({"error": f"Staff toggle failed: {e}"}), 500
+
+    @app.route("/api/assistants/confirm-duty/<int:aid>", methods=["POST"])
+    @require_login
+    @require_feature(auth_manager.FEATURE_ASSISTANTS)
+    def api_assistants_confirm_duty(aid):
+        """Client confirms an on-duty staff member is still active.
+        Resets the continuous-duty "still active?" prompt window (4h15m + 2min grace).
+        """
+        with sqlite3.connect(DB_PATH) as conn:
+            cur = conn.cursor()
+            open_row = cur.execute(
+                "SELECT id FROM assistant_sessions WHERE assistant_id=? AND end_time IS NULL ORDER BY id DESC LIMIT 1",
+                (aid,),
+            ).fetchone()
+        if not open_row:
+            return jsonify({"success": False, "error": "Staff member is not currently on duty"}), 404
+
+        with _assistant_duty_confirm_lock:
+            _assistant_duty_last_confirmed[int(aid)] = datetime.now()
+        _trace_staff_duty("confirm_duty_ok", aid=aid)
+        return jsonify({"success": True})
 
     @app.route("/api/assistants/reset-duty", methods=["POST"])
     @require_admin
