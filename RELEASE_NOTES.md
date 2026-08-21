@@ -1164,3 +1164,12 @@ This file is automatically appended by `scripts/version_bump.py` on every versio
 ## v01.04.083 - 2026-08-19
 - TODO: summarize changes for this release.
 
+## v01.04.084 - 2026-08-19
+- TODO: summarize changes for this release.
+
+## v01.04.085 - 2026-08-20
+- Add embedded version resource (CompanyName/ProductName) to Stdytime.exe via PyInstaller version_info.txt
+
+## v01.04.086 - 2026-08-21
+- TODO: summarize changes for this release.
+

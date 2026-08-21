@@ -690,15 +690,11 @@ def before_request_enforce_station_mode():
 
     station_role = str(status.get('station_role') or '').strip().lower()
 
+    # High-seat licenses may be used as a single station by default. Only enforce
+    # split-station behavior once the user explicitly assigns an Instructor or
+    # Check In/Out role.
     if not station_role:
-        if request.endpoint == 'license_station_role':
-            return None
-        if request.path.startswith('/api/'):
-            return jsonify({
-                'error': 'Machine role must be selected for this license.',
-                'setup_url': url_for('license_station_role'),
-            }), 428
-        return redirect(url_for('license_station_role'))
+        return None
 
     if station_role == 'checkin':
         # Do not hard-restrict routes/APIs on Check In/Out station.

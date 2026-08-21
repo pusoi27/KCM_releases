@@ -203,10 +203,13 @@ def _instructor_hours_status() -> dict:
 
 
 def _is_multi_station_license_active() -> bool:
-    """True when current activated license supports scanner+instructor station split."""
+    """True only when the user has chosen a split-station setup on a multi-seat license."""
     try:
         ctx = g.get('license_status') or {}
-        return int(ctx.get('activation_limit') or 0) >= 2
+        if int(ctx.get('activation_limit') or 0) < 2:
+            return False
+        role = str(ctx.get('station_role') or '').strip().lower()
+        return role in {'instructor', 'checkin'}
     except Exception:
         return False
 

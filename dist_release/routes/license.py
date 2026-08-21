@@ -63,15 +63,10 @@ def register_license_routes(app):
 
     @app.route('/license/station-role', methods=['GET', 'POST'])
     def license_station_role():
-        """Assign this machine as Instructor Station or Check In/Out Station."""
+        """Assign this machine to single, instructor, or check-in setup."""
         ls_ctx = ls_license.get_ls_license_context()
         if not ls_ctx.get("has_license_key"):
             flash('Activate a LemonSqueezy license first.', 'warning')
-            return redirect(url_for('license_page'))
-
-        activation_limit = int(ls_ctx.get("activation_limit") or 0)
-        if activation_limit < 2:
-            flash('Station role assignment is only needed for multi-machine licenses.', 'info')
             return redirect(url_for('license_page'))
 
         if request.method == 'POST':
@@ -79,9 +74,9 @@ def register_license_routes(app):
             ok, msg = ls_license.set_station_role(role)
             flash(msg, 'success' if ok else 'danger')
             if ok:
+                if role == 'single':
+                    return redirect(url_for('dashboard'))
                 if role == 'checkin':
-                    # Do not force the dedicated scanner landing page.
-                    # Check In/Out station should land on regular dashboard flow.
                     return redirect(url_for('dashboard'))
                 return redirect(url_for('instructor_home'))
             return redirect(url_for('license_station_role'))

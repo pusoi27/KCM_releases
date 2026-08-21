@@ -290,19 +290,19 @@ def _ensure_ls_columns(conn: sqlite3.Connection) -> None:
 
 
 def get_station_role() -> str:
-    """Return normalized per-machine station role: 'instructor', 'checkin', or ''."""
+    """Return normalized per-machine station role: 'single', 'instructor', 'checkin', or ''."""
     row = _get_ls_row() or {}
     role = str(row.get("station_role") or "").strip().lower()
-    if role in {"instructor", "checkin"}:
+    if role in {"single", "instructor", "checkin"}:
         return role
     return ""
 
 
 def set_station_role(role: str) -> tuple[bool, str]:
-    """Persist station role for this machine when LS multi-machine mode is active."""
+    """Persist station role for this machine, including explicit single-station mode."""
     normalized = (role or "").strip().lower()
-    if normalized not in {"instructor", "checkin"}:
-        return False, "Invalid station role. Choose Instructor or Check In/Out."
+    if normalized not in {"single", "instructor", "checkin"}:
+        return False, "Invalid station role. Choose Single Station, Instructor, or Check In/Out."
 
     row = _get_ls_row()
     if not row or not row.get("ls_instance_id"):
@@ -320,11 +320,12 @@ def set_station_role(role: str) -> tuple[bool, str]:
 
 
 def requires_station_role_selection() -> bool:
-    """Return True when multi-machine license requires station-role selection on this device."""
-    row = _get_ls_row() or {}
-    if int(row.get("activation_limit") or 0) < 2:
-        return False
-    return get_station_role() == ""
+    """Multi-seat licenses do not force station-role selection by default.
+
+    A blank station_role means the machine is operating in normal single-station mode.
+    Users may still choose Instructor or Check In/Out later if they want split-station setup.
+    """
+    return False
 
 
 def _get_ls_row() -> dict[str, Any] | None:

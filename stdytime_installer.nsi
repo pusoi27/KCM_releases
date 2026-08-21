@@ -12,7 +12,7 @@ Unicode true
 ${StrRep}
 
 !define APP_NAME "Stdytime"
-!define COMPANY_NAME "Stdytime"
+!define COMPANY_NAME "Adocta Tech LLC"
 !ifndef APP_VERSION
   !if /FileExists "Version"
     !define /file APP_VERSION "Version"

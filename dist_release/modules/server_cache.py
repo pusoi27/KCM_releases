@@ -39,6 +39,7 @@ class _CacheEntry:
 
 _lock = RLock()
 _store: Dict[str, _CacheEntry] = {}
+_versions: Dict[str, int] = {}  # bumped on every invalidate() to detect stale in-flight builds
 
 
 # Shared cache key base strings
@@ -104,13 +105,24 @@ def set_cache(key: str, value: Any, policy: str = "default", ttl_seconds: Option
 
 
 def get_or_set(key: str, builder: Callable[[], Any], policy: str = "default", ttl_seconds: Optional[int] = None) -> Any:
-	"""Read-through caching: return existing entry, otherwise build and store."""
+	"""Read-through caching: return existing entry, otherwise build and store.
+
+	Guards against a stale build (started before a concurrent invalidate())
+	ovewriting the cache after that invalidate() has already happened.
+	"""
 	cached = get_cache(key)
 	if cached is not None:
 		# get_cache already logged HIT
 		return cached
 	_log("BUILD", key, policy)
+	with _lock:
+		version_before = _versions.get(key, 0)
 	value = builder()
+	with _lock:
+		if _versions.get(key, 0) != version_before:
+			# Invalidated while we were building; don't resurrect stale data.
+			_log("BUILD_STALE_DISCARD", key, policy)
+			return value
 	return set_cache(key, value, policy=policy, ttl_seconds=ttl_seconds)
 
 
@@ -118,6 +130,7 @@ def invalidate(key: str) -> None:
 	"""Invalidate one cache key."""
 	with _lock:
 		_store.pop(key, None)
+		_versions[key] = _versions.get(key, 0) + 1
 	_log("INVALIDATE", key)
 
 
@@ -128,6 +141,7 @@ def invalidate_prefix(prefix: str) -> int:
 		keys = [k for k in _store.keys() if k.startswith(prefix)]
 		for key in keys:
 			_store.pop(key, None)
+			_versions[key] = _versions.get(key, 0) + 1
 			deleted += 1
 	if deleted:
 		_log("INVALIDATE_PFX", f"{prefix}* ({deleted} keys)")

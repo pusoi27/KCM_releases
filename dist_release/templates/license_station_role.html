@@ -3,11 +3,11 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Stdytime Station Role</title>
+  <title>Stdytime Station Setup</title>
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.1/dist/css/bootstrap.min.css" rel="stylesheet">
   <style>
     body { background: linear-gradient(135deg, #e8f5e9, #f8f9fa); min-height: 100vh; }
-    .station-shell { max-width: 920px; margin: 3rem auto; }
+    .station-shell { max-width: 980px; margin: 3rem auto; }
     .station-card { border: none; border-radius: 1.25rem; box-shadow: 0 1rem 2.5rem rgba(0,0,0,.08); }
     .choice { border: 1px solid #dee2e6; border-radius: .9rem; padding: 1rem; height: 100%; }
   </style>
@@ -15,32 +15,19 @@
 <body>
   <div class="container station-shell">
     <div class="card station-card p-4 p-lg-5">
-      <h1 class="h3 fw-bold mb-2">Machine role setup</h1>
-      {% if license_status.activation_limit and license_status.activation_limit >= 2 %}
+      <h1 class="h3 fw-bold mb-2">Machine setup</h1>
       <p class="text-muted mb-4">
-        Your license allows <strong>{{ license_status.activation_limit }}</strong> machines.
-        Assign this machine as either the Scanner Station or the Instructor Station.
+        Choose how this machine should operate for the current license.
       </p>
-      {% else %}
-      <p class="text-muted mb-4">
-        Single-machine license detected. This device runs in combined mode by default, so station role selection is not required.
-      </p>
-      {% endif %}
 
-      {% if license_status.activation_limit and license_status.activation_limit >= 2 %}
       <div class="alert alert-secondary mb-4">
-        <div class="fw-semibold mb-2">Recommended two-station deployment pattern</div>
+        <div class="fw-semibold mb-2">Options</div>
         <ul class="mb-0">
-          <li><strong>Scanner Station</strong>: API client only — send scan/toggle actions to Instructor over LAN.</li>
-          <li><strong>Instructor Station</strong>: API server + single source of truth database.</li>
-          <li><strong>Backups</strong>: snapshots from Instructor only (avoid multi-writer cloud DB sync).</li>
+          <li><strong>Single Station</strong>: all functionality runs on this machine.</li>
+          <li><strong>Instructor Station</strong>: manage the core system and staff workflows.</li>
+          <li><strong>Check In/Out Station</strong>: scanner/check-in workflows for student access.</li>
         </ul>
       </div>
-      {% else %}
-      <div class="alert alert-info mb-4">
-        No action needed here for single-machine plans. Use the standard setup flow with combined functionality.
-      </div>
-      {% endif %}
 
       {% with messages = get_flashed_messages(with_categories=true) %}
         {% if messages %}
@@ -55,33 +42,38 @@
 
       <form method="POST" action="{{ url_for('license_station_role') }}">
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-        {% if license_status.activation_limit and license_status.activation_limit >= 2 %}
         <div class="row g-3 mb-4">
-          <div class="col-md-6">
+          <div class="col-md-4">
             <label class="choice d-block">
-              <input class="form-check-input me-2" type="radio" name="station_role" value="checkin" {% if license_status.station_role == 'checkin' %}checked{% endif %} required>
-              <strong>Scanner Station</strong>
+              <input class="form-check-input me-2" type="radio" name="station_role" value="single" {% if license_status.station_role == 'single' %}checked{% endif %} required>
+              <strong>Single Station</strong>
               <div class="small text-muted mt-2">
-                Use this for fast scanning workflows and duty toggles.
+                One machine handles full combined functionality.
               </div>
             </label>
           </div>
-          <div class="col-md-6">
+          <div class="col-md-4">
             <label class="choice d-block">
               <input class="form-check-input me-2" type="radio" name="station_role" value="instructor" {% if license_status.station_role == 'instructor' %}checked{% endif %} required>
               <strong>Instructor Station</strong>
               <div class="small text-muted mt-2">
-                Use this for full management workflows (students, reports, books, utilities), excluding scanner-only flow.
+                Use this for management, reports, books, and staff workflows.
+              </div>
+            </label>
+          </div>
+          <div class="col-md-4">
+            <label class="choice d-block">
+              <input class="form-check-input me-2" type="radio" name="station_role" value="checkin" {% if license_status.station_role == 'checkin' %}checked{% endif %} required>
+              <strong>Check In/Out Station</strong>
+              <div class="small text-muted mt-2">
+                Use this for scanner/check-in and quick operational workflows.
               </div>
             </label>
           </div>
         </div>
-        {% endif %}
 
         <div class="d-flex gap-2">
-          {% if license_status.activation_limit and license_status.activation_limit >= 2 %}
-          <button type="submit" class="btn btn-success">Save Role</button>
-          {% endif %}
+          <button type="submit" class="btn btn-success">Save Setup</button>
           <a href="{{ url_for('license_page') }}" class="btn btn-outline-secondary">Back to License</a>
         </div>
       </form>

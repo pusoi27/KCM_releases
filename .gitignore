@@ -21,6 +21,7 @@ uploads/
 # Build artifacts
 build/
 dist/
+version_info.txt
 
 # Local database files
 data/*.db

@@ -15,6 +15,10 @@ REM Clean previous builds
 if exist %DIST_DIR% rmdir /s /q %DIST_DIR%
 if exist %RELEASE_DIR% rmdir /s /q %RELEASE_DIR%
 
+REM Generate Windows version resource (CompanyName/ProductName/etc.) from VERSION file
+%PYTHON_EXE% scripts\gen_version_info.py
+if errorlevel 1 exit /b 1
+
 REM Build executable with PyInstaller
 %PYTHON_EXE% -m PyInstaller stdytime.spec
 if errorlevel 1 exit /b 1
