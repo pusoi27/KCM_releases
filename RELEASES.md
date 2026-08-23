@@ -1,1 +1,2 @@
 - KCM 06.20.180: KCM_installer_v06_20_180.zip (SHA-256: KCM_installer_v06_20_180.zip.sha256) — GitHub Release assets.
+- KCM 06.20.181: KCM_installer_v06_20_181.zip (SHA-256: KCM_installer_v06_20_181.zip.sha256) — GitHub Release assets.
